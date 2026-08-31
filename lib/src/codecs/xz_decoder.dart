@@ -203,9 +203,9 @@ class _XZStreamDecoder {
         var startOffset = 0;
         if (propertiesLength == 4) {
           startOffset = properties[0] |
-          properties[1] << 8 |
-          properties[2] << 16 |
-          properties[3] << 24;
+              properties[1] << 8 |
+              properties[2] << 16 |
+              properties[3] << 24;
         }
         filters.add(id);
         filters.add(startOffset);
@@ -354,7 +354,7 @@ class _XZStreamDecoder {
         }*/
         break;
       case 0xa: // SHA-256
-      /*final expectedCrc =*/
+        /*final expectedCrc =*/
         input.readBytes(32).toUint8List();
         /*if (verify) {
           final actualCrc =
@@ -382,7 +382,7 @@ class _XZStreamDecoder {
         }*/
         break;
       default:
-      //throw ArchiveException('Unknown block check type $checkType');
+        //throw ArchiveException('Unknown block check type $checkType');
         return false;
     }
 
@@ -429,8 +429,8 @@ class _XZStreamDecoder {
         // 3 - reset state, properties and dictionary
         final reset = (control >> 5) & 0x3;
         final uncompressedLength = ((control & 0x1f) << 16 |
-        input.readByte() << 8 |
-        input.readByte()) +
+                input.readByte() << 8 |
+                input.readByte()) +
             1;
         final compressedLength = (input.readByte() << 8 | input.readByte()) + 1;
         int? literalContextBits;
@@ -610,100 +610,112 @@ int _skipTrailingZeroPadding(Uint8List d, int end) {
 // This only sizes the output buffer up front, so anything unexpected makes it
 // give up instead of failing: the data itself is validated by the decoder.
 int? _uSize(Uint8List d) {
-  var end = _skipTrailingZeroPadding(d, d.length);
-  var total = 0;
+  try {
+    var end = _skipTrailingZeroPadding(d, d.length);
+    var total = 0;
 
-  // Streams can be concatenated, so walk backwards from the last stream footer
-  // to the first stream header.
-  while (end > 0) {
-    // Stream footer: CRC32 (4), backward size (4), stream flags (2), 'YZ' (2).
-    if (end < 32 || d[end - 2] != 89 /* 'Y' */ || d[end - 1] != 90 /* 'Z' */) {
-      return null;
-    }
-    final footerStart = end - 12;
-
-    // Backward size holds the size of the index in four byte units, minus one.
-    final backwardSize = d[footerStart + 4] |
-    d[footerStart + 5] << 8 |
-    d[footerStart + 6] << 16 |
-    d[footerStart + 7] << 24;
-    final indexSize = (backwardSize + 1) * 4;
-    final indexStart = footerStart - indexSize;
-    // The smallest index is eight bytes, and it is preceded by at least the
-    // twelve byte stream header.
-    if (indexSize < 8 || indexStart < 12 || d[indexStart] != 0) {
-      return null;
-    }
-
-    // The index ends with the CRC32 of everything before it in the index.
-    final crcStart = footerStart - 4;
-    final storedCrc = d[crcStart] |
-    d[crcStart + 1] << 8 |
-    d[crcStart + 2] << 16 |
-    d[crcStart + 3] << 24;
-    if (getCrc32(Uint8List.sublistView(d, indexStart, crcStart)) != storedCrc) {
-      return null;
-    }
-
-    var position = indexStart + 1;
-    // Reads a multibyte integer, returning -1 when it is malformed or runs past
-    // the last record.
-    int readMultibyteInteger() {
-      var value = 0;
-      var shift = 0;
-      while (true) {
-        if (position >= crcStart || shift > 56) {
-          return -1;
-        }
-        final data = d[position++];
-        value |= (data & 0x7f) << shift;
-        if (data & 0x80 == 0) {
-          return value;
-        }
-        shift += 7;
-      }
-    }
-
-    final recordCount = readMultibyteInteger();
-    // Every record takes at least two bytes.
-    if (recordCount < 0 || recordCount > (crcStart - position) ~/ 2) {
-      return null;
-    }
-
-    var blocksSize = 0;
-    for (var i = 0; i < recordCount; i++) {
-      final unpaddedLength = readMultibyteInteger();
-      final uncompressedLength = readMultibyteInteger();
-      if (unpaddedLength <= 0 || uncompressedLength < 0) {
+    // Streams can be concatenated, so walk backwards from the last stream footer
+    // to the first stream header.
+    while (end > 0) {
+      // Stream footer: CRC32 (4), backward size (4), stream flags (2), 'YZ' (2).
+      if (end < 32 ||
+          d[end - 2] != 89 /* 'Y' */ ||
+          d[end - 1] != 90 /* 'Z' */) {
         return null;
       }
-      // Blocks are padded to a four byte boundary.
-      final paddedLength = (unpaddedLength + 3) & ~3;
-      if (paddedLength < 0 || paddedLength < unpaddedLength) return null;
-      blocksSize += paddedLength;
-      if (blocksSize < 0) return null;
+      final footerStart = end - 12;
 
-      total += uncompressedLength;
-      if (blocksSize > indexStart || total > _maxPreallocateSize) {
+      // Backward size holds the size of the index in four byte units, minus one.
+      final backwardSize = d[footerStart + 4] |
+          d[footerStart + 5] << 8 |
+          d[footerStart + 6] << 16 |
+          d[footerStart + 7] << 24;
+      final indexSize = (backwardSize + 1) * 4;
+      final indexStart = footerStart - indexSize;
+      // The smallest index is eight bytes, and it is preceded by at least the
+      // twelve byte stream header.
+      if (indexSize < 8 || indexStart < 12 || d[indexStart] != 0) {
         return null;
       }
+
+      // The index ends with the CRC32 of everything before it in the index.
+      final crcStart = footerStart - 4;
+      final storedCrc = d[crcStart] |
+          d[crcStart + 1] << 8 |
+          d[crcStart + 2] << 16 |
+          d[crcStart + 3] << 24;
+      if (getCrc32(Uint8List.sublistView(d, indexStart, crcStart)) !=
+          storedCrc) {
+        return null;
+      }
+
+      var position = indexStart + 1;
+      // Reads a multibyte integer, returning -1 when it is malformed or runs past
+      // the last record.
+      int readMultibyteInteger() {
+        var value = 0;
+        var multiplier = 1;
+
+        for (var i = 0; i < 9; i++) {
+          if (position >= crcStart) {
+            return -1;
+          }
+
+          final data = d[position++];
+          value += (data & 0x7f) * multiplier;
+
+          if ((data & 0x80) == 0) {
+            return value;
+          }
+
+          multiplier *= 128;
+        }
+        return -1;
+      }
+
+      final recordCount = readMultibyteInteger();
+      // Every record takes at least two bytes.
+      if (recordCount < 0 || recordCount > (crcStart - position) ~/ 2) {
+        return null;
+      }
+
+      var blocksSize = 0;
+      for (var i = 0; i < recordCount; i++) {
+        final unpaddedLength = readMultibyteInteger();
+        final uncompressedLength = readMultibyteInteger();
+        if (unpaddedLength <= 0 || uncompressedLength < 0) {
+          return null;
+        }
+        // Blocks are padded to a four byte boundary.
+        final paddedLength = (unpaddedLength + 3) & ~3;
+        if (paddedLength < 0 || paddedLength < unpaddedLength) return null;
+        blocksSize += paddedLength;
+        if (blocksSize < 0) return null;
+
+        total += uncompressedLength;
+        if (blocksSize > indexStart || total > _maxPreallocateSize) {
+          return null;
+        }
+      }
+
+      // The twelve byte stream header sits in front of the blocks.
+      final streamStart = indexStart - blocksSize - 12;
+      if (streamStart < 0 ||
+          streamStart + 5 >= d.length ||
+          d[streamStart] != 253 ||
+          d[streamStart + 1] != 55 /* '7' */ ||
+          d[streamStart + 2] != 122 /* 'z' */ ||
+          d[streamStart + 3] != 88 /* 'X' */ ||
+          d[streamStart + 4] != 90 /* 'Z' */ ||
+          d[streamStart + 5] != 0) {
+        return null;
+      }
+
+      end = _skipTrailingZeroPadding(d, streamStart);
     }
 
-    // The twelve byte stream header sits in front of the blocks.
-    final streamStart = indexStart - blocksSize - 12;
-    if (streamStart < 0 ||
-        streamStart + 5 >= d.length ||
-        d[streamStart] != 253 ||
-        d[streamStart + 1] != 55 /* '7' */ ||
-        d[streamStart + 2] != 122 /* 'z' */ ||
-        d[streamStart + 3] != 88 /* 'X' */ ||
-        d[streamStart + 4] != 90 /* 'Z' */ ||
-        d[streamStart + 5] != 0) {
-      return null;
-    }
-
-    end = _skipTrailingZeroPadding(d, streamStart);
+    return total;
+  } catch (_) {
+    return null;
   }
-
-  return total;
 }
