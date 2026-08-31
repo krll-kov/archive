@@ -53,7 +53,7 @@ class XZDecoder {
 
   /// Gets uncompressed size of XZ archive, if it's valid. When archive
   /// is not valid, return value is null. May be used with [decodeStream]
-  /// for memory efficieny.
+  /// for memory efficiency.
   ///
   /// ```dart
   /// final Uint8List from = Uint8List(0); // your archive
