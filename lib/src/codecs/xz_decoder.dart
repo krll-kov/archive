@@ -6,6 +6,7 @@ import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
 import '../util/output_stream.dart';
+import 'bcj_x86.dart';
 import 'lzma/lzma_decoder.dart';
 
 // The XZ specification can be found at
@@ -132,6 +133,17 @@ class _XZStreamDecoder {
         final distance = properties[0];
         filters.add(id);
         filters.add(distance);
+      } else if (id == 0x04) {
+        // x86 BCJ filter
+        var startOffset = 0;
+        if (propertiesLength == 4) {
+          startOffset = properties[0] |
+          properties[1] << 8 |
+          properties[2] << 16 |
+          properties[3] << 24;
+        }
+        filters.add(id);
+        filters.add(startOffset);
       } else if (id == 0x21) {
         // lzma2 filter
         final v = properties[0];
@@ -169,17 +181,39 @@ class _XZStreamDecoder {
       //throw ArchiveException('Invalid block CRC checksum');
     }
 
-    // We must abort if there is more than one filter
-    // (length != 2) or if the filter is not LZMA2 (first != 0x21).
-    if (filters.length != 2 || filters.first != 0x21) {
+    // Entries are stored as (id, value) pairs. The supported chains are LZMA2
+    // on its own, or the x86 BCJ filter followed by LZMA2.
+    final hasX86 =
+        filters.length == 4 && filters[0] == 0x04 && filters[2] == 0x21;
+    if (!hasX86 && (filters.length != 2 || filters.first != 0x21)) {
       return false;
-      //throw ArchiveException('Unsupported filters');
     }
+    final x86StartOffset = hasX86 ? filters[1] : 0;
 
     final startPosition = input.position;
     final startDataLength = output.length;
 
-    if (!_readLZMA2(input, output, dictionarySize)) return false;
+    if (hasX86 && output is! OutputMemoryStream) {
+      // Streams that are not backed by a contiguous buffer cannot be rewritten
+      // after the data has been written, so the block is unfiltered in a
+      // temporary buffer and appended afterwards.
+      final block = OutputMemoryStream(size: uncompressedLength);
+      if (!_readLZMA2(input, block, dictionarySize)) {
+        return false;
+      }
+      final bytes = block.getBytes();
+      bcjX86Decode(bytes, x86StartOffset);
+      output.writeBytes(bytes);
+    } else {
+      if (!_readLZMA2(input, output, dictionarySize)) {
+        return false;
+      }
+      if (hasX86) {
+        // subset() returns a view into the output buffer, so the filter is
+        // applied in place without allocating a copy of the block.
+        bcjX86Decode(output.subset(startDataLength), x86StartOffset);
+      }
+    }
 
     final actualCompressedLength = input.position - startPosition;
     final actualUncompressedLength = output.length - startDataLength;
@@ -243,7 +277,8 @@ class _XZStreamDecoder {
         }*/
         break;
       case 0xa: // SHA-256
-        /*final expectedCrc =*/ input.readBytes(32).toUint8List();
+      /*final expectedCrc =*/
+        input.readBytes(32).toUint8List();
         /*if (verify) {
           final actualCrc =
               sha256.convert(data.toBytes().sublist(startDataLength)).bytes;
@@ -270,7 +305,7 @@ class _XZStreamDecoder {
         }*/
         break;
       default:
-        //throw ArchiveException('Unknown block check type $checkType');
+      //throw ArchiveException('Unknown block check type $checkType');
         return false;
     }
 
@@ -317,8 +352,8 @@ class _XZStreamDecoder {
         // 3 - reset state, properties and dictionary
         final reset = (control >> 5) & 0x3;
         final uncompressedLength = ((control & 0x1f) << 16 |
-                input.readByte() << 8 |
-                input.readByte()) +
+        input.readByte() << 8 |
+        input.readByte()) +
             1;
         final compressedLength = (input.readByte() << 8 | input.readByte()) + 1;
         int? literalContextBits;
@@ -340,8 +375,8 @@ class _XZStreamDecoder {
               resetDictionary: reset == 3);
         }
 
-        output.writeBytes(decoder.decode(
-            input.readBytes(compressedLength), uncompressedLength));
+        decoder.decodeToOutput(
+            input.readBytes(compressedLength), uncompressedLength, output);
         decoder.trimDictionary(dictionarySize);
       }
     }
