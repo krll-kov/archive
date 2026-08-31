@@ -1,3 +1,12 @@
+# 4.3.0
+
+* Added —x86 flag support to XZDecoder
+* Improved verify: true speed for XZDecoder
+* Improved overall decode speed for XZDecoder
+* Added concatenated streams support for XZDecoder
+* Fix: pb=4 flag range error in XZDecoder
+* Fix: padding for _streamStart in XZDecoder
+
 # 4.2.0
 
 * Optimize performance and issues with large files with XZDecoder.
