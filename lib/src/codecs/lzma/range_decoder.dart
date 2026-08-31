@@ -6,6 +6,6 @@
 // The condition selects the web implementation for JavaScript only. On wasm an
 // int is a real 64 bit integer, so the native implementation is both correct
 // and faster there, and dart:html is not available to select against.
-export 'range_decoder_table.dart';
 export 'range_decoder_native.dart'
     if (dart.library.html) 'range_decoder_web.dart';
+export 'range_decoder_table.dart';
