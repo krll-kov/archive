@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../../util/input_stream.dart';
+import '../../util/output_stream.dart';
 
 import 'range_decoder.dart';
 
@@ -159,9 +160,10 @@ class LzmaDecoder {
     }
   }
 
-  Uint8List decodeUncompressed(InputStream input, int uncompressedLength) {
-    final inputData = input.readBytes(uncompressedLength);
-
+  // Expands the dictionary so that [uncompressedLength] more bytes fit after
+  // the current write position, and returns the write position from before the
+  // expansion, which is where the new data starts.
+  int _reserve(int uncompressedLength) {
     final initialSize = _writePosition;
     final finalSize = initialSize + uncompressedLength;
     if (finalSize > _dictionary.length) {
@@ -182,44 +184,12 @@ class LzmaDecoder {
       }
       _dictionary = newDictionary;
     }
-
-    final inputBytes = inputData.toUint8List();
-    _dictionary.setAll(initialSize, inputBytes);
-    _writePosition += uncompressedLength;
-
-    return inputBytes;
+    return initialSize;
   }
 
-  // Decode [input] which contains compressed LZMA data that unpacks to
-  // [uncompressedLength] bytes.
-  Uint8List decode(InputStream input, int uncompressedLength) {
-    _rc.setBuffer(input.toUint8List());
-    _rc.initialize();
-
-    // Expand dictionary to fit new data.
-    final initialSize = _writePosition;
-    final finalSize = initialSize + uncompressedLength;
-    if (finalSize > _dictionary.length) {
-      var newLen = _dictionary.isEmpty ? finalSize : _dictionary.length;
-      while (newLen < finalSize) {
-        newLen *= 2;
-      }
-
-      if (dictionaryCap > 0 &&
-          newLen > dictionaryCap &&
-          dictionaryCap >= finalSize) {
-        newLen = dictionaryCap;
-      }
-
-      final newDictionary = Uint8List(newLen);
-      if (_writePosition > 0) {
-        newDictionary.setRange(0, _writePosition, _dictionary);
-      }
-      _dictionary = newDictionary;
-    }
-
-    // Decode packets (literal, match or repeat) until all the data has been
-    // decoded.
+  // Decodes packets (literal, match or repeat) until the write position
+  // reaches [finalSize].
+  void _decodePackets(int finalSize) {
     final positionMask = (1 << _positionBits) - 1;
     while (_writePosition < finalSize) {
       final posState = _writePosition & positionMask;
@@ -231,9 +201,51 @@ class LzmaDecoder {
         _decodeRepeat(posState);
       }
     }
+  }
 
-    // Return new data added to the dictionary.
+  Uint8List decodeUncompressed(InputStream input, int uncompressedLength) {
+    final inputData = input.readBytes(uncompressedLength);
+    final initialSize = _reserve(uncompressedLength);
+
+    final inputBytes = inputData.toUint8List();
+    _dictionary.setAll(initialSize, inputBytes);
+    _writePosition += uncompressedLength;
+
+    return inputBytes;
+  }
+
+  // Decode [input] which contains compressed LZMA data that unpacks to
+  // [uncompressedLength] bytes.
+  //
+  // The result is copied out of the dictionary, because [trimDictionary] may
+  // move the dictionary contents afterwards. Prefer [decodeToOutput] when the
+  // data is only going to be appended to an [OutputStream].
+  Uint8List decode(InputStream input, int uncompressedLength) {
+    _rc.setBuffer(input.toUint8List());
+    _rc.initialize();
+
+    final initialSize = _reserve(uncompressedLength);
+    _decodePackets(initialSize + uncompressedLength);
+
     return _dictionary.sublist(initialSize, _writePosition);
+  }
+
+  // Decode [input], which contains compressed LZMA data that unpacks to
+  // [uncompressedLength] bytes, appending the result directly to [output].
+  //
+  // This avoids the intermediate copy [decode] has to make. The view handed to
+  // [OutputStream.writeBytes] does not outlive the call, so a later
+  // [trimDictionary] cannot invalidate it.
+  void decodeToOutput(
+      InputStream input, int uncompressedLength, OutputStream output) {
+    _rc.setBuffer(input.toUint8List());
+    _rc.initialize();
+
+    final initialSize = _reserve(uncompressedLength);
+    _decodePackets(initialSize + uncompressedLength);
+
+    output.writeBytes(
+        Uint8List.sublistView(_dictionary, initialSize, _writePosition));
   }
 
   // Returns true if the previous packet seen was a literal.
