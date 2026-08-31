@@ -39,7 +39,7 @@ class XZDecoder {
   ///
   /// ```dart
   /// final Uint8List from = Uint8List(0); // your archive
-  /// final OutputMemoryStream output = OutputMemoryStream(size: const XZDecoder().uncompressedSize(from));
+  /// final OutputMemoryStream output = OutputMemoryStream(size: XZDecoder().uncompressedSize(from));
   /// final bool ok = XZDecoder().decodeStream(InputMemoryStream(from), output);
   /// if (!ok) throw 'XZ decode failed';
   /// return output.getBytes();
@@ -613,6 +613,7 @@ int? _uSize(Uint8List d) {
   try {
     var end = _skipTrailingZeroPadding(d, d.length);
     var total = 0;
+    var streamCount = 0;
 
     // Streams can be concatenated, so walk backwards from the last stream footer
     // to the first stream header.
@@ -711,10 +712,11 @@ int? _uSize(Uint8List d) {
         return null;
       }
 
+      streamCount++;
       end = _skipTrailingZeroPadding(d, streamStart);
     }
 
-    return total;
+    return streamCount > 0 ? total : null;
   } catch (_) {
     return null;
   }
