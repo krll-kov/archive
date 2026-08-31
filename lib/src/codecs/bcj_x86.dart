@@ -1,16 +1,13 @@
 import 'dart:typed_data';
 
-// The x86 BCJ filter converts relative CALL/JMP targets into absolute ones so
-// that identical calls compress to identical bytes. Derived from the reference
-// implementation in liblzma (src/liblzma/simple/x86.c).
-const List<bool> _maskToAllowedStatus = [
-  true, true, true, false, true, false, false, false //
-];
-
 const _maskToBitNumber = [0, 1, 2, 2, 3, 3, 3, 3];
-
 const _maskArray = [0xffffffff, 0xffffff, 0xffff, 0xff];
 
+// Bit i is set when a previous mask value of i allows a conversion. Replaces
+// a lookup in a list of booleans on the hot path.
+const _allowedStatusMask = 0x17;
+
+@pragma('vm:prefer-inline')
 bool _testMsByte(int b) => b == 0x00 || b == 0xff;
 
 /// Applies the x86 BCJ filter to [buffer] in the decode direction, in place.
@@ -20,6 +17,7 @@ bool _testMsByte(int b) => b == 0x00 || b == 0xff;
 ///
 /// The filter state never crosses an xz block boundary, so a whole block can
 /// be passed in a single call.
+@pragma('vm:unsafe:no-bounds-checks')
 void bcjX86Decode(Uint8List buffer, [int startOffset = 0]) {
   if (buffer.length < 5) {
     return;
@@ -33,7 +31,7 @@ void bcjX86Decode(Uint8List buffer, [int startOffset = 0]) {
 
   while (bufferPos <= limit) {
     var b = buffer[bufferPos];
-    if (b != 0xe8 && b != 0xe9) {
+    if (b & 0xfe != 0xe8) {
       bufferPos++;
       continue;
     }
@@ -52,12 +50,12 @@ void bcjX86Decode(Uint8List buffer, [int startOffset = 0]) {
 
     b = buffer[bufferPos + 4];
     if (_testMsByte(b) &&
-        _maskToAllowedStatus[(prevMask >> 1) & 0x7] &&
+        (_allowedStatusMask >> ((prevMask >> 1) & 0x7)) & 1 != 0 &&
         (prevMask >> 1) < 0x10) {
       var src = (b << 24) |
-          (buffer[bufferPos + 3] << 16) |
-          (buffer[bufferPos + 2] << 8) |
-          buffer[bufferPos + 1];
+      (buffer[bufferPos + 3] << 16) |
+      (buffer[bufferPos + 2] << 8) |
+      buffer[bufferPos + 1];
 
       int dest;
       while (true) {
