@@ -3,9 +3,9 @@
 // cannot be expressed where an int is a JavaScript number, so JavaScript
 // targets get a branching implementation instead.
 //
-// The condition selects the web implementation for JavaScript only. On wasm an
-// int is a real 64 bit integer, so the native implementation is both correct
-// and faster there, and dart:html is not available to select against.
+// dart:io is available wherever an int is a real 64 bit integer, on the VM and
+// on wasm alike, so the native implementation is selected against it. The
+// branching implementation is the default because it is correct anywhere.
+export 'range_decoder_table.dart';
 export 'range_decoder_web.dart'
     if (dart.library.io) 'range_decoder_native.dart';
-export 'range_decoder_table.dart';
