@@ -678,7 +678,11 @@ int? _uSize(Uint8List d) {
         return null;
       }
       // Blocks are padded to a four byte boundary.
-      blocksSize += (unpaddedLength + 3) & ~3;
+      final paddedLength = (unpaddedLength + 3) & ~3;
+      if (paddedLength < 0 || paddedLength < unpaddedLength) return null;
+      blocksSize += paddedLength;
+      if (blocksSize < 0) return null;
+
       total += uncompressedLength;
       if (blocksSize > indexStart || total > _maxPreallocateSize) {
         return null;
@@ -688,6 +692,7 @@ int? _uSize(Uint8List d) {
     // The twelve byte stream header sits in front of the blocks.
     final streamStart = indexStart - blocksSize - 12;
     if (streamStart < 0 ||
+        streamStart + 5 >= d.length ||
         d[streamStart] != 253 ||
         d[streamStart + 1] != 55 /* '7' */ ||
         d[streamStart + 2] != 122 /* 'z' */ ||
