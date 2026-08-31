@@ -548,14 +548,14 @@ class _XZStreamDecoder {
   // Reads a multibyte integer from [input].
   int _readMultibyteInteger(InputStream input) {
     var value = 0;
-    var shift = 0;
+    var multiplier = 1;
     while (true) {
       final data = input.readByte();
-      value |= (data & 0x7f) << shift;
+      value += (data & 0x7f) * multiplier;
       if (data & 0x80 == 0) {
         return value;
       }
-      shift += 7;
+      multiplier *= 128;
     }
   }
 
@@ -684,7 +684,9 @@ int? _uSize(Uint8List d) {
       for (var i = 0; i < recordCount; i++) {
         final unpaddedLength = readMultibyteInteger();
         final uncompressedLength = readMultibyteInteger();
-        if (unpaddedLength <= 0 || uncompressedLength < 0) {
+        if (unpaddedLength <= 0 ||
+            unpaddedLength > indexStart ||
+            uncompressedLength < 0) {
           return null;
         }
         // Blocks are padded to a four byte boundary.
