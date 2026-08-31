@@ -15,8 +15,15 @@ import 'lzma/lzma_decoder.dart';
 /// Decompress data with the xz format decoder.
 class XZDecoder {
   Uint8List decodeBytes(List<int> data, {bool verify = false}) {
-    final output = OutputMemoryStream();
-    decodeStream(InputMemoryStream(data), output, verify: verify);
+    final bytes = data is Uint8List ? data : Uint8List.fromList(data);
+    // The stream indexes give the output size up front, which avoids growing
+    // the output buffer while decoding. A zero size is left to the default
+    // because the buffer cannot grow out of an empty allocation.
+    final int? size = _uSize(bytes);
+    final OutputMemoryStream output =
+        OutputMemoryStream(size: size != null && size > 0 ? size : null);
+
+    decodeStream(InputMemoryStream(bytes), output, verify: verify);
     return output.getBytes();
   }
 
@@ -25,6 +32,20 @@ class XZDecoder {
     final decoder = _XZStreamDecoder(verify: verify);
     return decoder.decode(input, output);
   }
+
+  /// Gets uncompressed size of XZ archive, if it's valid. When archive
+  /// is not valid, return value is null. May be used with [decodeStream]
+  /// for memory efficieny.
+  ///
+  /// ```dart
+  /// final Uint8List from = Uint8List(0); // your archive
+  /// final OutputMemoryStream output = OutputMemoryStream(size: const XZDecoder().uncompressedSize(from));
+  /// final bool ok = XZDecoder().decodeStream(InputMemoryStream(from), output);
+  /// if (!ok) throw 'XZ decode failed';
+  /// return output.getBytes();
+  /// ```
+  int? uncompressedSize(List<int> data) =>
+      _uSize(data is Uint8List ? data : Uint8List.fromList(data));
 }
 
 /// Decodes an XZ stream.
@@ -41,10 +62,39 @@ class _XZStreamDecoder {
   // Block sizes.
   final _blockSizes = <_XZBlockSize>[];
 
+  // Position of the start of the stream being decoded. Padding inside a stream
+  // is aligned to this, not to the start of [input], which may have been
+  // positioned elsewhere by the caller.
+  var _streamStart = 0;
+
   _XZStreamDecoder({this.verify = false});
 
   /// Decode this stream and return the uncompressed data.
   bool decode(InputStream input, OutputStream output) {
+    while (true) {
+      if (!_decodeStream(input, output)) {
+        return false;
+      }
+
+      // Streams can be concatenated, and each one may be followed by padding.
+      if (!_skipStreamPadding(input)) {
+        return false;
+      }
+      if (input.isEOS) {
+        return true;
+      }
+    }
+  }
+
+  // Decodes a single stream from [input].
+  bool _decodeStream(InputStream input, OutputStream output) {
+    // Each stream has its own flags, block list and dictionary.
+    _streamStart = input.position;
+    streamFlags = 0;
+    _blockSizes.clear();
+    decoder.dictionaryCap = 0;
+    decoder.reset(resetDictionary: true);
+
     if (!_readStreamHeader(input, output)) {
       return false;
     }
@@ -68,6 +118,21 @@ class _XZStreamDecoder {
 
     // Valid XZ always goes trough _readStreamFooter
     return false;
+  }
+
+  // Skips the padding that may follow a stream. Padding is zero bytes in
+  // multiples of four, and is followed by another stream or the end of the
+  // input.
+  bool _skipStreamPadding(InputStream input) {
+    var count = 0;
+    while (!input.isEOS) {
+      if (input.peekBytes(1).readByte() != 0) {
+        break;
+      }
+      input.skip(1);
+      count++;
+    }
+    return count % 4 == 0;
   }
 
   // Reads an XZ steam header from [input].
@@ -138,9 +203,9 @@ class _XZStreamDecoder {
         var startOffset = 0;
         if (propertiesLength == 4) {
           startOffset = properties[0] |
-              properties[1] << 8 |
-              properties[2] << 16 |
-              properties[3] << 24;
+          properties[1] << 8 |
+          properties[2] << 16 |
+          properties[3] << 24;
         }
         filters.add(id);
         filters.add(startOffset);
@@ -193,17 +258,27 @@ class _XZStreamDecoder {
     final startPosition = input.position;
     final startDataLength = output.length;
 
-    if (hasX86 && output is! OutputMemoryStream) {
-      // Streams that are not backed by a contiguous buffer cannot be rewritten
-      // after the data has been written, so the block is unfiltered in a
+    // The decoded block is needed again when a filter has to be applied or a
+    // checksum verified.
+    final checkType = streamFlags & 0xf;
+    final needsBlockData = hasX86 ||
+        (verify &&
+            (checkType == 0x1 || (checkType == 0x4 && isCrc64Supported())));
+    Uint8List? blockData;
+
+    if (needsBlockData && output is! OutputMemoryStream) {
+      // Streams that are not backed by a contiguous buffer cannot be read back
+      // after the data has been written, so the block is decoded into a
       // temporary buffer and appended afterwards.
       final block = OutputMemoryStream(size: uncompressedLength);
       if (!_readLZMA2(input, block, dictionarySize)) {
         return false;
       }
-      final bytes = block.getBytes();
-      bcjX86Decode(bytes, x86StartOffset);
-      output.writeBytes(bytes);
+      blockData = block.getBytes();
+      if (hasX86) {
+        bcjX86Decode(blockData, x86StartOffset);
+      }
+      output.writeBytes(blockData);
     } else {
       if (!_readLZMA2(input, output, dictionarySize)) {
         return false;
@@ -230,19 +305,20 @@ class _XZStreamDecoder {
       //throw ArchiveException("Uncompressed data doesn't match expected length");
     }
 
-    final paddingSize = _readPadding(input);
+    final paddingSize = _readPadding(input, _streamStart);
     if (paddingSize < 0) {
       return false;
     }
 
     // Checksum
-    final checkType = streamFlags & 0xf;
     switch (checkType) {
       case 0: // none
         break;
       case 0x1: // CRC32
         final int expectedCrc = input.readUint32();
-        if (verify && getCrc32(output.subset(startDataLength)) != expectedCrc) {
+        if (verify &&
+            getCrc32(blockData ?? output.subset(startDataLength)) !=
+                expectedCrc) {
           return false;
         }
         break;
@@ -257,7 +333,8 @@ class _XZStreamDecoder {
         final int expectedCrc = input.readUint64();
         if (verify &&
             isCrc64Supported() &&
-            getCrc64(output.subset(startDataLength)) != expectedCrc) {
+            getCrc64(blockData ?? output.subset(startDataLength)) !=
+                expectedCrc) {
           return false;
         }
         break;
@@ -277,7 +354,7 @@ class _XZStreamDecoder {
         }*/
         break;
       case 0xa: // SHA-256
-        /*final expectedCrc =*/
+      /*final expectedCrc =*/
         input.readBytes(32).toUint8List();
         /*if (verify) {
           final actualCrc =
@@ -305,7 +382,7 @@ class _XZStreamDecoder {
         }*/
         break;
       default:
-        //throw ArchiveException('Unknown block check type $checkType');
+      //throw ArchiveException('Unknown block check type $checkType');
         return false;
     }
 
@@ -352,8 +429,8 @@ class _XZStreamDecoder {
         // 3 - reset state, properties and dictionary
         final reset = (control >> 5) & 0x3;
         final uncompressedLength = ((control & 0x1f) << 16 |
-                input.readByte() << 8 |
-                input.readByte()) +
+        input.readByte() << 8 |
+        input.readByte()) +
             1;
         final compressedLength = (input.readByte() << 8 | input.readByte()) + 1;
         int? literalContextBits;
@@ -414,7 +491,7 @@ class _XZStreamDecoder {
         //throw ArchiveException('Stream index uncompressed length mismatch');
       }
     }
-    if (_readPadding(input) < 0) {
+    if (_readPadding(input, _streamStart) < 0) {
       return -1;
     }
 
@@ -485,9 +562,9 @@ class _XZStreamDecoder {
   // Reads padding from [input] until the read position is aligned to a 4 byte
   // boundary. The padding bytes are confirmed to be zeros.
   // Returns he number of padding bytes.
-  int _readPadding(InputStream input) {
+  int _readPadding(InputStream input, [int origin = 0]) {
     var count = 0;
-    while (input.position % 4 != 0) {
+    while ((input.position - origin) % 4 != 0) {
       if (input.readByte() != 0) {
         return -1;
         //throw ArchiveException('Non-zero padding byte');
@@ -507,4 +584,121 @@ class _XZBlockSize {
   final int uncompressedLength;
 
   const _XZBlockSize(this.unpaddedLength, this.uncompressedLength);
+}
+
+// Largest size that is worth pre-allocating from a stream index. A valid index
+// can describe an output that is much larger than the available memory, so
+// anything above this is treated as unknown.
+const _maxPreallocateSize = 1 << 31;
+
+// Returns the offset of the start of the stream padding that ends at [end].
+// Padding is zero bytes in multiples of four.
+int _skipTrailingZeroPadding(Uint8List d, int end) {
+  while (end >= 4 &&
+      d[end - 1] == 0 &&
+      d[end - 2] == 0 &&
+      d[end - 3] == 0 &&
+      d[end - 4] == 0) {
+    end -= 4;
+  }
+  return end;
+}
+
+// Returns the total uncompressed size of every stream in [d], taken from the
+// stream indexes, or null if it cannot be determined.
+//
+// This only sizes the output buffer up front, so anything unexpected makes it
+// give up instead of failing: the data itself is validated by the decoder.
+int? _uSize(Uint8List d) {
+  var end = _skipTrailingZeroPadding(d, d.length);
+  var total = 0;
+
+  // Streams can be concatenated, so walk backwards from the last stream footer
+  // to the first stream header.
+  while (end > 0) {
+    // Stream footer: CRC32 (4), backward size (4), stream flags (2), 'YZ' (2).
+    if (end < 32 || d[end - 2] != 89 /* 'Y' */ || d[end - 1] != 90 /* 'Z' */) {
+      return null;
+    }
+    final footerStart = end - 12;
+
+    // Backward size holds the size of the index in four byte units, minus one.
+    final backwardSize = d[footerStart + 4] |
+    d[footerStart + 5] << 8 |
+    d[footerStart + 6] << 16 |
+    d[footerStart + 7] << 24;
+    final indexSize = (backwardSize + 1) * 4;
+    final indexStart = footerStart - indexSize;
+    // The smallest index is eight bytes, and it is preceded by at least the
+    // twelve byte stream header.
+    if (indexSize < 8 || indexStart < 12 || d[indexStart] != 0) {
+      return null;
+    }
+
+    // The index ends with the CRC32 of everything before it in the index.
+    final crcStart = footerStart - 4;
+    final storedCrc = d[crcStart] |
+    d[crcStart + 1] << 8 |
+    d[crcStart + 2] << 16 |
+    d[crcStart + 3] << 24;
+    if (getCrc32(Uint8List.sublistView(d, indexStart, crcStart)) != storedCrc) {
+      return null;
+    }
+
+    var position = indexStart + 1;
+    // Reads a multibyte integer, returning -1 when it is malformed or runs past
+    // the last record.
+    int readMultibyteInteger() {
+      var value = 0;
+      var shift = 0;
+      while (true) {
+        if (position >= crcStart || shift > 56) {
+          return -1;
+        }
+        final data = d[position++];
+        value |= (data & 0x7f) << shift;
+        if (data & 0x80 == 0) {
+          return value;
+        }
+        shift += 7;
+      }
+    }
+
+    final recordCount = readMultibyteInteger();
+    // Every record takes at least two bytes.
+    if (recordCount < 0 || recordCount > (crcStart - position) ~/ 2) {
+      return null;
+    }
+
+    var blocksSize = 0;
+    for (var i = 0; i < recordCount; i++) {
+      final unpaddedLength = readMultibyteInteger();
+      final uncompressedLength = readMultibyteInteger();
+      if (unpaddedLength <= 0 || uncompressedLength < 0) {
+        return null;
+      }
+      // Blocks are padded to a four byte boundary.
+      blocksSize += (unpaddedLength + 3) & ~3;
+      total += uncompressedLength;
+      if (blocksSize > indexStart || total > _maxPreallocateSize) {
+        return null;
+      }
+    }
+
+    // The twelve byte stream header sits in front of the blocks.
+    final streamStart = indexStart - blocksSize - 12;
+    if (streamStart < 0 ||
+        d[streamStart] != 253 ||
+        d[streamStart + 1] != 55 /* '7' */ ||
+        d[streamStart + 2] != 122 /* 'z' */ ||
+        d[streamStart + 3] != 88 /* 'X' */ ||
+        d[streamStart + 4] != 90 /* 'Z' */ ||
+        d[streamStart + 5] != 0) {
+      return null;
+    }
+
+    end = _skipTrailingZeroPadding(d, streamStart);
+  }
+
+  return total;
 }
