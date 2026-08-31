@@ -53,9 +53,9 @@ void bcjX86Decode(Uint8List buffer, [int startOffset = 0]) {
         (_allowedStatusMask >> ((prevMask >> 1) & 0x7)) & 1 != 0 &&
         (prevMask >> 1) < 0x10) {
       var src = (b << 24) |
-      (buffer[bufferPos + 3] << 16) |
-      (buffer[bufferPos + 2] << 8) |
-      buffer[bufferPos + 1];
+          (buffer[bufferPos + 3] << 16) |
+          (buffer[bufferPos + 2] << 8) |
+          buffer[bufferPos + 1];
 
       int dest;
       while (true) {
