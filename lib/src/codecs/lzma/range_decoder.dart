@@ -70,9 +70,14 @@ class RangeDecoder {
   // Set the input being read from. Must be set before initializing or reading
   // bits.
   void setBuffer(Uint8List data) {
-    final padded = Uint8List(data.length + readAheadPadding);
-    padded.setRange(0, data.length, data);
-    _buffer = padded;
+    final needed = data.length + readAheadPadding;
+    var buffer = _buffer;
+    if (buffer.length < needed) {
+      buffer = Uint8List(needed);
+      _buffer = buffer;
+    }
+    buffer.setRange(0, data.length, data);
+    buffer.fillRange(data.length, needed, 0);
     _bufferPos = 0;
     _dataEnd = data.length;
   }
