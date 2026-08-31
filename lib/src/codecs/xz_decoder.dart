@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../util/archive_exception.dart';
 import '../util/crc32.dart';
 import '../util/crc64.dart';
 import '../util/input_memory_stream.dart';
@@ -14,6 +15,11 @@ import 'lzma/lzma_decoder.dart';
 
 /// Decompress data with the xz format decoder.
 class XZDecoder {
+  /// Decompress the given [bytes] with the xz format.
+  ///
+  /// A malformed or truncated archive yields whatever was decoded before the
+  /// failure rather than an error. Use [decodeStream] and check its result
+  /// when that matters.
   Uint8List decodeBytes(List<int> data, {bool verify = false}) {
     final bytes = data is Uint8List ? data : Uint8List.fromList(data);
     // The stream indexes give the output size up front, which avoids growing
@@ -27,10 +33,22 @@ class XZDecoder {
     return output.getBytes();
   }
 
+  /// Decompress the given [input] with the xz format, writing the
+  /// decompressed data to the [output] stream.
+  ///
+  /// Returns false if the archive is malformed or truncated, in which case
+  /// [output] holds however much was decoded before the failure and should be
+  /// discarded. Set [throwOnError] to get an [ArchiveException] instead.
   bool decodeStream(InputStream input, OutputStream output,
-      {bool verify = false}) {
-    final decoder = _XZStreamDecoder(verify: verify);
-    return decoder.decode(input, output);
+      {bool verify = false, bool throwOnError = false}) {
+    try {
+      final decoder = _XZStreamDecoder(verify: verify);
+      if (decoder.decode(input, output)) return true;
+    } catch (error) {
+      if (throwOnError) throw ArchiveException('Invalid XZ archive: $error');
+    }
+    if (throwOnError) throw ArchiveException('Invalid XZ archive');
+    return false;
   }
 
   /// Gets uncompressed size of XZ archive, if it's valid. When archive
