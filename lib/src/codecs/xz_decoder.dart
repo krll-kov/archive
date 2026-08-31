@@ -138,9 +138,9 @@ class _XZStreamDecoder {
         var startOffset = 0;
         if (propertiesLength == 4) {
           startOffset = properties[0] |
-          properties[1] << 8 |
-          properties[2] << 16 |
-          properties[3] << 24;
+              properties[1] << 8 |
+              properties[2] << 16 |
+              properties[3] << 24;
         }
         filters.add(id);
         filters.add(startOffset);
@@ -277,7 +277,7 @@ class _XZStreamDecoder {
         }*/
         break;
       case 0xa: // SHA-256
-      /*final expectedCrc =*/
+        /*final expectedCrc =*/
         input.readBytes(32).toUint8List();
         /*if (verify) {
           final actualCrc =
@@ -305,7 +305,7 @@ class _XZStreamDecoder {
         }*/
         break;
       default:
-      //throw ArchiveException('Unknown block check type $checkType');
+        //throw ArchiveException('Unknown block check type $checkType');
         return false;
     }
 
@@ -352,8 +352,8 @@ class _XZStreamDecoder {
         // 3 - reset state, properties and dictionary
         final reset = (control >> 5) & 0x3;
         final uncompressedLength = ((control & 0x1f) << 16 |
-        input.readByte() << 8 |
-        input.readByte()) +
+                input.readByte() << 8 |
+                input.readByte()) +
             1;
         final compressedLength = (input.readByte() << 8 | input.readByte()) + 1;
         int? literalContextBits;
@@ -362,10 +362,16 @@ class _XZStreamDecoder {
         if (reset >= 2) {
           // The three LZMA decoder properties are combined into a single number.
           var properties = input.readByte();
+          if (properties > 224) {
+            return false;
+          }
           positionBits = properties ~/ 45;
           properties -= positionBits * 45;
           literalPositionBits = properties ~/ 9;
           literalContextBits = properties - literalPositionBits * 9;
+          if (literalContextBits + literalPositionBits > 4) {
+            return false;
+          }
         }
         if (reset > 0) {
           decoder.reset(
