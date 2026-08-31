@@ -5,6 +5,7 @@
 * Improved overall decode speed for XZDecoder
 * Decreased RAM usage for XZDecoder
 * Added concatenated streams support for XZDecoder
+* Added XZDecoder wasm support
 * Added uncompressedSize getter for XZDecoder that returns original file size before its compression
 * Fix: pb=4 flag range error in XZDecoder
 * Fix: padding for _streamStart in XZDecoder
