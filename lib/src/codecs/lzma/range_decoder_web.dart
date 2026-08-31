@@ -31,11 +31,6 @@ class RangeDecoder {
   // bytes a single LZMA packet can consume.
   static const readAheadPadding = 64;
 
-  RangeDecoder() {
-    assert(identical(1, 1.0),
-        'range_decoder_web.dart was selected on a platform with 64 bit ints');
-  }
-
   // True once more input has been consumed than was supplied, which means the
   // stream is truncated or corrupt.
   bool get isOverrun => _bufferPos > _dataEnd;
