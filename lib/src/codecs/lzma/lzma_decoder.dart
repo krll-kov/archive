@@ -75,6 +75,16 @@ class LzmaDecoder {
   var _writePosition = 0;
   int dictionaryCap = 0;
 
+  /// Largest match distance the stream is allowed to use, which is the
+  /// dictionary size the block header declares.
+  ///
+  /// The dictionary buffer is deliberately larger than that, so checking a
+  /// match against the buffer alone accepts streams that reach further back
+  /// than they declared. Those are the streams xz itself rejects as corrupt,
+  /// and accepting them is what lets a remembered distance outlive the data it
+  /// pointed at. Zero means no limit, for callers that decode raw LZMA.
+  int dictionaryLimit = 0;
+
   /// Creates an LZMA decoder.
   LzmaDecoder() {
     for (var i = 0; i < _LzmaState.values.length; i++) {
@@ -269,8 +279,15 @@ class LzmaDecoder {
     if (_prevPacketIsLiteral()) {
       value = _rc.decodeByte(probs, baseIndex);
     } else {
-      value = _rc.decodeMatchedByte(
-          probs, baseIndex, _dictionary[_writePosition - _distance0 - 1]);
+      // Bounds checks are off in this method, so this index has to be checked
+      // the way [_repeatData] checks its own. It can go negative even though
+      // the distance was in range when it was used: [trimDictionary] moves the
+      // write position back without adjusting the remembered distances.
+      final matchIndex = _writePosition - _distance0 - 1;
+      if (matchIndex < 0) {
+        throw RangeError('LZMA match byte refers outside the dictionary');
+      }
+      value = _rc.decodeMatchedByte(probs, baseIndex, _dictionary[matchIndex]);
     }
 
     // Add new byte to the output.
@@ -341,7 +358,9 @@ class LzmaDecoder {
   @pragma('vm:unsafe:no-bounds-checks')
   void _repeatData(int distance, int length) {
     final src = _writePosition - distance - 1;
-    if (src < 0 || _writePosition + length > _dictionary.length) {
+    if (src < 0 ||
+        _writePosition + length > _dictionary.length ||
+        (dictionaryLimit > 0 && distance >= dictionaryLimit)) {
       throw RangeError('LZMA match refers outside the dictionary');
     }
     if (distance == 0) {

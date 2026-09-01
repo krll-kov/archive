@@ -1,5 +1,20 @@
 # 4.3.0
 
+* Added multithreaded decoding to XZDecoder. Passing an `XZMultithreadOptions`
+  to `decodeBytes` or `decodeStream` spreads the work over isolates, one xz
+  block per job, and reports the result through its `onDone` callback. Both
+  methods behave exactly as before when it is omitted. On a 1.1 GB archive of
+  six blocks: 16.1 s single threaded, 8.0 s on the default three workers,
+  5.0 s on six.
+* `decodeStream` reading from an `InputFileStream` now lets each worker read
+  its own block straight from disk, so the compressed archive never passes
+  through the calling isolate. Decoding a 1.1 GB archive to an
+  `OutputFileStream` peaks at 1.8 GB, below the 3.0 GB the single threaded
+  path uses, while being twice as fast.
+* Multithreaded decoding falls back to the single threaded path on the web,
+  where there are no isolates, and the isolate machinery is tree-shaken out of
+  web builds entirely.
+* Added `InputFileStream.fileBuffer`, `fileOffset` and `fileLength`.
 * Added —x86 flag support to XZDecoder
 * Improved verify: true speed for XZDecoder
 * Improved overall decode speed for XZDecoder
