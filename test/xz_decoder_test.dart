@@ -193,6 +193,53 @@ void main() {
       });
     });
 
+    group('maxPreallocateSize', () {
+      test('caps what uncompressedSize will vouch for', () {
+        final compressed = archiveBytes('long_distance.xz');
+        final actual = XZDecoder().uncompressedSize(compressed)!;
+
+        // The size in the index comes from the archive, so a decoder that will
+        // not act on a number that large declines to report it either.
+        expect(
+            XZDecoder(maxPreallocateSize: actual - 1)
+                .uncompressedSize(compressed),
+            isNull);
+        expect(
+            XZDecoder(maxPreallocateSize: actual).uncompressedSize(compressed),
+            equals(actual));
+      });
+
+      test('decodes the same bytes on either side of the cap', () {
+        // Below the cap the buffer is allocated up front from the index; above
+        // it the decoder grows the buffer as the bytes arrive. Both have to
+        // produce identical output.
+        final compressed = archiveBytes('long_distance.xz');
+        final reference = XZDecoder().decodeBytes(compressed);
+        expect(reference.length, equals(4 * 1024 * 1024));
+
+        for (final cap in [0, 1024, reference.length - 1, reference.length]) {
+          expect(XZDecoder(maxPreallocateSize: cap).decodeBytes(compressed),
+              equals(reference),
+              reason: 'cap $cap');
+        }
+      });
+
+      test('rejects a negative ceiling', () {
+        expect(() => XZDecoder(maxPreallocateSize: -1), throwsArgumentError);
+      });
+
+      test('defaults low enough for the platform to survive', () {
+        // A failed allocation throws on the VM but kills the page on the web,
+        // where dart2wasm cannot reach a gigabyte at all, so the default has to
+        // stay well under that there.
+        expect(xzDefaultMaxPreallocateSize, greaterThan(0));
+        if (identical(1, 1.0)) {
+          expect(xzDefaultMaxPreallocateSize,
+              lessThanOrEqualTo(512 * 1024 * 1024));
+        }
+      });
+    });
+
     group('uncompressedSize', () {
       test('agrees with the decoded length', () {
         for (final name in [

@@ -515,6 +515,48 @@ void main() {
       }
     });
 
+    test('splits an archive whose output is too large to preallocate',
+        () async {
+      // Above the ceiling on preallocation, decodeBytes cannot take the size in
+      // the index on trust and grows its buffer instead. That is about the
+      // buffer, not about the work: the blocks still have to be handed out to
+      // isolates, and an earlier version fell back to a single one here, which
+      // cost about ninefold on a three gigabyte archive.
+      //
+      // Off by default because it allocates over three gigabytes.
+      final dir = Directory.systemTemp.createTempSync('archive_xz_huge');
+      try {
+        // Zeros reach ratios in the thousands, so the archive stays small.
+        final archivePath = p.join(dir.path, 'huge.xz');
+        final source = File(p.join(dir.path, 'zeros.bin'));
+        final chunk = Uint8List(64 * 1024 * 1024);
+        final sink = source.openSync(mode: FileMode.write);
+        for (var i = 0; i < 48; i++) {
+          sink.writeFromSync(chunk);
+        }
+        sink.closeSync();
+        final result = Process.runSync(
+            'xz', ['-0', '-T4', '--block-size=64MiB', '-c', source.path],
+            stdoutEncoding: null);
+        File(archivePath).writeAsBytesSync(result.stdout as List<int>);
+        source.deleteSync();
+
+        final compressed = File(archivePath).readAsBytesSync();
+        // Beyond the ceiling the size is not reported at all.
+        expect(XZDecoder().uncompressedSize(compressed), isNull);
+
+        final decoded = await decodeBytesOnIsolates(compressed, workers: 4);
+        expect(decoded.length, equals(48 * 64 * 1024 * 1024));
+        expect(decoded[0], 0);
+        expect(decoded[decoded.length - 1], 0);
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    },
+        skip: Platform.environment['ARCHIVE_SLOW_TESTS'] == null
+            ? 'set ARCHIVE_SLOW_TESTS=1 to run; needs over 3 GB of memory'
+            : null);
+
     test('exposes the file region a stream reads from', () {
       final compressed =
           xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);

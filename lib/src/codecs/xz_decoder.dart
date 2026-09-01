@@ -24,6 +24,33 @@ export 'xz/xz_multithread_options.dart';
 /// [XZMultithreadOptions] instead spreads the work over isolates, one xz block
 /// at a time; see the notes on each method for what that costs in memory.
 class XZDecoder {
+  /// Largest output, in bytes, that will be allocated up front on the strength
+  /// of what an archive's stream index claims.
+  ///
+  /// The index is part of the archive, so the size in it is only as trustworthy
+  /// as whoever produced the file. Ratios above 6000:1 are ordinary for
+  /// repetitive data, so a small archive can honestly describe an output of
+  /// hundreds of gigabytes, and a hostile one can describe an output that is
+  /// not there at all. Beyond this the claim is not acted on: the buffer grows
+  /// as the bytes actually arrive, which costs some copying and makes an
+  /// inflated claim harmless. Decoding is not capped by it, nor is splitting
+  /// the work across isolates, and [uncompressedSize] returns null above it
+  /// rather than a number this decoder would not act on.
+  ///
+  /// The default is [xzDefaultMaxPreallocateSize], which is far lower on the
+  /// web because a failed allocation there kills the page instead of throwing.
+  /// Raise it where the memory is known to be there, lower it where a hostile
+  /// archive is a real possibility.
+  final int maxPreallocateSize;
+
+  XZDecoder({int? maxPreallocateSize})
+      : maxPreallocateSize = maxPreallocateSize ?? xzDefaultMaxPreallocateSize {
+    if (this.maxPreallocateSize < 0) {
+      throw ArgumentError.value(
+          maxPreallocateSize, 'maxPreallocateSize', 'Must not be negative');
+    }
+  }
+
   /// Decompress the given [bytes] with the xz format.
   ///
   /// A malformed or truncated archive yields whatever was decoded before the
@@ -154,8 +181,8 @@ class XZDecoder {
   /// if (!ok) throw 'XZ decode failed';
   /// return output.getBytes();
   /// ```
-  int? uncompressedSize(List<int> data) =>
-      _uSize(data is Uint8List ? data : Uint8List.fromList(data));
+  int? uncompressedSize(List<int> data) => _uSize(
+      data is Uint8List ? data : Uint8List.fromList(data), maxPreallocateSize);
 
   // The single threaded decode, which is also what the multithreaded path
   // falls back to when there are no isolates.
@@ -163,7 +190,7 @@ class XZDecoder {
     // The stream indexes give the output size up front, which avoids growing
     // the output buffer while decoding. A zero size is left to the default
     // because the buffer cannot grow out of an empty allocation.
-    final int? size = _uSize(bytes);
+    final int? size = _uSize(bytes, maxPreallocateSize);
     final OutputMemoryStream output =
         OutputMemoryStream(size: size != null && size > 0 ? size : null);
 
@@ -185,22 +212,34 @@ class XZDecoder {
 
   Future<Uint8List> _decodeBytesOnIsolates(Uint8List bytes, bool verify,
       XZMultithreadOptions<Uint8List> options) async {
-    final layout = parseXZLayout(XZMemorySource(bytes),
-        maxUncompressedSize: _maxPreallocateSize);
+    // No ceiling here: the layout only says where the blocks are, which is what
+    // decides whether the work can be split up, and reading it allocates
+    // nothing. The ceiling belongs to the buffer decision below.
+    final layout = parseXZLayout(XZMemorySource(bytes));
 
-    if (layout == null) {
-      // Without an index the archive cannot be split, so it is decoded whole
-      // on one isolate and the chunks arrive in order.
+    if (layout == null || layout.uncompressedSize > maxPreallocateSize) {
+      // Either the archive has no readable index, or it claims an output too
+      // large to take on trust. The index is part of the archive, so a hostile
+      // one can claim any size at all; growing the buffer as the bytes actually
+      // arrive is what makes that claim harmless.
+      //
+      // Blocks still decode in parallel when the layout is known. They finish
+      // out of order and an OutputMemoryStream only appends, so the ones that
+      // run ahead wait their turn in the ordered writer.
       final output = OutputMemoryStream();
+      final writer = layout == null ? null : _OrderedWriter(output);
       // The result is not inspected: whether or not it succeeded, this yields
       // what was decoded, which is what the single threaded path does too.
       await xzDecodeMultithreaded(
         bytes: bytes,
-        layout: null,
+        layout: layout,
         verify: verify,
         workers: options.workers,
         memoryBudget: options.memoryBudget,
-        onChunk: (offset, chunk) => output.writeBytes(chunk),
+        onChunk: writer == null
+            ? (offset, chunk) => output.writeBytes(chunk)
+            : writer.add,
+        orderedOutput: writer != null,
         fileReadBufferSize: options.fileReadBufferSize,
       );
       return output.getBytes();
@@ -396,13 +435,17 @@ int _blockIndexAt(List<XZBlockLayout> blocks, int offset) {
   return low;
 }
 
-// Largest size that is worth pre-allocating from a stream index. A valid index
-// can describe an output that is much larger than the available memory, so
-// anything above this is treated as unknown.
-const _maxPreallocateSize = 1 << 31;
+/// Default for [XZDecoder.maxPreallocateSize].
+///
+/// Two gigabytes where allocation failure is survivable, and 256 MB on the web,
+/// where it is not: dart2js and dart2wasm both kill the page outright rather
+/// than throwing something catchable, and dart2wasm cannot reach a gigabyte in
+/// the first place. The web figure leaves room under that.
+final int xzDefaultMaxPreallocateSize =
+    xzIsolatesSupported ? 1 << 31 : 256 * 1024 * 1024;
 
 // Returns the total uncompressed size of every stream in [d], taken from the
-// stream indexes, or null if it cannot be determined.
-int? _uSize(Uint8List d) =>
-    parseXZLayout(XZMemorySource(d), maxUncompressedSize: _maxPreallocateSize)
+// stream indexes, or null if it cannot be determined or exceeds [maxSize].
+int? _uSize(Uint8List d, int maxSize) =>
+    parseXZLayout(XZMemorySource(d), maxUncompressedSize: maxSize)
         ?.uncompressedSize;
