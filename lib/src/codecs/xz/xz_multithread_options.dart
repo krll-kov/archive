@@ -86,10 +86,25 @@ class XZMultithreadOptions<T> {
   /// package cannot tell them apart on its own.
   final int? memoryBudget;
 
+  /// Buffer a worker reads a block through when it comes from a file. The default
+  /// FileBuffer size is a kilobyte, which would turn reading a large block into
+  /// hundreds of thousands of reads.
+  ///
+  /// Workers read different parts of the file at the same time, so the drive sees
+  /// their requests interleaved rather than as one sweep. On anything with a seek
+  /// penalty that is the expensive part, and the buffer is what decides how often
+  /// it is paid: reading a 189 MB block takes 368 reads through a 1 MB buffer and
+  /// 28 through an 8 MB one. Eight megabytes per worker is nothing next to the
+  /// block it replaces, and it is charged to the memory budget like everything
+  /// else. Larger buffers keep helping on a slow disk but stop mattering on a
+  /// fast one, where the page cache answers most of the reads anyway.
+  final int fileReadBufferSize;
+
   const XZMultithreadOptions({
     required this.onDone,
     this.onError,
     this.workers,
     this.memoryBudget,
+    this.fileReadBufferSize = 8 * 1024 * 1024,
   });
 }

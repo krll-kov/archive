@@ -38,5 +38,6 @@ Future<bool> xzDecodeMultithreaded({
   required void Function(int outputOffset, Uint8List chunk) onChunk,
   void Function(int outputOffset, bool ok)? onBlockDone,
   bool orderedOutput = false,
+  required int fileReadBufferSize,
 }) =>
     throw UnsupportedError('Isolates are not available on this platform');

@@ -198,6 +198,7 @@ class XZDecoder {
         workers: options.workers,
         memoryBudget: options.memoryBudget,
         onChunk: (offset, chunk) => output.writeBytes(chunk),
+        fileReadBufferSize: options.fileReadBufferSize,
       );
       return output.getBytes();
     }
@@ -228,6 +229,7 @@ class XZDecoder {
           accepted[_blockIndexAt(blocks, offset)] = blockOk;
         }
       },
+      fileReadBufferSize: options.fileReadBufferSize,
     );
 
     if (ok) {
@@ -287,6 +289,7 @@ class XZDecoder {
       memoryBudget: options.memoryBudget,
       onChunk: writer.add,
       orderedOutput: true,
+      fileReadBufferSize: options.fileReadBufferSize,
     );
   }
 

@@ -88,11 +88,6 @@ class _XZFileSource extends XZByteSource {
 // worker, at the cost of one extra memcpy of the output (~18 ms per 200 MB).
 const _stagingSize = 4 * 1024 * 1024;
 
-// Buffer a worker reads a block through when it comes from a file. The default
-// FileBuffer size is a kilobyte, which would turn reading a large block into
-// hundreds of thousands of reads.
-const _fileReadBufferSize = 1024 * 1024;
-
 // The largest block header the format allows, (255 + 1) * 4.
 const _maxBlockHeaderSize = 1024;
 
@@ -140,6 +135,7 @@ Future<bool> xzDecodeMultithreaded({
   required void Function(int outputOffset, Uint8List chunk) onChunk,
   void Function(int outputOffset, bool ok)? onBlockDone,
   bool orderedOutput = false,
+  required int fileReadBufferSize,
 }) {
   // Offsets in the layout are relative to the start of the archive, which sits
   // at [fileOffset] in a file and at zero in a buffer.
@@ -155,6 +151,7 @@ Future<bool> xzDecodeMultithreaded({
       dictionaryCap: dictionaryCap,
       holdsCompressedBlock: bytes != null,
       orderedOutput: orderedOutput,
+      fileReadBufferSize: fileReadBufferSize,
     );
     if (count > 1) {
       return _runJobs([
@@ -168,6 +165,7 @@ Future<bool> xzDecodeMultithreaded({
             streamFlags: block.streamFlags,
             outputOffset: block.outputOffset,
             verify: verify,
+            fileReadBufferSize: fileReadBufferSize,
           )
       ], count, onChunk, onBlockDone);
     }
@@ -190,6 +188,7 @@ Future<bool> xzDecodeMultithreaded({
       streamFlags: 0,
       outputOffset: 0,
       verify: verify,
+      fileReadBufferSize: fileReadBufferSize,
     )
   ], 1, onChunk, null);
 }
@@ -251,6 +250,7 @@ int _pickWorkerCount({
   required int dictionaryCap,
   required bool holdsCompressedBlock,
   required bool orderedOutput,
+  required int fileReadBufferSize,
 }) {
   final cores = Platform.numberOfProcessors;
   // One core is left to the caller; in Flutter that is the UI isolate.
@@ -269,7 +269,7 @@ int _pickWorkerCount({
   // block only when the archive came in as bytes: reading from a file it goes
   // through a small window instead. The budget applies even to an explicitly
   // requested worker count, so that it can act as a safety valve.
-  var compressed = _fileReadBufferSize;
+  var compressed = fileReadBufferSize;
   if (holdsCompressedBlock) {
     compressed = 0;
     for (final block in blocks) {
@@ -320,6 +320,7 @@ class _Job {
   final int streamFlags;
   final int outputOffset;
   final bool verify;
+  final int fileReadBufferSize;
 
   const _Job({
     required this.kind,
@@ -330,6 +331,7 @@ class _Job {
     required this.streamFlags,
     required this.outputOffset,
     required this.verify,
+    required this.fileReadBufferSize,
   });
 
   /// Builds the message for this job.
@@ -354,6 +356,7 @@ class _Job {
       streamFlags,
       outputOffset,
       verify,
+      fileReadBufferSize,
     ];
   }
 
@@ -511,6 +514,7 @@ void _xzWorker(SendPort toMain) {
     final streamFlags = job[6] as int;
     final outputOffset = job[7] as int;
     final verify = job[8] as bool;
+    final fileReadBufferSize = job[9] as int;
 
     // Failing to get hold of the compressed data is a failure of the decode
     // itself rather than a statement about the archive, so it is reported as
@@ -529,7 +533,7 @@ void _xzWorker(SendPort toMain) {
         // block strictly in order, so nothing is gained by holding all of it,
         // and a compressed block is the largest thing a worker would otherwise
         // keep.
-        file = InputFileStream(path!, bufferSize: _fileReadBufferSize);
+        file = InputFileStream(path!, bufferSize: fileReadBufferSize);
         input = InputFileStream.fromFileStream(file,
             position: offset, length: length);
       }
