@@ -372,13 +372,45 @@ void main() {
           equals(expected));
     });
 
-    test('rejects a worker count below one', () {
+    test('rejects settings that cannot be honoured', () {
+      // These all feed the arithmetic that sizes the pool, where a nonsense
+      // value does not fail loudly. A negative read buffer in particular makes
+      // the per worker cost come out negative, which skips the memory budget
+      // and hands out more workers than the budget allows.
       final compressed =
           xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
-      expect(
-          () => XZDecoder().decodeBytes(compressed,
-              multithread: XZMultithreadOptions(onDone: (_) {}, workers: 0)),
-          throwsArgumentError);
+      final cases = <String, XZMultithreadOptions<Uint8List>>{
+        'workers: 0': XZMultithreadOptions(onDone: (_) {}, workers: 0),
+        'workers: -1': XZMultithreadOptions(onDone: (_) {}, workers: -1),
+        'memoryBudget: 0':
+            XZMultithreadOptions(onDone: (_) {}, memoryBudget: 0),
+        'memoryBudget: -1':
+            XZMultithreadOptions(onDone: (_) {}, memoryBudget: -1),
+        'fileReadBufferSize: 0':
+            XZMultithreadOptions(onDone: (_) {}, fileReadBufferSize: 0),
+        'fileReadBufferSize negative': XZMultithreadOptions(
+            onDone: (_) {}, fileReadBufferSize: -300000000),
+      };
+      cases.forEach((label, options) {
+        expect(() => XZDecoder().decodeBytes(compressed, multithread: options),
+            throwsArgumentError,
+            reason: label);
+      });
+    });
+
+    test('accepts the smallest settings that make sense', () async {
+      final compressed =
+          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+      final completer = Completer<Uint8List>();
+      XZDecoder().decodeBytes(compressed,
+          multithread: XZMultithreadOptions(
+            onDone: completer.complete,
+            onError: completer.completeError,
+            workers: 1,
+            memoryBudget: 1,
+            fileReadBufferSize: 1,
+          ));
+      expect(await completer.future, equals(expected));
     });
 
     test('a single block archive still reports through onDone', () async {

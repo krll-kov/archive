@@ -86,18 +86,26 @@ class XZMultithreadOptions<T> {
   /// package cannot tell them apart on its own.
   final int? memoryBudget;
 
-  /// Buffer a worker reads a block through when it comes from a file. The default
-  /// FileBuffer size is a kilobyte, which would turn reading a large block into
-  /// hundreds of thousands of reads.
+  /// Buffer a worker reads its block through, in bytes.
   ///
-  /// Workers read different parts of the file at the same time, so the drive sees
-  /// their requests interleaved rather than as one sweep. On anything with a seek
-  /// penalty that is the expensive part, and the buffer is what decides how often
-  /// it is paid: reading a 189 MB block takes 368 reads through a 1 MB buffer and
-  /// 28 through an 8 MB one. Eight megabytes per worker is nothing next to the
-  /// block it replaces, and it is charged to the memory budget like everything
-  /// else. Larger buffers keep helping on a slow disk but stop mattering on a
-  /// fast one, where the page cache answers most of the reads anyway.
+  /// This only applies to `decodeStream` reading from an `InputFileStream`,
+  /// which is the one case where the workers open the file themselves: a
+  /// stream cannot cross an isolate boundary, so the buffer the caller chose
+  /// cannot be reached from inside a worker. Everywhere else the caller
+  /// already owns that decision, by passing `bufferSize` to `InputFileStream`.
+  ///
+  /// Workers read different parts of the file at the same time, so the drive
+  /// sees their requests interleaved rather than as one sweep. Where a seek
+  /// costs something, that is the expensive part, and this is what decides how
+  /// often it is paid: a 189 MB block takes 1312 reads through a 256 KB
+  /// buffer, 368 through 1 MB, and 52 through the 8 MB default.
+  ///
+  /// On a fast disk none of it shows, because the page cache answers most
+  /// reads; on a spinning or networked one it dominates, and fewer workers
+  /// with a larger buffer will beat more workers with a small one. It is
+  /// charged against [memoryBudget] like everything else, so raising it lowers
+  /// the number of workers that fit. Values below the minimum a file buffer
+  /// can take are raised to it rather than rejected.
   final int fileReadBufferSize;
 
   const XZMultithreadOptions({

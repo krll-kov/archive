@@ -69,7 +69,7 @@ class XZDecoder {
     if (multithread == null) {
       return _decodeBytes(bytes, verify);
     }
-    _checkWorkers(multithread.workers);
+    _checkOptions(multithread);
 
     if (!xzIsolatesSupported) {
       // No isolates here, so this blocks the caller, but the result is still
@@ -105,15 +105,18 @@ class XZDecoder {
   ///
   /// | input, output | peak memory | time |
   /// |---|---|---|
-  /// | single threaded, for reference | 3.0 GB | 16.7 s |
-  /// | `InputMemoryStream`, `OutputFileStream` | 2.6 GB | 10.1 s |
+  /// | `InputFileStream`, `OutputFileStream`, no `multithread` | 0.4 GB | 17.6 s |
   /// | `InputFileStream`, `OutputFileStream` | 0.9 GB | 8.1 s |
   /// | `InputFileStream`, `OutputFileStream`, six workers | 1.3 GB | 5.1 s |
+  /// | `InputMemoryStream`, `OutputFileStream` | 2.6 GB | 10.1 s |
   ///
-  /// The third row uses under a third of the memory that decoding the same
-  /// archive on the calling isolate does, while being twice as fast. Raising
-  /// [XZMultithreadOptions.memoryBudget] to reach the fourth trades some of
-  /// that back for another third off the time.
+  /// Note the first row: file to file without [multithread] holds nothing but
+  /// the LZMA dictionary and the two stream buffers, which no multithreaded
+  /// run can match, since each worker needs a dictionary of its own. Every row
+  /// below it buys time with memory. That is the trade to make deliberately,
+  /// and on a drive with a seek penalty it may not be a trade at all: workers
+  /// read different parts of the file at once, so a single threaded sweep can
+  /// win outright. See [XZMultithreadOptions.fileReadBufferSize].
   ///
   /// An [input] that is neither of those has no random access to hand the
   /// workers, so it is decoded on the calling isolate and reported through
@@ -125,7 +128,7 @@ class XZDecoder {
     if (multithread == null) {
       return _decodeStream(input, output, verify, throwOnError);
     }
-    _checkWorkers(multithread.workers);
+    _checkOptions(multithread);
 
     if (!xzIsolatesSupported) {
       _report(multithread, () => _decodeStream(input, output, verify, false),
@@ -328,9 +331,23 @@ class XZDecoder {
     }));
   }
 
-  static void _checkWorkers(int? workers) {
+  // Rejects settings that cannot be honoured, rather than quietly doing
+  // something else. Both of these feed the arithmetic that sizes the pool, and
+  // a nonsensical value there does not fail loudly: a negative read buffer
+  // makes the per worker cost come out negative, which skips the memory budget
+  // altogether and hands out more workers than the budget allows.
+  static void _checkOptions(XZMultithreadOptions<Object?> options) {
+    final workers = options.workers;
     if (workers != null && workers < 1) {
       throw ArgumentError.value(workers, 'workers', 'Must be at least 1');
+    }
+    final budget = options.memoryBudget;
+    if (budget != null && budget < 1) {
+      throw ArgumentError.value(budget, 'memoryBudget', 'Must be at least 1');
+    }
+    if (options.fileReadBufferSize < 1) {
+      throw ArgumentError.value(options.fileReadBufferSize,
+          'fileReadBufferSize', 'Must be at least 1');
     }
   }
 }
