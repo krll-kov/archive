@@ -24,6 +24,16 @@
 * Added uncompressedSize getter for XZDecoder that returns original file size before its compression
 * Fix: pb=4 flag range error in XZDecoder
 * Fix: padding for _streamStart in XZDecoder
+* Added `throwOnError` to `XZDecoder.decodeBytes`. Without it a malformed or
+  truncated archive still returns the partial output with nothing to say it is
+  not the whole file, which was the only decode with no way at all to report a
+  failure. In multithreaded mode the exception is delivered to
+  `XZMultithreadOptions.onError`, and setting `throwOnError` without an
+  `onError` is now refused rather than losing the failure.
+* Fix: a corrupt xz block lost the part of itself that had already decoded when
+  `verify: true` was used with an output that cannot be read back, such as an
+  `OutputFileStream` or any multithreaded decode. The output now stops in the
+  same place whichever way the decode was asked for.
 
 
 # 4.2.0

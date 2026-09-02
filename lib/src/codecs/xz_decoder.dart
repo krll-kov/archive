@@ -54,8 +54,10 @@ class XZDecoder {
   /// Decompress the given [bytes] with the xz format.
   ///
   /// A malformed or truncated archive yields whatever was decoded before the
-  /// failure rather than an error. Use [decodeStream] and check its result
-  /// when that matters.
+  /// failure, with nothing to say that it is not the whole file. Set
+  /// [throwOnError] to get an [ArchiveException] instead, which is the only
+  /// way this method can report a failure: unlike [decodeStream] it has no
+  /// return value to spare for one.
   ///
   /// Pass [multithread] to decode on isolates. The call then returns
   /// immediately, **the return value is an empty list**, and the result
@@ -67,6 +69,13 @@ class XZDecoder {
   ///     multithread: XZMultithreadOptions(onDone: completer.complete));
   /// final data = await completer.future;
   /// ```
+  ///
+  /// [throwOnError] keeps working there. The exception cannot be thrown at the
+  /// caller, whose stack is long gone by then, so it is handed to
+  /// [XZMultithreadOptions.onError] instead, and [XZMultithreadOptions.onDone]
+  /// is not called at all. Without [throwOnError] a failed decode reaches
+  /// [XZMultithreadOptions.onDone] as the partial output, exactly as it is
+  /// returned here.
   ///
   /// Multithreading only pays off for an archive written in several blocks,
   /// which is what `xz --block-size=...` produces; a single block archive
@@ -90,23 +99,28 @@ class XZDecoder {
   /// The default [XZMultithreadOptions.memoryBudget] allowed three workers
   /// here; raising it buys the six worker row.
   Uint8List decodeBytes(List<int> data,
-      {bool verify = false, XZMultithreadOptions<Uint8List>? multithread}) {
+      {bool verify = false,
+      bool throwOnError = false,
+      XZMultithreadOptions<Uint8List>? multithread}) {
     final bytes = data is Uint8List ? data : Uint8List.fromList(data);
 
     if (multithread == null) {
-      return _decodeBytes(bytes, verify);
+      return _decodeBytes(bytes, verify, throwOnError);
     }
-    _checkOptions(multithread);
+    _checkOptions(multithread, throwOnError);
 
     if (!xzIsolatesSupported) {
       // No isolates here, so this blocks the caller, but the result is still
       // delivered the way the caller asked for it.
-      _report(multithread, () => _decodeBytes(bytes, verify), Uint8List(0));
+      _report(multithread, () => _decodeBytes(bytes, verify, throwOnError),
+          Uint8List(0));
       return Uint8List(0);
     }
 
-    _reportAsync(multithread,
-        () => _decodeBytesOnIsolates(bytes, verify, multithread), Uint8List(0));
+    _reportAsync(
+        multithread,
+        () => _decodeBytesOnIsolates(bytes, verify, throwOnError, multithread),
+        Uint8List(0));
     return Uint8List(0);
   }
 
@@ -119,10 +133,11 @@ class XZDecoder {
   ///
   /// Pass [multithread] to decode on isolates. The call then returns
   /// immediately, **the return value is always false**, and the outcome
-  /// arrives through [XZMultithreadOptions.onDone]. [throwOnError] has no
-  /// effect in that mode, because by the time the outcome is known the
-  /// caller's stack is gone; failures are reported through
-  /// [XZMultithreadOptions.onError] instead.
+  /// arrives through [XZMultithreadOptions.onDone]. [throwOnError] keeps
+  /// working there, except that the exception cannot be thrown at the caller,
+  /// whose stack is long gone by then: it is handed to
+  /// [XZMultithreadOptions.onError] instead, and [XZMultithreadOptions.onDone]
+  /// is not called at all.
   ///
   /// This is the cheaper of the two methods, and the combination of streams
   /// decides how cheap. When [input] is an `InputFileStream`, each worker
@@ -155,17 +170,20 @@ class XZDecoder {
     if (multithread == null) {
       return _decodeStream(input, output, verify, throwOnError);
     }
-    _checkOptions(multithread);
+    _checkOptions(multithread, throwOnError);
 
     if (!xzIsolatesSupported) {
-      _report(multithread, () => _decodeStream(input, output, verify, false),
+      _report(
+          multithread,
+          () => _decodeStream(input, output, verify, throwOnError),
           false);
       return false;
     }
 
     _reportAsync(
         multithread,
-        () => _decodeStreamOnIsolates(input, output, verify, multithread),
+        () => _decodeStreamOnIsolates(
+            input, output, verify, throwOnError, multithread),
         false);
     return false;
   }
@@ -186,7 +204,7 @@ class XZDecoder {
 
   // The single threaded decode, which is also what the multithreaded path
   // falls back to when there are no isolates.
-  Uint8List _decodeBytes(Uint8List bytes, bool verify) {
+  Uint8List _decodeBytes(Uint8List bytes, bool verify, bool throwOnError) {
     // The stream indexes give the output size up front, which avoids growing
     // the output buffer while decoding. A zero size is left to the default
     // because the buffer cannot grow out of an empty allocation.
@@ -194,24 +212,32 @@ class XZDecoder {
     final OutputMemoryStream output =
         OutputMemoryStream(size: size != null && size > 0 ? size : null);
 
-    _decodeStream(InputMemoryStream(bytes), output, verify, false);
+    _decodeStream(InputMemoryStream(bytes), output, verify, throwOnError);
     return output.getBytes();
   }
 
   bool _decodeStream(
       InputStream input, OutputStream output, bool verify, bool throwOnError) {
+    final decoder = XZStreamDecoder(verify: verify);
     try {
-      final decoder = XZStreamDecoder(verify: verify);
       if (decoder.decode(input, output)) return true;
     } catch (error) {
       if (throwOnError) throw ArchiveException('Invalid XZ archive: $error');
+      return false;
     }
-    if (throwOnError) throw ArchiveException('Invalid XZ archive');
+    // The decoder records why it gave up, so the exception can say more than
+    // that something was wrong somewhere.
+    if (throwOnError) throw _invalid(decoder.failureReason);
     return false;
   }
 
+  // The exception a rejected archive turns into, naming the reason when the
+  // decoder managed to identify one.
+  static ArchiveException _invalid(String? reason) => ArchiveException(
+      reason == null ? 'Invalid XZ archive' : 'Invalid XZ archive: $reason');
+
   Future<Uint8List> _decodeBytesOnIsolates(Uint8List bytes, bool verify,
-      XZMultithreadOptions<Uint8List> options) async {
+      bool throwOnError, XZMultithreadOptions<Uint8List> options) async {
     // No ceiling here: the layout only says where the blocks are, which is what
     // decides whether the work can be split up, and reading it allocates
     // nothing. The ceiling belongs to the buffer decision below.
@@ -228,9 +254,8 @@ class XZDecoder {
       // run ahead wait their turn in the ordered writer.
       final output = OutputMemoryStream();
       final writer = layout == null ? null : _OrderedWriter(output);
-      // The result is not inspected: whether or not it succeeded, this yields
-      // what was decoded, which is what the single threaded path does too.
-      await xzDecodeMultithreaded(
+      String? reason;
+      final ok = await xzDecodeMultithreaded(
         bytes: bytes,
         layout: layout,
         verify: verify,
@@ -239,9 +264,15 @@ class XZDecoder {
         onChunk: writer == null
             ? (offset, chunk) => output.writeBytes(chunk)
             : writer.add,
+        onFailureReason: (r) => reason = r,
         orderedOutput: writer != null,
         fileReadBufferSize: options.fileReadBufferSize,
       );
+      if (!ok && throwOnError) {
+        throw _invalid(reason);
+      }
+      // Whether or not it succeeded, this yields what was decoded, which is
+      // what the single threaded path does too.
       return output.getBytes();
     }
 
@@ -253,6 +284,7 @@ class XZDecoder {
     // only arrive when the archive was split up block by block.
     final received = List<int>.filled(blocks.length, 0);
     final accepted = List<bool>.filled(blocks.length, true);
+    String? reason;
 
     final ok = await xzDecodeMultithreaded(
       bytes: bytes,
@@ -271,11 +303,15 @@ class XZDecoder {
           accepted[_blockIndexAt(blocks, offset)] = blockOk;
         }
       },
+      onFailureReason: (r) => reason = r,
       fileReadBufferSize: options.fileReadBufferSize,
     );
 
     if (ok) {
       return output;
+    }
+    if (throwOnError) {
+      throw _invalid(reason);
     }
 
     // Blocks are decoded out of order, so the output stops at the first one
@@ -299,8 +335,12 @@ class XZDecoder {
     return Uint8List.sublistView(output, 0, end);
   }
 
-  Future<bool> _decodeStreamOnIsolates(InputStream input, OutputStream output,
-      bool verify, XZMultithreadOptions<bool> options) async {
+  Future<bool> _decodeStreamOnIsolates(
+      InputStream input,
+      OutputStream output,
+      bool verify,
+      bool throwOnError,
+      XZMultithreadOptions<bool> options) async {
     final region = xzFileRegionOf(input);
 
     XZLayout? layout;
@@ -313,14 +353,15 @@ class XZDecoder {
     } else {
       // Any other stream has no random access to give the workers, so it is
       // decoded on the calling isolate.
-      return _decodeStream(input, output, verify, false);
+      return _decodeStream(input, output, verify, throwOnError);
     }
 
     // An OutputStream can only be appended to, so blocks that finish early are
     // held back until the blocks in front of them have been written.
     final writer = _OrderedWriter(output);
+    String? reason;
 
-    return xzDecodeMultithreaded(
+    final ok = await xzDecodeMultithreaded(
       bytes: bytes,
       path: region?.path,
       fileOffset: region?.offset ?? 0,
@@ -330,9 +371,14 @@ class XZDecoder {
       workers: options.workers,
       memoryBudget: options.memoryBudget,
       onChunk: writer.add,
+      onFailureReason: (r) => reason = r,
       orderedOutput: true,
       fileReadBufferSize: options.fileReadBufferSize,
     );
+    if (!ok && throwOnError) {
+      throw _invalid(reason);
+    }
+    return ok;
   }
 
   // Runs [work] now and hands the result to [options.onDone], routing a
@@ -375,7 +421,16 @@ class XZDecoder {
   // a nonsensical value there does not fail loudly: a negative read buffer
   // makes the per worker cost come out negative, which skips the memory budget
   // altogether and hands out more workers than the budget allows.
-  static void _checkOptions(XZMultithreadOptions<Object?> options) {
+  static void _checkOptions(
+      XZMultithreadOptions<Object?> options, bool throwOnError) {
+    // Asking to be told about failures while leaving nowhere to tell would put
+    // the failure back where it started, so it is refused here, while the
+    // caller is still on the stack to hear about it.
+    if (throwOnError && options.onError == null) {
+      throw ArgumentError.value(null, 'onError',
+          'Must be given when throwOnError is set, since that is where the '
+              'exception is delivered');
+    }
     final workers = options.workers;
     if (workers != null && workers < 1) {
       throw ArgumentError.value(workers, 'workers', 'Must be at least 1');

@@ -33,19 +33,21 @@ class XZMultithreadOptions<T> {
   /// isolates, so a caller never has to special case either.
   final void Function(T result) onDone;
 
-  /// Called instead of [onDone] if the decode fails outright.
+  /// Called instead of [onDone] when the decode fails.
   ///
-  /// An archive that is merely truncated or corrupt is not an error: that is
-  /// reported through [onDone], the same way the synchronous methods report it
-  /// through their return value. This is for failures that would otherwise
-  /// have been thrown, such as an isolate that could not be started.
+  /// Two different things arrive here. Failures that would otherwise have been
+  /// thrown, such as an isolate that could not be started, always do. A merely
+  /// truncated or corrupt archive does only when `throwOnError` was set on the
+  /// call: without it that outcome is not treated as an error at all and
+  /// reaches [onDone] as the partial output, or as false, the same way the
+  /// synchronous methods report it through their return value.
   ///
-  /// `XZDecoder.throwOnError` has no effect in multithreaded mode, because by
-  /// the time a failure is known the caller's stack is long gone.
-  ///
-  /// Leaving this null routes such a failure to [onDone] instead, reported the
-  /// same way an invalid archive is. Nothing is ever thrown into the void: an
-  /// error that had nowhere to go would otherwise go unnoticed entirely.
+  /// Leaving this null is allowed only without `throwOnError`, and then routes
+  /// a genuine failure to [onDone] instead, reported the same way an invalid
+  /// archive is. Nothing is ever thrown into the void: an error that had
+  /// nowhere to go would otherwise go unnoticed entirely. Setting
+  /// `throwOnError` without this is refused outright, because the exception it
+  /// asks for would have nowhere to be delivered.
   final void Function(Object error, StackTrace stackTrace)? onError;
 
   /// Maximum number of isolates to decode on.

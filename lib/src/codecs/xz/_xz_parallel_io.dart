@@ -120,6 +120,10 @@ const _msgDone = 2;
 /// which is what a mismatched check looks like, so the bytes alone do not say
 /// whether they can be trusted.
 ///
+/// [onFailureReason] is given the first reason a block was rejected, if the
+/// archive turns out to be malformed. It says why the decode gave up, which
+/// the false return value on its own does not.
+///
 /// Returns false when the archive is malformed or truncated, matching the
 /// synchronous decoder. Throws only when the work could not be carried out,
 /// such as an isolate failing to start.
@@ -134,6 +138,7 @@ Future<bool> xzDecodeMultithreaded({
   int? memoryBudget,
   required void Function(int outputOffset, Uint8List chunk) onChunk,
   void Function(int outputOffset, bool ok)? onBlockDone,
+  void Function(String reason)? onFailureReason,
   bool orderedOutput = false,
   required int fileReadBufferSize,
 }) {
@@ -167,7 +172,7 @@ Future<bool> xzDecodeMultithreaded({
             verify: verify,
             fileReadBufferSize: fileReadBufferSize,
           )
-      ], count, onChunk, onBlockDone);
+      ], count, onChunk, onBlockDone, onFailureReason);
     }
   }
 
@@ -190,7 +195,7 @@ Future<bool> xzDecodeMultithreaded({
       verify: verify,
       fileReadBufferSize: fileReadBufferSize,
     )
-  ], 1, onChunk, null);
+  ], 1, onChunk, null, onFailureReason);
 }
 
 /// The memory an LZMA2 dictionary will take for the largest sampled block.
@@ -369,7 +374,8 @@ Future<bool> _runJobs(
     List<_Job> jobs,
     int workerCount,
     void Function(int outputOffset, Uint8List chunk) onChunk,
-    void Function(int outputOffset, bool ok)? onBlockDone) async {
+    void Function(int outputOffset, bool ok)? onBlockDone,
+    void Function(String reason)? onFailureReason) async {
   final receive = ReceivePort();
   final isolates = <Isolate>[];
   final completer = Completer<bool>();
@@ -377,6 +383,7 @@ Future<bool> _runJobs(
 
   var remaining = jobs.length;
   var ok = true;
+  String? failureReason;
   Object? failure;
   StackTrace? failureStack;
   var finished = false;
@@ -391,6 +398,9 @@ Future<bool> _runJobs(
     // resources between jobs: it opens and closes the archive within one.
     for (final isolate in isolates) {
       isolate.kill(priority: Isolate.immediate);
+    }
+    if (failureReason != null) {
+      onFailureReason?.call(failureReason!);
     }
     if (failure != null) {
       completer.completeError(failure!, failureStack ?? StackTrace.current);
@@ -431,6 +441,14 @@ Future<bool> _runJobs(
               ok = false;
             }
             onBlockDone?.call(message[4] as int, blockOk);
+            if (!blockOk) {
+              // The first block to be rejected is the one worth reporting:
+              // later ones may only be failing because this one did.
+              final reason = message[5];
+              if (reason != null) {
+                failureReason ??= reason as String;
+              }
+            }
             final error = message[3];
             if (error != null) {
               failure ??= StateError('XZ decode failed: $error');
@@ -538,12 +556,21 @@ void _xzWorker(SendPort toMain) {
             position: offset, length: length);
       }
     } catch (error) {
-      toMain.send(
-          [_msgDone, receive.sendPort, false, error.toString(), outputOffset]);
+      toMain.send([
+        _msgDone,
+        receive.sendPort,
+        false,
+        error.toString(),
+        outputOffset,
+        null
+      ]);
       return;
     }
 
     var ok = false;
+    // Why the block was rejected, carried back so that a caller who asked to
+    // be told about failures gets the reason and not just the fact.
+    String? reason;
     final checkType = streamFlags & 0xf;
     // Verification is left off in the block decoder and done by the sink, on
     // the bytes as they stream past, so that verifying does not force the whole
@@ -552,21 +579,28 @@ void _xzWorker(SendPort toMain) {
     final sink = _PortSink(toMain, outputOffset, verifyHere ? checkType : 0);
     try {
       if (kind == _kindBlock) {
-        ok = decodeXZBlock(input, streamFlags, sink);
+        final result = decodeXZBlock(input, streamFlags, sink);
+        ok = result.ok;
+        reason = result.reason;
       } else {
-        ok = XZStreamDecoder(verify: verify).decode(input, sink);
+        final decoder = XZStreamDecoder(verify: verify);
+        ok = decoder.decode(input, sink);
+        reason = decoder.failureReason;
       }
-    } catch (_) {
+    } catch (error) {
       // A corrupt archive throws its way out of the decoder. The single
-      // threaded path swallows that and reports false, and so does this one.
+      // threaded path swallows that and reports false, and so does this one,
+      // keeping the text for whoever wants to know what went wrong.
       ok = false;
+      reason = '$error';
     } finally {
       // Flushing even after a failure keeps what was decoded before it, which
       // is what the single threaded path leaves in its output stream.
       try {
         sink.flush();
-      } catch (_) {
+      } catch (error) {
         ok = false;
+        reason ??= '$error';
       }
     }
 
@@ -574,16 +608,21 @@ void _xzWorker(SendPort toMain) {
       try {
         ok = sink.checkMatches(
             _readCheckField(input, data, length, xzCheckSize(checkType)));
-      } catch (_) {
+        if (!ok) {
+          reason = 'Block check failed';
+        }
+      } catch (error) {
         ok = false;
+        reason = '$error';
       }
     }
 
     file?.closeSync();
-    toMain.send([_msgDone, receive.sendPort, ok, null, outputOffset]);
+    toMain
+        .send([_msgDone, receive.sendPort, ok, null, outputOffset, reason]);
   });
 
-  toMain.send([_msgReady, receive.sendPort, null, null, -1]);
+  toMain.send([_msgReady, receive.sendPort, null, null, -1, null]);
 }
 
 /// An [OutputStream] that ships what it is given back to the calling isolate.

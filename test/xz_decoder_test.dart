@@ -145,6 +145,145 @@ void main() {
       expect(XZDecoder().decodeBytes(asList), equals(pb4Sample()));
     });
 
+    group('decodeBytes throwOnError', () {
+      // decodeBytes has no return value to spare for an outcome, so without
+      // this a truncated archive is indistinguishable from a whole one.
+      Uint8List truncated() {
+        final compressed = archiveBytes('long_distance.xz');
+        return Uint8List.sublistView(compressed, 0, compressed.length ~/ 2);
+      }
+
+      test('stays quiet on a valid archive', () {
+        expect(
+            XZDecoder().decodeBytes(archiveBytes('pb4.xz'), throwOnError: true),
+            equals(pb4Sample()));
+        expect(
+            XZDecoder().decodeBytes(archiveBytes('pb4.xz'),
+                verify: true, throwOnError: true),
+            equals(pb4Sample()));
+      });
+
+      test('reports a truncated archive that is otherwise silent', () {
+        final compressed = truncated();
+
+        // The default: partial output, and no way to tell it is partial.
+        final quiet = XZDecoder().decodeBytes(compressed);
+        expect(quiet, isNotEmpty);
+        expect(quiet.length, lessThan(4 * 1024 * 1024));
+
+        expect(() => XZDecoder().decodeBytes(compressed, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+      });
+
+      test('reports it while verifying too', () {
+        expect(
+            () => XZDecoder()
+                .decodeBytes(truncated(), verify: true, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+      });
+
+      test('reports a check that does not match', () {
+        // Whole and well formed, but the stored CRC64 is wrong, which only a
+        // verifying decode notices.
+        final compressed = Uint8List.fromList(archiveBytes('crc64.xz'));
+        compressed[compressed.length - 21] ^= 0xff;
+
+        // Only the check is broken: the data still decodes.
+        expect(
+            XZDecoder()
+                .decodeStream(InputMemoryStream(compressed), OutputMemoryStream()),
+            isTrue);
+        expect(
+            XZDecoder().decodeStream(
+                InputMemoryStream(compressed), OutputMemoryStream(),
+                verify: true),
+            isFalse);
+
+        expect(XZDecoder().decodeBytes(compressed, verify: true), isNotEmpty);
+        expect(
+            () => XZDecoder()
+                .decodeBytes(compressed, verify: true, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+      });
+
+      test('reports data that is not an archive at all', () {
+        expect(
+            () => XZDecoder()
+                .decodeBytes(utf8.encode('not an archive'), throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+        expect(
+            XZDecoder().decodeBytes(utf8.encode('not an archive')), isEmpty);
+      });
+
+      test('turns a thrown decode failure into the same exception', () {
+        // Corrupt compressed data makes the LZMA decoder itself throw, which
+        // has to surface as an ArchiveException rather than escaping raw.
+        final compressed = Uint8List.fromList(archiveBytes('x86.xz'));
+        for (var i = 0; i < 64; i++) {
+          compressed[400 + i] ^= 0xff;
+        }
+        expect(() => XZDecoder().decodeBytes(compressed, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+      });
+    });
+
+    group('failure reasons', () {
+      // 'Invalid XZ archive' on its own leaves a caller with nowhere to go:
+      // a file that is not xz at all, one that lost its tail and one whose
+      // checksum does not match all need different answers.
+      String reasonFor(Uint8List compressed) {
+        try {
+          XZDecoder()
+              .decodeBytes(compressed, verify: true, throwOnError: true);
+          return 'no error';
+        } on ArchiveException catch (e) {
+          return e.message;
+        }
+      }
+
+      Uint8List flipped(String name, int offset, [int length = 1]) {
+        final data = Uint8List.fromList(archiveBytes(name));
+        for (var i = 0; i < length; i++) {
+          data[offset + i] ^= 0xff;
+        }
+        return data;
+      }
+
+      test('name the part of the format that was wrong', () {
+        final pb4 = archiveBytes('pb4.xz');
+        final cases = <String, String>{
+          'Invalid XZ stream header signature':
+              reasonFor(utf8.encode('not an archive at all')),
+          'Invalid stream flags': reasonFor(flipped('pb4.xz', 6)),
+          'Invalid stream header CRC checksum':
+              reasonFor(flipped('pb4.xz', 8)),
+          'Stream footer has invalid index size':
+              reasonFor(flipped('pb4.xz', pb4.length - 6)),
+          'Invalid XZ stream footer signature':
+              reasonFor(flipped('pb4.xz', pb4.length - 1)),
+          'CRC64 check failed': reasonFor(
+              flipped('crc64.xz', archiveBytes('crc64.xz').length - 21)),
+        };
+        cases.forEach((expected, actual) {
+          expect(actual, contains(expected));
+        });
+
+        // Every one of them is distinct, which is the whole point.
+        expect(cases.values.toSet(), hasLength(cases.length));
+      });
+
+      test('survive being thrown out of the LZMA decoder', () {
+        // Some failures arrive as an exception rather than as a rejection, and
+        // that text has to reach the caller just the same.
+        expect(reasonFor(archiveBytes('dict_overrun.xz')),
+            contains('outside the dictionary'));
+      });
+
+      test('are not reported when the archive is fine', () {
+        expect(reasonFor(archiveBytes('pb4.xz')), equals('no error'));
+      });
+    });
+
     group('throwOnError', () {
       test('stays quiet on a valid archive', () {
         final output = OutputMemoryStream();

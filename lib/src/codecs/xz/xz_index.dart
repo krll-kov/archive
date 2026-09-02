@@ -137,6 +137,14 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
       if (footer[8] != 0) {
         return null;
       }
+      // The footer covers its backward size and flags with a CRC32. Nothing
+      // downstream reads these bytes again, so leaving it unchecked would let
+      // a damaged footer through a decode that works entirely from the index.
+      final footerCrc =
+          footer[0] | footer[1] << 8 | footer[2] << 16 | footer[3] << 24;
+      if (getCrc32(Uint8List.sublistView(footer, 4, 10)) != footerCrc) {
+        return null;
+      }
       final streamFlags = footer[9];
 
       // Backward size holds the size of the index in four byte units, minus one.
@@ -255,6 +263,18 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
       }
       // The header repeats the flags that the footer carries.
       if (header[6] != 0 || header[7] != streamFlags) {
+        return null;
+      }
+      // And covers them with its own CRC32, which is the only thing standing
+      // between a damaged header and a decode that never looks at it: the
+      // blocks are found through the index, so nothing downstream would read
+      // these bytes again. Without this an archive that xz rejects decodes
+      // here without complaint.
+      final headerCrc = header[8] |
+          header[9] << 8 |
+          header[10] << 16 |
+          header[11] << 24;
+      if (getCrc32(Uint8List.sublistView(header, 6, 8)) != headerCrc) {
         return null;
       }
 
