@@ -59,6 +59,17 @@ class XZDecoder {
   /// way this method can report a failure: unlike [decodeStream] it has no
   /// return value to spare for one.
   ///
+  /// [verify] checks the checksum stored with each block, catching damage that
+  /// decodes without complaint. It costs time and changes only whether a
+  /// failure is noticed, never what a successful decode returns. A block whose
+  /// check does not match is a failure like any other, so without
+  /// [throwOnError] the result is still the bytes up to and including it,
+  /// exactly as [decodeStream] would have left them in its output.
+  ///
+  /// [throwOnError] governs how a bad *archive* is reported and nothing else.
+  /// Arguments that cannot be honoured throw [ArgumentError] whichever way it
+  /// is set, and so does [maxPreallocateSize] on this class.
+  ///
   /// Pass [multithread] to decode on isolates. The call then returns
   /// immediately, **the return value is an empty list**, and the result
   /// arrives through [XZMultithreadOptions.onDone]:
@@ -129,7 +140,17 @@ class XZDecoder {
   ///
   /// Returns false if the archive is malformed or truncated, in which case
   /// [output] holds however much was decoded before the failure and should be
-  /// discarded. Set [throwOnError] to get an [ArchiveException] instead.
+  /// discarded. Set [throwOnError] to get an [ArchiveException] instead; the
+  /// partial data is in [output] either way, because bytes already written
+  /// there cannot be taken back.
+  ///
+  /// [verify] checks the checksum stored with each block, catching damage that
+  /// decodes without complaint. It costs time and changes only whether a
+  /// failure is noticed, never what a successful decode writes.
+  ///
+  /// [throwOnError] governs how a bad *archive* is reported and nothing else.
+  /// Arguments that cannot be honoured throw [ArgumentError] whichever way it
+  /// is set, and so does [maxPreallocateSize] on this class.
   ///
   /// Pass [multithread] to decode on isolates. The call then returns
   /// immediately, **the return value is always false**, and the outcome
@@ -314,12 +335,15 @@ class XZDecoder {
       throw _invalid(reason);
     }
 
-    // Blocks are decoded out of order, so the output stops at the first one
-    // that is not whole and trustworthy, the way the single threaded decode
-    // stops where it gave up. A block that failed part way through still
-    // contributes what it managed, since chunks within one block arrive in
-    // order; a block that produced everything and still failed did so because
-    // its check did not match, so none of it can be trusted.
+    // Blocks are decoded out of order, so the output stops where the single
+    // threaded decode would have given up: at the first block that is not
+    // whole and sound, that block included. A block that failed part way
+    // through contributes what it managed, since chunks within one block
+    // arrive in order. A block that produced everything and then failed its
+    // check contributes all of it, because that is what writing straight
+    // through to an output stream leaves behind, and a decode that cannot be
+    // undone is what the single threaded path is. The bytes are not vouched
+    // for either way: the decode reported failure.
     var end = 0;
     for (var i = 0; i < blocks.length; i++) {
       final whole = received[i] == blocks[i].uncompressedLength;
@@ -327,10 +351,10 @@ class XZDecoder {
         end = blocks[i].outputOffset + received[i];
         break;
       }
+      end = blocks[i].outputOffset + blocks[i].uncompressedLength;
       if (!accepted[i]) {
         break;
       }
-      end = blocks[i].outputOffset + blocks[i].uncompressedLength;
     }
     return Uint8List.sublistView(output, 0, end);
   }

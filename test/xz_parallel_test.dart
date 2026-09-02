@@ -304,12 +304,20 @@ void main() {
                 verify: true, workers: 4),
             isFalse);
 
-        // The parallel decode stops at the block whose check failed rather
-        // than handing back bytes it could not vouch for.
+        // Both stop in the same place, and that place is the end of the block
+        // whose check failed: writing straight through to an output stream
+        // cannot take those bytes back, so the single threaded decode leaves
+        // them behind and the parallel one matches it rather than inventing a
+        // stricter rule for itself. Neither vouches for them; both reported
+        // the failure above.
+        final sequential = XZDecoder().decodeBytes(data, verify: true);
         final parallel =
             await decodeBytesOnIsolates(data, verify: true, workers: 4);
+        expectGenuinePrefix(sequential, 'sequential');
         expectGenuinePrefix(parallel, 'parallel');
-        expect(parallel.length, equals(blocks[1].uncompOffset));
+        expect(parallel.length, equals(sequential.length));
+        expect(parallel.length,
+            equals(blocks[1].uncompOffset + blocks[1].uncompSize));
       });
 
       test('a truncated archive fails both modes', () async {

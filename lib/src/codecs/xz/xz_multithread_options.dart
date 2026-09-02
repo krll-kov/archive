@@ -48,6 +48,11 @@ class XZMultithreadOptions<T> {
   /// nowhere to go would otherwise go unnoticed entirely. Setting
   /// `throwOnError` without this is refused outright, because the exception it
   /// asks for would have nowhere to be delivered.
+  ///
+  /// This is not where a bad setting lands. [workers], [memoryBudget] and
+  /// [fileReadBufferSize] are checked before any work starts, and a value that
+  /// cannot be honoured throws [ArgumentError] at the call, whatever
+  /// `throwOnError` says.
   final void Function(Object error, StackTrace stackTrace)? onError;
 
   /// Maximum number of isolates to decode on.
