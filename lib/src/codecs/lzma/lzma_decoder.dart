@@ -122,10 +122,11 @@ class LzmaDecoder {
   }
 
   // Reset the decoder.
-  void reset({int? positionBits,
-    int? literalPositionBits,
-    int? literalContextBits,
-    bool resetDictionary = false}) {
+  void reset(
+      {int? positionBits,
+      int? literalPositionBits,
+      int? literalContextBits,
+      bool resetDictionary = false}) {
     _positionBits = positionBits ?? _positionBits;
     _literalPositionBits = literalPositionBits ?? _literalPositionBits;
     _literalContextBits = literalContextBits ?? _literalContextBits;
@@ -247,8 +248,8 @@ class LzmaDecoder {
   // This avoids the intermediate copy [decode] has to make. The view handed to
   // [OutputStream.writeBytes] does not outlive the call, so a later
   // [trimDictionary] cannot invalidate it.
-  void decodeToOutput(InputStream input, int uncompressedLength,
-      OutputStream output) {
+  void decodeToOutput(
+      InputStream input, int uncompressedLength, OutputStream output) {
     _rc.setBuffer(input.toUint8List());
     _rc.initialize();
 
@@ -311,7 +312,7 @@ class LzmaDecoder {
     _distance0 = distance;
 
     state =
-    _prevPacketIsLiteral() ? _LzmaState.litMatch : _LzmaState.nonLitMatch;
+        _prevPacketIsLiteral() ? _LzmaState.litMatch : _LzmaState.nonLitMatch;
   }
 
   // Decode a packet that repeats a match already done.
@@ -350,7 +351,7 @@ class LzmaDecoder {
 
     // Update state.
     state =
-    _prevPacketIsLiteral() ? _LzmaState.litLongRep : _LzmaState.nonLitRep;
+        _prevPacketIsLiteral() ? _LzmaState.litLongRep : _LzmaState.nonLitRep;
   }
 
   // Repeat decompressed data, starting [distance] bytes back from the end of

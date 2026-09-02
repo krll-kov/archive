@@ -270,10 +270,8 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
       // blocks are found through the index, so nothing downstream would read
       // these bytes again. Without this an archive that xz rejects decodes
       // here without complaint.
-      final headerCrc = header[8] |
-          header[9] << 8 |
-          header[10] << 16 |
-          header[11] << 24;
+      final headerCrc =
+          header[8] | header[9] << 8 | header[10] << 16 | header[11] << 24;
       if (getCrc32(Uint8List.sublistView(header, 6, 8)) != headerCrc) {
         return null;
       }

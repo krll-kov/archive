@@ -28,7 +28,9 @@ class RangeDecoder {
   int _dataEnd = 0;
 
   // Bytes of padding added after the input. Must be at least the number of
-  // bytes a single LZMA packet can consume.
+  // bytes a single LZMA packet can consume, since [isOverrun] is only consulted
+  // between packets. See range_decoder_native.dart for how the bound of 48 is
+  // arrived at; the two implementations decode the same packets.
   static const readAheadPadding = 64;
 
   // True once more input has been consumed than was supplied, which means the

@@ -194,10 +194,8 @@ class XZDecoder {
     _checkOptions(multithread, throwOnError);
 
     if (!xzIsolatesSupported) {
-      _report(
-          multithread,
-          () => _decodeStream(input, output, verify, throwOnError),
-          false);
+      _report(multithread,
+          () => _decodeStream(input, output, verify, throwOnError), false);
       return false;
     }
 
@@ -306,6 +304,9 @@ class XZDecoder {
     final received = List<int>.filled(blocks.length, 0);
     final accepted = List<bool>.filled(blocks.length, true);
     String? reason;
+    // Set when a block produced more than the index accounted for, which is the
+    // archive contradicting itself.
+    var overran = false;
 
     final ok = await xzDecodeMultithreaded(
       bytes: bytes,
@@ -314,21 +315,50 @@ class XZDecoder {
       workers: options.workers,
       memoryBudget: options.memoryBudget,
       onChunk: (offset, chunk) {
-        output.setRange(offset, offset + chunk.length, chunk);
+        // A block header can declare more output than the index records for
+        // that block, and a damaged one often does. The buffer is sized from
+        // the index, so the surplus has nowhere to go. Keep what fits and mark
+        // the decode failed, rather than letting setRange throw: this runs in a
+        // callback, so the error would surface as a bare RangeError even when
+        // the caller asked for failures to be reported by return value.
+        //
+        // The surplus is not decoded output that is being thrown away. The two
+        // sizes disagree, so the archive is invalid whichever is believed, and
+        // the index is the one the buffer was allocated against. Believing the
+        // block header instead would let a corrupt one demand any allocation it
+        // likes, which is what maxPreallocateSize exists to prevent.
+        var length = chunk.length;
+        if (offset + length > output.length) {
+          length = output.length - offset;
+          overran = true;
+          reason ??= "Uncompressed data doesn't match the length in the index";
+        }
+        if (length <= 0) {
+          return;
+        }
+        output.setRange(
+            offset, offset + length, Uint8List.sublistView(chunk, 0, length));
         if (blocks.isNotEmpty) {
-          received[_blockIndexAt(blocks, offset)] += chunk.length;
+          final index = _blockIndexAt(blocks, offset);
+          received[index] += length;
+          if (overran) {
+            // Stops the prefix below at this block: it filled its share of the
+            // output, so it would otherwise pass for whole and sound.
+            accepted[index] = false;
+          }
         }
       },
       onBlockDone: (offset, blockOk) {
         if (blocks.isNotEmpty) {
-          accepted[_blockIndexAt(blocks, offset)] = blockOk;
+          final index = _blockIndexAt(blocks, offset);
+          accepted[index] = accepted[index] && blockOk;
         }
       },
       onFailureReason: (r) => reason = r,
       fileReadBufferSize: options.fileReadBufferSize,
     );
 
-    if (ok) {
+    if (ok && !overran) {
       return output;
     }
     if (throwOnError) {
@@ -451,7 +481,9 @@ class XZDecoder {
     // the failure back where it started, so it is refused here, while the
     // caller is still on the stack to hear about it.
     if (throwOnError && options.onError == null) {
-      throw ArgumentError.value(null, 'onError',
+      throw ArgumentError.value(
+          null,
+          'onError',
           'Must be given when throwOnError is set, since that is where the '
               'exception is delivered');
     }

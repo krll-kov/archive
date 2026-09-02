@@ -190,8 +190,8 @@ void main() {
 
         // Only the check is broken: the data still decodes.
         expect(
-            XZDecoder()
-                .decodeStream(InputMemoryStream(compressed), OutputMemoryStream()),
+            XZDecoder().decodeStream(
+                InputMemoryStream(compressed), OutputMemoryStream()),
             isTrue);
         expect(
             XZDecoder().decodeStream(
@@ -211,8 +211,7 @@ void main() {
             () => XZDecoder()
                 .decodeBytes(utf8.encode('not an archive'), throwOnError: true),
             throwsA(isA<ArchiveException>()));
-        expect(
-            XZDecoder().decodeBytes(utf8.encode('not an archive')), isEmpty);
+        expect(XZDecoder().decodeBytes(utf8.encode('not an archive')), isEmpty);
       });
 
       test('turns a thrown decode failure into the same exception', () {
@@ -233,8 +232,7 @@ void main() {
       // checksum does not match all need different answers.
       String reasonFor(Uint8List compressed) {
         try {
-          XZDecoder()
-              .decodeBytes(compressed, verify: true, throwOnError: true);
+          XZDecoder().decodeBytes(compressed, verify: true, throwOnError: true);
           return 'no error';
         } on ArchiveException catch (e) {
           return e.message;
@@ -255,8 +253,7 @@ void main() {
           'Invalid XZ stream header signature':
               reasonFor(utf8.encode('not an archive at all')),
           'Invalid stream flags': reasonFor(flipped('pb4.xz', 6)),
-          'Invalid stream header CRC checksum':
-              reasonFor(flipped('pb4.xz', 8)),
+          'Invalid stream header CRC checksum': reasonFor(flipped('pb4.xz', 8)),
           'Stream footer has invalid index size':
               reasonFor(flipped('pb4.xz', pb4.length - 6)),
           'Invalid XZ stream footer signature':

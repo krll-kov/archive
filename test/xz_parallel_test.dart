@@ -638,7 +638,8 @@ void main() {
       // cannot be read back: writing to memory took the other branch and kept
       // what had been decoded. Workers always write to a port, so a corrupt
       // archive gave nothing on isolates and a partial result without them.
-      final source = xzCompress(expected, ['--check=crc64', '--lzma2=preset=1']);
+      final source =
+          xzCompress(expected, ['--check=crc64', '--lzma2=preset=1']);
       final full = XZDecoder().decodeBytes(source).length;
 
       // Cutting the archive in half leaves a block that decodes for a while
@@ -662,8 +663,7 @@ void main() {
           final path = p.join(dir.path, 'out_$verify.bin');
           final output = OutputFileStream(path);
           expect(
-              XZDecoder().decodeStream(
-                  InputMemoryStream(compressed), output,
+              XZDecoder().decodeStream(InputMemoryStream(compressed), output,
                   verify: verify),
               isFalse);
           await output.close();
@@ -684,8 +684,8 @@ void main() {
       late Uint8List pristine;
 
       setUp(() {
-        pristine = xzCompress(
-            expected, ['--block-size=65536', '--check=crc64', '--lzma2=preset=1']);
+        pristine = xzCompress(expected,
+            ['--block-size=65536', '--check=crc64', '--lzma2=preset=1']);
         expect(XZDecoder().uncompressedSize(pristine), equals(expected.length));
       });
 
@@ -701,8 +701,10 @@ void main() {
         for (var i = 8; i < 12; i++) {
           final data = flipped(i);
           expect(XZDecoder().uncompressedSize(data), isNull, reason: 'byte $i');
-          expect(await decodeStreamOnIsolates(
-                  InputMemoryStream(data), OutputMemoryStream(), workers: 4),
+          expect(
+              await decodeStreamOnIsolates(
+                  InputMemoryStream(data), OutputMemoryStream(),
+                  workers: 4),
               isFalse,
               reason: 'byte $i');
         }
@@ -714,8 +716,10 @@ void main() {
         for (var i = footerStart; i < footerStart + 4; i++) {
           final data = flipped(i);
           expect(XZDecoder().uncompressedSize(data), isNull, reason: 'byte $i');
-          expect(await decodeStreamOnIsolates(
-                  InputMemoryStream(data), OutputMemoryStream(), workers: 4),
+          expect(
+              await decodeStreamOnIsolates(
+                  InputMemoryStream(data), OutputMemoryStream(),
+                  workers: 4),
               isFalse,
               reason: 'byte $i');
         }
@@ -750,7 +754,8 @@ void main() {
       late Uint8List whole;
 
       setUpAll(() {
-        whole = xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+        whole =
+            xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
         broken = Uint8List.sublistView(whole, 0, whole.length ~/ 2);
       });
 
@@ -780,15 +785,15 @@ void main() {
 
       Future<({Object? error, Object? done})> stream(Uint8List compressed,
               {required bool throwOnError, bool verify = false}) =>
-          outcome((onDone, onError) => XZDecoder().decodeStream(
-              InputMemoryStream(compressed), OutputMemoryStream(),
-              verify: verify,
-              throwOnError: throwOnError,
-              multithread: XZMultithreadOptions<bool>(
-                onDone: onDone,
-                onError: onError,
-                workers: 4,
-              )));
+          outcome((onDone, onError) => XZDecoder()
+              .decodeStream(InputMemoryStream(compressed), OutputMemoryStream(),
+                  verify: verify,
+                  throwOnError: throwOnError,
+                  multithread: XZMultithreadOptions<bool>(
+                    onDone: onDone,
+                    onError: onError,
+                    workers: 4,
+                  )));
 
       test('decodeBytes routes a corrupt archive to onError', () async {
         final r = await bytes(broken, throwOnError: true);
@@ -854,14 +859,14 @@ void main() {
           File(archivePath).writeAsBytesSync(broken);
           final input = InputFileStream(archivePath);
           final output = OutputFileStream(p.join(dir.path, 'out.bin'));
-          final r = await outcome((onDone, onError) => XZDecoder().decodeStream(
-              input, output,
-              throwOnError: true,
-              multithread: XZMultithreadOptions<bool>(
-                onDone: onDone,
-                onError: onError,
-                workers: 4,
-              )));
+          final r = await outcome(
+              (onDone, onError) => XZDecoder().decodeStream(input, output,
+                  throwOnError: true,
+                  multithread: XZMultithreadOptions<bool>(
+                    onDone: onDone,
+                    onError: onError,
+                    workers: 4,
+                  )));
           await input.close();
           await output.close();
           expect(r.error, isA<ArchiveException>());
@@ -889,8 +894,8 @@ void main() {
             ['--block-size=65536', '--check=crc64', '--lzma2=preset=1']);
         final badCheck = Uint8List.fromList(built.bytes);
         badCheck[built.blocks[0].checkOffset(8)] ^= 0xff;
-        expect(await decodeBytesOnIsolates(badCheck, workers: 4),
-            equals(expected),
+        expect(
+            await decodeBytesOnIsolates(badCheck, workers: 4), equals(expected),
             reason: 'only the stored check should be broken');
 
         final checked = await bytes(badCheck, throwOnError: true, verify: true);
@@ -921,6 +926,93 @@ void main() {
             multithread: XZMultithreadOptions<Uint8List>(
                 onDone: completer.complete, workers: 4));
         expect(await completer.future, isNotEmpty);
+      });
+    });
+
+    group('a block that outgrows its record in the index', () {
+      // Damage inside a block header can raise the uncompressed size it
+      // declares, leaving it larger than what the index records for that block.
+      // decodeBytes preallocates from the index, so such a block has more to
+      // write than the buffer holds. That has to be reported the way every
+      // other damaged archive is, not raised from inside the chunk callback:
+      // the caller's stack is gone by then, so a throw would arrive as a bare
+      // RangeError even when failures were asked for by return value.
+      //
+      // The offsets are from test/_data/xz/good-1-lzma2-1.xz, which is checked
+      // in, so they are fixed. 31 of its 424 bytes have this effect; these two
+      // are the first and the one that overshoots furthest.
+      late Uint8List original;
+
+      setUpAll(() {
+        original = File('test/_data/xz/good-1-lzma2-1.xz').readAsBytesSync();
+      });
+
+      Uint8List damagedAt(int offset) {
+        final data = Uint8List.fromList(original);
+        data[offset] ^= 0xFF;
+        return data;
+      }
+
+      for (final offset in const [240, 316]) {
+        test('at byte $offset reaches onDone without throwOnError', () async {
+          final data = damagedAt(offset);
+          final declared = XZDecoder().uncompressedSize(data)!;
+          // The premise: the single threaded decode really does produce more
+          // than the index accounts for, which is what has nowhere to go.
+          expect(XZDecoder().decodeBytes(data).length, greaterThan(declared));
+
+          final completer = Completer<({Object? error, Uint8List? done})>();
+          XZDecoder().decodeBytes(data,
+              multithread: XZMultithreadOptions<Uint8List>(
+                workers: 4,
+                onDone: (d) => completer.complete((error: null, done: d)),
+                onError: (e, _) => completer.complete((error: e, done: null)),
+              ));
+          final result = await completer.future;
+          expect(result.error, isNull,
+              reason: 'a corrupt archive is not an error without throwOnError');
+          // Clipped at the index, which is the size the buffer was allocated
+          // against and the only one of the two the archive can be held to.
+          expect(result.done, hasLength(declared));
+        });
+
+        test('at byte $offset reports the mismatch with throwOnError',
+            () async {
+          final data = damagedAt(offset);
+          final completer = Completer<Object?>();
+          XZDecoder().decodeBytes(data,
+              throwOnError: true,
+              multithread: XZMultithreadOptions<Uint8List>(
+                workers: 4,
+                onDone: (_) => completer.complete(null),
+                onError: (e, _) => completer.complete(e),
+              ));
+          final error = await completer.future;
+          expect(error, isA<ArchiveException>());
+          // The same reason the single threaded decode gives, rather than the
+          // RangeError of a buffer that ran out of room.
+          expect((error as ArchiveException).message,
+              contains('Stream index uncompressed length mismatch'));
+        });
+      }
+
+      test('decodeStream is unaffected, because its output can grow', () async {
+        final data = damagedAt(316);
+        final sequential = OutputMemoryStream();
+        final sequentialOk =
+            XZDecoder().decodeStream(InputMemoryStream(data), sequential);
+
+        final parallel = OutputMemoryStream();
+        final completer = Completer<bool>();
+        XZDecoder().decodeStream(InputMemoryStream(data), parallel,
+            multithread: XZMultithreadOptions<bool>(
+              workers: 4,
+              onDone: completer.complete,
+              onError: (e, _) => completer.completeError(e),
+            ));
+
+        expect(await completer.future, equals(sequentialOk));
+        expect(parallel.getBytes(), equals(sequential.getBytes()));
       });
     });
 

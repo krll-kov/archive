@@ -618,8 +618,7 @@ void _xzWorker(SendPort toMain) {
     }
 
     file?.closeSync();
-    toMain
-        .send([_msgDone, receive.sendPort, ok, null, outputOffset, reason]);
+    toMain.send([_msgDone, receive.sendPort, ok, null, outputOffset, reason]);
   });
 
   toMain.send([_msgReady, receive.sendPort, null, null, -1, null]);

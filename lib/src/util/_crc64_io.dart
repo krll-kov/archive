@@ -41,13 +41,13 @@ int _crc64Bytes(Uint8List array, int crc) {
   while (i <= limit) {
     crc ^= bytes.getUint64(i, Endian.little);
     crc = tables[0x700 + (crc & 0xff)] ^
-    tables[0x600 + ((crc >>> 8) & 0xff)] ^
-    tables[0x500 + ((crc >>> 16) & 0xff)] ^
-    tables[0x400 + ((crc >>> 24) & 0xff)] ^
-    tables[0x300 + ((crc >>> 32) & 0xff)] ^
-    tables[0x200 + ((crc >>> 40) & 0xff)] ^
-    tables[0x100 + ((crc >>> 48) & 0xff)] ^
-    tables[crc >>> 56];
+        tables[0x600 + ((crc >>> 8) & 0xff)] ^
+        tables[0x500 + ((crc >>> 16) & 0xff)] ^
+        tables[0x400 + ((crc >>> 24) & 0xff)] ^
+        tables[0x300 + ((crc >>> 32) & 0xff)] ^
+        tables[0x200 + ((crc >>> 40) & 0xff)] ^
+        tables[0x100 + ((crc >>> 48) & 0xff)] ^
+        tables[crc >>> 56];
     i += 8;
   }
   while (i < length) {
