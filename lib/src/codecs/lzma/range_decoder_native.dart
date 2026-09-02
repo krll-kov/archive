@@ -198,8 +198,6 @@ class RangeDecoder {
   }
 
   // Read a bittree (big endian) of [count] bits from the decoder.
-  @pragma('vm:unsafe:no-bounds-checks')
-  @pragma('vm:unsafe:no-interrupts')
   int readBittree(RangeDecoderTable table, int count) {
     final probs = table.table;
     final buffer = _buffer;
@@ -228,8 +226,6 @@ class RangeDecoder {
   }
 
   // Read a reverse bittree (little endian) of [count] bits from the decoder.
-  @pragma('vm:unsafe:no-bounds-checks')
-  @pragma('vm:unsafe:no-interrupts')
   int readBittreeReverse(RangeDecoderTable table, int count) {
     final probs = table.table;
     final buffer = _buffer;
@@ -433,8 +429,6 @@ class RangeDecoder {
   }
 
   // Read [count] bits directly from the decoder.
-  @pragma('vm:unsafe:no-bounds-checks')
-  @pragma('vm:unsafe:no-interrupts')
   int readDirect(int count) {
     final buffer = _buffer;
     var pos = _bufferPos;
