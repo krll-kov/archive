@@ -990,9 +990,11 @@ void main() {
           final error = await completer.future;
           expect(error, isA<ArchiveException>());
           // The same reason the single threaded decode gives, rather than the
-          // RangeError of a buffer that ran out of room.
+          // RangeError of a buffer that ran out of room. Damage this far into
+          // the block is caught by the range coder at the end of the chunk,
+          // before the index it disagrees with is ever read.
           expect((error as ArchiveException).message,
-              contains('Stream index uncompressed length mismatch'));
+              contains('LZMA data is corrupt'));
         });
       }
 

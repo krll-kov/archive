@@ -487,6 +487,13 @@ class XZStreamDecoder {
 
         decoder.decodeToOutput(
             input.readBytes(compressedLength), uncompressedLength, output);
+        // Checking this can catch some corrupt files, especially if they don't
+        // have any other integrity check. An end of payload marker is not
+        // allowed in LZMA2, so a chunk that reached its uncompressed size
+        // without emptying the range coder is a data error.
+        if (!decoder.isRangeCoderFinished) {
+          return _fail('LZMA data is corrupt');
+        }
         decoder.trimDictionary(dictionarySize);
       }
     }

@@ -242,6 +242,12 @@ class LzmaDecoder {
     return _dictionary.sublist(initialSize, _writePosition);
   }
 
+  // When decoding has been properly finished, [RangeDecoder.code] is always
+  // zero unless the input stream is corrupt. Only meaningful for data that was
+  // decoded to its full length, so LZMA2, where every chunk carries its
+  // uncompressed size, rather than a plain LZMA stream that may stop early.
+  bool get isRangeCoderFinished => _rc.code == 0;
+
   // Decode [input], which contains compressed LZMA data that unpacks to
   // [uncompressedLength] bytes, appending the result directly to [output].
   //
