@@ -45,7 +45,7 @@ class _GZipDecoder extends ZLibDecoderBase {
     final inSink = GZipCodec().decoder.startChunkedConversion(outSink);
 
     while (!input.isEOS) {
-      final chunkSize = min(1024, input.length);
+      final chunkSize = min(8 * 1024, input.length);
       final chunk = input.readBytes(chunkSize).toUint8List();
       if (chunk.isNotEmpty) {
         if (seen == 0) {
