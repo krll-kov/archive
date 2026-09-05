@@ -237,7 +237,8 @@ class XZDecoder {
 
   bool _decodeStream(
       InputStream input, OutputStream output, bool verify, bool throwOnError) {
-    final decoder = XZStreamDecoder(verify: verify);
+    final decoder =
+        XZStreamDecoder(verify: verify, maxPreallocateSize: maxPreallocateSize);
     try {
       if (decoder.decode(input, output)) return true;
     } catch (error) {
@@ -278,6 +279,7 @@ class XZDecoder {
         bytes: bytes,
         layout: layout,
         verify: verify,
+        maxPreallocateSize: maxPreallocateSize,
         workers: options.workers,
         memoryBudget: options.memoryBudget,
         onChunk: writer == null
@@ -312,6 +314,7 @@ class XZDecoder {
       bytes: bytes,
       layout: layout,
       verify: verify,
+      maxPreallocateSize: maxPreallocateSize,
       workers: options.workers,
       memoryBudget: options.memoryBudget,
       onChunk: (offset, chunk) {
@@ -422,6 +425,7 @@ class XZDecoder {
       fileLength: region?.length ?? 0,
       layout: layout,
       verify: verify,
+      maxPreallocateSize: maxPreallocateSize,
       workers: options.workers,
       memoryBudget: options.memoryBudget,
       onChunk: writer.add,

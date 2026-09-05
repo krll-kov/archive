@@ -281,6 +281,64 @@ void main() {
       expect(archive[0].groupId, equals(1717));
     });
 
+    test('pax size record survives a second metadata header', () {
+      // The record describes the entry it precedes, not the pax header that
+      // happens to sit in between. Applying it there reads the wrong number of
+      // bytes out of that header and leaves the stream inside it, so the file's
+      // own content ends up being parsed as an entry.
+      Uint8List header(String name, int size, String typeFlag) {
+        final h = Uint8List(512);
+        void put(int off, String s) =>
+            h.setRange(off, off + s.length, ascii.encode(s));
+        put(0, name);
+        put(100, '0000644');
+        put(108, '0000000');
+        put(116, '0000000');
+        put(124, size.toRadixString(8).padLeft(11, '0'));
+        put(136, '00000000000');
+        put(148, '        ');
+        put(156, typeFlag);
+        put(257, 'ustar');
+        put(263, '00');
+        var sum = 0;
+        for (final b in h) {
+          sum += b;
+        }
+        put(148, '${sum.toRadixString(8).padLeft(6, '0')}\x00 ');
+        return h;
+      }
+
+      List<int> block(List<int> data) =>
+          [...data, ...Uint8List((512 - data.length % 512) % 512)];
+
+      List<int> record(String keyword, String value) {
+        for (var length = keyword.length + value.length + 3;; length++) {
+          if ('$length'.length + keyword.length + value.length + 3 == length) {
+            return ascii.encode('$length $keyword=$value\n');
+          }
+        }
+      }
+
+      final content = ascii.encode('HELLO WORLD, 21 BYTES');
+      final size = record('size', '${content.length}');
+      final path = record('path', 'renamed_by_pax.txt');
+      final bytes = Uint8List.fromList([
+        ...header('PaxHeader/size', size.length, TarFile.exHeader),
+        ...block(size),
+        ...header('PaxHeader/path', path.length, TarFile.exHeader),
+        ...block(path),
+        ...header('original.txt', 0, TarFile.normalFile),
+        ...block(content),
+        ...Uint8List(1024),
+      ]);
+
+      final archive = TarDecoder().decodeBytes(bytes);
+      expect(archive.length, equals(1));
+      expect(archive[0].name, equals('renamed_by_pax.txt'));
+      expect(archive[0].size, equals(content.length));
+      expect(archive[0].readBytes(), equals(content));
+    });
+
     test('pax header without storing data', () {
       // The pax header's own content has to be read even when file data is
       // being skipped, since it carries the next entry's name.

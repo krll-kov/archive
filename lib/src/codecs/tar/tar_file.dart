@@ -109,7 +109,18 @@ class TarFile {
       }
     }
 
-    if (size != null) {
+    final isMetadata = filename == '././@LongLink' ||
+        typeFlag == longName ||
+        typeFlag == longLinkName ||
+        typeFlag == exHeader ||
+        typeFlag == exHeader2 ||
+        typeFlag == gExHeader ||
+        typeFlag == gExHeader2;
+
+    // A pax size record describes the entry it precedes, not the metadata
+    // headers that may sit in between. Applying it to one of those would read
+    // the wrong number of bytes and leave the stream mid-header.
+    if (size != null && !isMetadata) {
       fileSize = size;
     }
     // A size field can hold a negative number, which no entry can have.

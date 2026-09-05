@@ -27,12 +27,14 @@ import '../lzma/lzma_decoder.dart';
 /// decoding into a non-seekable output computes it as the bytes go past
 /// instead.
 ({bool ok, String? reason}) decodeXZBlock(
-    InputStream input, int streamFlags, OutputStream output) {
+    InputStream input, int streamFlags, OutputStream output,
+    {required int maxPreallocateSize}) {
   final headerByte = input.peekBytes(1).readByte();
   if (headerByte == 0) {
     return (ok: false, reason: 'Expected a block but found the stream index');
   }
-  final decoder = XZStreamDecoder()..streamFlags = streamFlags;
+  final decoder = XZStreamDecoder(maxPreallocateSize: maxPreallocateSize)
+    ..streamFlags = streamFlags;
   final ok = decoder.readBlock(input, output, (headerByte + 1) * 4);
   return (ok: ok, reason: ok ? null : decoder.failureReason);
 }
@@ -64,7 +66,10 @@ class XZStreamDecoder {
   /// is thrown or allocated on the path that succeeds.
   String? failureReason;
 
-  XZStreamDecoder({this.verify = false});
+  // Upper bound on a buffer sized from a length the archive declares.
+  final int maxPreallocateSize;
+
+  XZStreamDecoder({this.verify = false, required this.maxPreallocateSize});
 
   // Records why the decode gave up and reports the failure. The first reason
   // is kept, because it is the innermost one: the returns above it only pass
@@ -193,10 +198,16 @@ class XZStreamDecoder {
     int? compressedLength;
     if (hasCompressedLength) {
       compressedLength = _readMultibyteInteger(header);
+      if (compressedLength < 0) {
+        return _fail('Invalid compressed length in block header');
+      }
     }
     int? uncompressedLength;
     if (hasUncompressedLength) {
       uncompressedLength = _readMultibyteInteger(header);
+      if (uncompressedLength < 0) {
+        return _fail('Invalid uncompressed length in block header');
+      }
     }
 
     final filters = <int>[];
@@ -205,9 +216,15 @@ class XZStreamDecoder {
     for (var i = 0; i < nFilters; i++) {
       final id = _readMultibyteInteger(header);
       final propertiesLength = _readMultibyteInteger(header);
+      if (id < 0 || propertiesLength < 0) {
+        return _fail('Invalid filter in block header');
+      }
       final properties = header.readBytes(propertiesLength).toUint8List();
       if (id == 0x03) {
         // delta filter
+        if (properties.isEmpty) {
+          return _fail('Invalid delta filter distance');
+        }
         final distance = properties[0];
         filters.add(id);
         filters.add(distance);
@@ -224,6 +241,9 @@ class XZStreamDecoder {
         filters.add(startOffset);
       } else if (id == 0x21) {
         // lzma2 filter
+        if (properties.isEmpty) {
+          return _fail('Invalid LZMA dictionary size');
+        }
         final v = properties[0];
         if (v > 40) {
           return _fail('Invalid LZMA dictionary size');
@@ -285,7 +305,13 @@ class XZStreamDecoder {
       // Streams that are not backed by a contiguous buffer cannot be read back
       // after the data has been written, so the block is decoded into a
       // temporary buffer and appended afterwards.
-      final block = OutputMemoryStream(size: uncompressedLength);
+      // The declared length is only a hint, so it is not trusted past
+      // [maxPreallocateSize]; the stream grows into what the block needs.
+      final block = OutputMemoryStream(
+          size: uncompressedLength != null &&
+                  uncompressedLength <= maxPreallocateSize
+              ? uncompressedLength
+              : null);
       final bool read;
       try {
         read = _readLZMA2(input, block, dictionarySize);
@@ -570,11 +596,15 @@ class XZStreamDecoder {
     return true;
   }
 
-  // Reads a multibyte integer from [input].
+  // Reads a multibyte integer from [input], or -1 if there is not a valid one
+  // there. Nine bytes is the format's cap; past it the multiplier overflows.
   int _readMultibyteInteger(InputStream input) {
     var value = 0;
     var multiplier = 1;
-    while (true) {
+    for (var i = 0; i < 9; i++) {
+      if (input.isEOS) {
+        return -1;
+      }
       final data = input.readByte();
       value += (data & 0x7f) * multiplier;
       if (data & 0x80 == 0) {
@@ -582,6 +612,7 @@ class XZStreamDecoder {
       }
       multiplier *= 128;
     }
+    return -1;
   }
 
   // Reads padding from [input] until the read position is aligned to a 4 byte

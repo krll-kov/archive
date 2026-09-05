@@ -134,6 +134,7 @@ Future<bool> xzDecodeMultithreaded({
   int fileLength = 0,
   required XZLayout? layout,
   required bool verify,
+  required int maxPreallocateSize,
   int? workers,
   int? memoryBudget,
   required void Function(int outputOffset, Uint8List chunk) onChunk,
@@ -170,6 +171,7 @@ Future<bool> xzDecodeMultithreaded({
             streamFlags: block.streamFlags,
             outputOffset: block.outputOffset,
             verify: verify,
+            maxPreallocateSize: maxPreallocateSize,
             fileReadBufferSize: fileReadBufferSize,
           )
       ], count, onChunk, onBlockDone, onFailureReason);
@@ -193,6 +195,7 @@ Future<bool> xzDecodeMultithreaded({
       streamFlags: 0,
       outputOffset: 0,
       verify: verify,
+      maxPreallocateSize: maxPreallocateSize,
       fileReadBufferSize: fileReadBufferSize,
     )
   ], 1, onChunk, null, onFailureReason);
@@ -325,6 +328,7 @@ class _Job {
   final int streamFlags;
   final int outputOffset;
   final bool verify;
+  final int maxPreallocateSize;
   final int fileReadBufferSize;
 
   const _Job({
@@ -336,6 +340,7 @@ class _Job {
     required this.streamFlags,
     required this.outputOffset,
     required this.verify,
+    required this.maxPreallocateSize,
     required this.fileReadBufferSize,
   });
 
@@ -362,6 +367,7 @@ class _Job {
       outputOffset,
       verify,
       fileReadBufferSize,
+      maxPreallocateSize,
     ];
   }
 
@@ -533,6 +539,7 @@ void _xzWorker(SendPort toMain) {
     final outputOffset = job[7] as int;
     final verify = job[8] as bool;
     final fileReadBufferSize = job[9] as int;
+    final maxPreallocateSize = job[10] as int;
 
     // Failing to get hold of the compressed data is a failure of the decode
     // itself rather than a statement about the archive, so it is reported as
@@ -579,11 +586,13 @@ void _xzWorker(SendPort toMain) {
     final sink = _PortSink(toMain, outputOffset, verifyHere ? checkType : 0);
     try {
       if (kind == _kindBlock) {
-        final result = decodeXZBlock(input, streamFlags, sink);
+        final result = decodeXZBlock(input, streamFlags, sink,
+            maxPreallocateSize: maxPreallocateSize);
         ok = result.ok;
         reason = result.reason;
       } else {
-        final decoder = XZStreamDecoder(verify: verify);
+        final decoder = XZStreamDecoder(
+            verify: verify, maxPreallocateSize: maxPreallocateSize);
         ok = decoder.decode(input, sink);
         reason = decoder.failureReason;
       }

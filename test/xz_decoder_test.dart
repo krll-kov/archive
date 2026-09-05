@@ -48,6 +48,121 @@ Uint8List x86Sample() {
 }
 
 void main() {
+  group('xz block headers', () {
+    // Builds a stream whose single block header carries [filters] and, when
+    // given, a declared uncompressed length. There is no compressed data
+    // behind it: every test here is about what the header alone can make the
+    // decoder do.
+    Uint8List streamWith({List<int>? rawLength, List<int>? filters}) {
+      final body = <int>[
+        (filters == null ? 0 : (filters[0] - 1)) |
+            (rawLength != null ? 0x80 : 0),
+        if (rawLength != null) ...rawLength,
+        if (filters != null) ...filters.skip(1),
+      ];
+      var headerLength = 1 + body.length + 4;
+      headerLength = (headerLength + 3) & ~3;
+      final header = <int>[headerLength ~/ 4 - 1, ...body];
+      while (header.length < headerLength - 4) {
+        header.add(0);
+      }
+      Uint8List u32(int v) =>
+          (ByteData(4)..setUint32(0, v, Endian.little)).buffer.asUint8List();
+      const streamFlags = [0x00, 0x01];
+      return Uint8List.fromList([
+        0xfd,
+        0x37,
+        0x7a,
+        0x58,
+        0x5a,
+        0x00,
+        ...streamFlags,
+        ...u32(getCrc32(streamFlags)),
+        ...header,
+        ...u32(getCrc32(header)),
+      ]);
+    }
+
+    // The x86 BCJ filter in front of LZMA2, which is what makes the decoder
+    // buffer the block instead of writing it straight through.
+    const bcjThenLzma2 = [2, 0x04, 0x00, 0x21, 0x01, 0x00];
+
+    // A sink that is not an OutputMemoryStream, so the buffered path is taken.
+    OutputStream sink() =>
+        OutputFileStream(p.join(Directory.systemTemp.path, 'xz_header.out'));
+
+    String reasonFor(Uint8List archive) {
+      try {
+        XZDecoder().decodeStream(InputMemoryStream(archive), sink(),
+            verify: true, throwOnError: true);
+      } on ArchiveException catch (e) {
+        // The decoder prefixes the reason it recorded; the tests are about
+        // which reason came back, not about that wrapper.
+        return e.message.replaceFirst('Invalid XZ archive: ', '');
+      }
+      return '';
+    }
+
+    test('does not size a buffer from the length the header declares', () {
+      // 16 TB, declared by 32 bytes of header. Allocating that up front is an
+      // OutOfMemoryError on the VM and a dead page on the web, so the decoder
+      // has to reach the missing compressed data instead of the allocator.
+      final archive = streamWith(
+          rawLength: [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x04],
+          filters: bcjThenLzma2);
+      expect(archive.length, lessThan(64));
+      expect(reasonFor(archive), isNot(contains('Out of Memory')));
+    });
+
+    test('rejects a multibyte integer longer than nine bytes', () {
+      // Nine is the cap in the format. Past it the multiplier overflows and
+      // the value stops meaning anything, negative values included.
+      for (final count in [9, 10, 11]) {
+        final archive = streamWith(
+            rawLength: [...List.filled(count, 0xff), 0x00],
+            filters: bcjThenLzma2);
+        expect(
+            reasonFor(archive), 'Invalid uncompressed length in block header',
+            reason: '$count continuation bytes');
+      }
+    });
+
+    test('rejects a multibyte integer that runs to the end of the header', () {
+      final header = <int>[15, 0x81, ...List.filled(58, 0xff)];
+      Uint8List u32(int v) =>
+          (ByteData(4)..setUint32(0, v, Endian.little)).buffer.asUint8List();
+      const streamFlags = [0x00, 0x01];
+      final archive = Uint8List.fromList([
+        0xfd,
+        0x37,
+        0x7a,
+        0x58,
+        0x5a,
+        0x00,
+        ...streamFlags,
+        ...u32(getCrc32(streamFlags)),
+        ...header,
+        ...u32(getCrc32(header)),
+      ]);
+      expect(reasonFor(archive), 'Invalid uncompressed length in block header');
+    });
+
+    test('rejects a filter whose properties field is empty', () {
+      expect(reasonFor(streamWith(filters: [1, 0x21, 0x00])),
+          'Invalid LZMA dictionary size');
+      expect(reasonFor(streamWith(filters: [2, 0x03, 0x00, 0x21, 0x01, 0x00])),
+          'Invalid delta filter distance');
+    });
+
+    test('still reaches the data when the header is well formed', () {
+      // The same shape with a valid properties byte gets past every check
+      // above, so the rejections are about the headers and not the archive
+      // being a stub.
+      expect(reasonFor(streamWith(filters: [1, 0x21, 0x01, 0x00])),
+          'LZMA2 data ended without an end marker');
+    });
+  });
+
   group('xz decoder', () {
     test('decodes an archive written with pb=4', () {
       // Four position bits is legal and rarely used, and reading the position
