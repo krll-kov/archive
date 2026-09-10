@@ -16,6 +16,7 @@ export 'src/codecs/lzma/range_decoder.dart';
 export 'src/codecs/tar/tar_file.dart';
 export 'src/codecs/tar_decoder.dart';
 export 'src/codecs/tar_encoder.dart';
+export 'src/codecs/xz/xz_chunked.dart';
 export 'src/codecs/xz_decoder.dart';
 export 'src/codecs/xz_encoder.dart';
 export 'src/codecs/zip/zip_directory.dart';

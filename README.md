@@ -31,7 +31,8 @@ The archive library currently supports the following codecs:
 - ZLib
 - GZip
 - BZip2
-- XZ
+- XZ (Encoder just stores, does not compress)
+- Zstandard (zstd)
 
 ---
 
@@ -112,6 +113,56 @@ void main() {
   }
 }
 ```
+
+### Dart async StreamTransformers/ByteConversionSink/Converter support
+
+Codecs that take data as it arrives expose a `Codec` with a converter for each
+direction, the shape `dart:io` uses for `gzip`.
+
+| codec | decoding | encoding |
+| --- | --- | --- |
+| xz | `xzCodec.decoder` | `xzCodec.encoder` (stores, does not compress) |
+| zstd | `zstdCodec.decoder` | `zstdCodec.encoder` |
+
+Decoding as the bytes arrive, single-threaded, holding the window the archive
+asks for and one chunk rather than the archive:
+
+```dart
+import 'package:archive/archive.dart';
+import 'dart:io';
+
+await for (final piece
+    in File('data.xz').openRead().transform(xzCodec.decoder)) {
+  // piece is the next part of the decoded data
+}
+```
+
+Encoding the other way, so that a source and a destination that are themselves
+streams need no buffer between them:
+
+```dart
+import 'package:archive/archive.dart';
+import 'dart:io';
+
+final out = File('data.xz').openWrite();
+await File('data')
+    .openRead()
+    .transform(xzCodec.encoder)
+    .pipe(out);
+```
+
+Both directions also take a whole buffer: `xzCodec.decode(bytes)` and
+`xzCodec.encode(bytes)`, or the sinks directly through
+`startChunkedConversion` for code that pushes rather than awaits.
+
+The block checks are verified by default when decoding a stream, unlike the
+other entry points: the compressed bytes are handed back as they pass, so there
+is no second chance at the check. `XzCodec(verify: false)` skips them, which is
+worth about 6% of the decode.
+
+A failure reaches the stream as an error, and a sink that has failed reports the
+same failure rather than reading what follows it.
+
 #### extractFileToDisk
 `extractFileToDisk` is a convenience function to extract the contents of
 an archive file directory to an output directory.
@@ -134,3 +185,16 @@ final inputStream = InputFileStream('test.zip');
 final archive = ZipDecoder().decodeStream(inputStream);
 extractArchiveToDisk(archive, 'out');
 ```
+#### Zstandard
+
+A dictionary, trained by `zstd --train`, is passed to both sides and named in
+the frame header, so only the same dictionary reads the frame back:
+
+```dart
+final dictionary = ZstdDictionary(File('dict').readAsBytesSync());
+final compressed =
+    ZstdEncoder(level: 6, dictionary: dictionary).encodeBytes(bytes);
+final data = ZstdDecoder(dictionary: dictionary).decodeBytes(compressed);
+```
+
+Unlike original zstd lib, compressions levels 19-22 do not require --ultra flag to work

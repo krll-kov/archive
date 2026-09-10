@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../util/archive_exception.dart';
 import '../util/crc32.dart';
 import '../util/crc64.dart';
 import '../util/encryption.dart';
@@ -12,6 +13,36 @@ import '../util/output_stream.dart';
 
 /// Checksum used for compressed data.
 enum XZCheck { none, crc32, crc64, sha256 }
+
+/// The most an uncompressed LZMA2 chunk may carry, which is what its two byte
+/// length field can name
+const _lzma2ChunkMax = 1 << 16;
+
+/// What a block declares a match may reach back over. Stored data reaches back
+/// into nothing, so this is only a number the decoder has to accept, but both
+/// encoders name the same one so that they write the same archive
+const xzDefaultDictionarySize = 0x800000;
+
+/// The encoded form of a dictionary size: the low bit is the mantissa above
+/// two, the rest the exponent above eleven
+int xzDictionarySizeValue(int dictionarySize) {
+  if (dictionarySize == 0) {
+    throw ArchiveException('Invalid dictionary size $dictionarySize');
+  }
+  if (dictionarySize == 0xffffffff) {
+    return 40;
+  }
+  var mantissa = dictionarySize;
+  var exponent = 0;
+  while ((mantissa & 0x1) == 0 && mantissa > 3) {
+    mantissa >>= 1;
+    exponent++;
+  }
+  if ((mantissa != 2 && mantissa != 3) || exponent < 11 || exponent > 30) {
+    throw ArchiveException('Invalid dictionary size $dictionarySize');
+  }
+  return ((exponent - 11) << 1) | (mantissa & 0x1);
+}
 
 /// Compress data using the xz format encoder.
 /// This encoder only currently supports uncompressed data.
@@ -99,7 +130,7 @@ class XZEncoder {
 
     // Block is encoded with one LZMA2 filter.
     final filters = <OutputStream>[];
-    filters.add(_makeLZMA2Filter(0x800000));
+    filters.add(_makeLZMA2Filter(xzDefaultDictionarySize));
 
     // Generate header.
     var headerLength = 6 + blockLengths.length;
@@ -165,24 +196,28 @@ class XZEncoder {
     final filter = OutputMemoryStream();
     _writeMultibyteInteger(filter, id);
     _writeMultibyteInteger(filter, propertiesLength);
-    filter.writeByte(_getDictionarySizeValue(dictionarySize));
+    filter.writeByte(xzDictionarySizeValue(dictionarySize));
 
     return filter;
   }
 
-  // Write [data] to [output] in uncompressed LZMA2 format.
+  // Write [data] to [output] in uncompressed LZMA2 format. A chunk carries its
+  // length in sixteen bits, so anything longer goes out in chunks of that size
   void _writeLZMA2UncompressedData(OutputStream output, Uint8List data,
       {bool resetDictionary = true}) {
-    // Reset dictionary and uncompressed data.
-    output.writeByte(resetDictionary ? 1 : 2);
-
-    final inputLength = data.length;
-    // Length.
-    output.writeByte(((inputLength - 1) >> 8) & 0xff);
-    output.writeByte((inputLength - 1) & 0xff);
-
-    // Uncompressed data.
-    output.writeBytes(data);
+    var at = 0;
+    var reset = resetDictionary;
+    do {
+      final take =
+          data.length - at < _lzma2ChunkMax ? data.length - at : _lzma2ChunkMax;
+      // Reset the dictionary on the first chunk, carry it on after that
+      output.writeByte(reset ? 1 : 2);
+      output.writeByte(((take - 1) >> 8) & 0xff);
+      output.writeByte((take - 1) & 0xff);
+      output.writeBytes(Uint8List.sublistView(data, at, at + take));
+      at += take;
+      reset = false;
+    } while (at < data.length);
   }
 
   // Write an LZMA2 end marker to [output].
@@ -225,17 +260,15 @@ class XZEncoder {
     output.writeBytes([89, 90]);
   }
 
-  // Write [value] to output in multi-byte format.
+  // Write [value] to output in multi-byte format: seven bits a byte, the
+  // lowest first, with the top bit set on every byte but the last
   void _writeMultibyteInteger(OutputStream output, int value) {
-    var shift = 0;
-    while (value >> (shift + 7) != 0) {
-      shift += 7;
+    var left = value;
+    while (left >= 0x80) {
+      output.writeByte(0x80 | (left & 0x7f));
+      left >>= 7;
     }
-    while (shift > 0) {
-      output.writeByte(0x80 | (value >> shift) & 0x7f);
-      shift -= 7;
-    }
-    output.writeByte(value & 0x7f);
+    output.writeByte(left);
   }
 
   // Add empty bytes to make [output] align to a 32 bit boundary.
@@ -248,27 +281,6 @@ class XZEncoder {
     return length;
   }
 
-  // Calculate the encoded value for [dictionarySize].
-  int _getDictionarySizeValue(int dictionarySize) {
-    if (dictionarySize == 0) {
-      throw 'Invalid dictionary size $dictionarySize';
-    }
-
-    if (dictionarySize == 0xffffffff) {
-      return 40;
-    }
-
-    var mantissa = dictionarySize;
-    var exponent = 0;
-    while ((mantissa & 0x1) == 0 && mantissa > 3) {
-      mantissa >>= 1;
-      exponent++;
-    }
-    if ((mantissa != 2 && mantissa != 3) || exponent < 11 || exponent > 30) {
-      throw 'Invalid dictionary size $dictionarySize';
-    }
-    return ((exponent - 11) << 1) | (mantissa & 0x1);
-  }
 }
 
 // Information about a block size.
