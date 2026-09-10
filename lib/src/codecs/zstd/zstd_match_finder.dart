@@ -147,6 +147,21 @@ class ZstdMatchFinder {
   @pragma('vm:prefer-inline')
   int _prefixFrom(int floor) => floor > prefixStart ? floor : prefixStart;
 
+  /// `loadedDictEnd`: where a dictionary the frame still holds ends, zero once
+  /// a block has left it further behind than the window is wide
+  int dictionaryEnd = 0;
+
+  /// `ZSTD_getLowestMatchIndex`: a whole dictionary stays reachable while any
+  /// byte of it is in the window, so the bound is not applied until the frame
+  /// drops it
+  @pragma('vm:prefer-inline')
+  int _lowestFrom(int at, int lowLimit, int maxDistance) {
+    if (dictionaryEnd != 0) {
+      return lowLimit;
+    }
+    return at - lowLimit > maxDistance ? at - maxDistance : lowLimit;
+  }
+
   /// True while a dictionary the parse can still reach sits before the data.
   /// The reference then runs a loop of its own for every strategy, and the
   /// differences are all in how a candidate is admitted
@@ -246,6 +261,7 @@ class ZstdMatchFinder {
     _nextToUpdate = 0;
     _nextShort = 0;
     _short.fillRange(0, _short.length, 0);
+    dictionaryEnd = 0;
   }
 
   /// `ZSTD_cycleLog`: the chain and the tree address a node by the low bits of
@@ -278,6 +294,7 @@ class ZstdMatchFinder {
     _nextToUpdate = _nextToUpdate > delta ? _nextToUpdate - delta : 0;
     _nextShort = _nextShort > delta ? _nextShort - delta : 0;
     prefixStart = prefixStart > delta ? prefixStart - delta : 0;
+    dictionaryEnd = dictionaryEnd > delta ? dictionaryEnd - delta : 0;
   }
 
   /// A slot holds a position raised by one, so anything at or below the slide
@@ -314,6 +331,8 @@ class ZstdMatchFinder {
     if (wide < 31 && end - start > 1 << wide) {
       from = end - (1 << wide);
     }
+    // Held from the dictionary's own end, not from where a clamped load starts
+    dictionaryEnd = end;
     final limit = end - 8;
     if (limit <= from) {
       _nextToUpdate = end;
@@ -403,8 +422,7 @@ class ZstdMatchFinder {
     // end of the block, not at its start, or a sequence near the end would
     // name an offset the decoder no longer holds
     final maxDistance = 1 << params.windowLog;
-    final floor =
-        end - lowLimit > maxDistance ? end - maxDistance : lowLimit;
+    final floor = _lowestFrom(end, lowLimit, maxDistance);
     final stepSize = params.targetLength + (params.targetLength == 0 ? 1 : 0) + 1;
     // The step widens once every `kStepIncr` bytes without a match, which is
     // what keeps incompressible input from costing a lookup a byte
@@ -571,7 +589,7 @@ class ZstdMatchFinder {
       int lowLimit, ZstdSequenceStore store, Uint32List rep) {
     final ilimit = end - 8;
     final maxDistance = 1 << params.windowLog;
-    final floor = end - lowLimit > maxDistance ? end - maxDistance : lowLimit;
+    final floor = _lowestFrom(end, lowLimit, maxDistance);
     final prefix = _prefixFrom(floor);
     final stepSize =
         params.targetLength + (params.targetLength == 0 ? 1 : 0) + 1;
@@ -734,7 +752,7 @@ class ZstdMatchFinder {
       int lowLimit, ZstdSequenceStore store, Uint32List rep) {
     final ilimit = end - 8;
     final maxDistance = 1 << params.windowLog;
-    final floor = end - lowLimit > maxDistance ? end - maxDistance : lowLimit;
+    final floor = _lowestFrom(end, lowLimit, maxDistance);
     final prefix = _prefixFrom(floor);
     final longShift = 64 - params.hashLog;
     final shortShift = 64 - params.chainLog;
@@ -864,8 +882,7 @@ class ZstdMatchFinder {
     // `prefixLowestIndex`, from the end of the block: a match may not name
     // an offset the decoder will no longer hold by the time it reads it
     final maxDistance = 1 << params.windowLog;
-    final floor =
-        end - lowLimit > maxDistance ? end - maxDistance : lowLimit;
+    final floor = _lowestFrom(end, lowLimit, maxDistance);
     const stepIncr = 1 << 8;
     final longShift = 64 - params.hashLog;
     final shortShift = 64 - params.chainLog;
@@ -1226,7 +1243,7 @@ class ZstdMatchFinder {
   /// one and the chain is indexed by the position it belongs to
   int _bestChain(Uint8List src, ByteData view, int ip, int lowLimit, int end) {
     final maxDistance = 1 << params.windowLog;
-    final floor = ip - lowLimit > maxDistance ? ip - maxDistance : lowLimit;
+    final floor = _lowestFrom(ip, lowLimit, maxDistance);
     final chainSize = 1 << params.chainLog;
     final chainMask = chainSize - 1;
     final minChain = ip > chainSize ? ip - chainSize : 0;
@@ -1296,7 +1313,7 @@ class ZstdMatchFinder {
     // The row search bounds a candidate by the window as it stands at this
     // position, not at the block's
     final maxDistance = 1 << params.windowLog;
-    final floor = ip - lowLimit > maxDistance ? ip - maxDistance : lowLimit;
+    final floor = _lowestFrom(ip, lowLimit, maxDistance);
     var best = zstdMinMatch - 1;
     var found = 0;
     _insert(view, ip);
@@ -1392,7 +1409,7 @@ class ZstdMatchFinder {
     final slot = _key(view, ip);
     final curr = ip + _lift;
     final reach = 1 << params.windowLog;
-    final low = ip - lowLimit > reach ? ip - reach : lowLimit;
+    final low = _lowestFrom(ip, lowLimit, reach);
     final windowLow = low + _lift;
     final btLow = _btMask >= curr ? 0 : curr - _btMask;
     final unsortLimit = btLow > windowLow ? btLow : windowLow;
@@ -1576,7 +1593,7 @@ class ZstdMatchFinder {
     // The window is measured at the position the fill is heading for, since
     // only what is still inside it by then is worth keeping
     final reach = 1 << params.windowLog;
-    final low = target - lowLimit > reach ? target - reach : lowLimit;
+    final low = _lowestFrom(target, lowLimit, reach);
     final btLow = ip > _btMask ? ip - _btMask : 0;
     final floor = btLow > lowLimit ? btLow : lowLimit;
     var best = 8;
@@ -1724,7 +1741,7 @@ class ZstdMatchFinder {
     var largerLength = 0;
     var matchEnd = ip + 9;
     final reach = 1 << params.windowLog;
-    final windowLow = ip - lowLimit > reach ? ip - reach : lowLimit;
+    final windowLow = _lowestFrom(ip, lowLimit, reach);
     final btLow = ip > _btMask ? ip - _btMask : 0;
     final floor = btLow > lowLimit ? btLow : lowLimit;
     var tries = _tries;
@@ -1891,13 +1908,25 @@ class ZstdMatchFinder {
         for (var n = 0; n < found; n++) {
           final offBase = _matchOffBases[n];
           final reach = _matchLengths[n];
-          for (; pos <= reach; pos++) {
-            _optMlen[pos] = pos;
-            _optOff[pos] = offBase;
-            _optLitlen[pos] = 0;
-            _optPrice[pos] = _optPrice[0] +
-                prices.matchPrice(offBase, pos) +
-                prices.litLengthPrice(0);
+          if (prices.level == 0) {
+            for (; pos <= reach; pos++) {
+              _optMlen[pos] = pos;
+              _optOff[pos] = offBase;
+              _optLitlen[pos] = 0;
+              _optPrice[pos] = _optPrice[0] +
+                  prices.matchPrice(offBase, pos) +
+                  prices.litLengthPrice(0);
+            }
+          } else {
+            final offsetPrice = prices.matchOffsetPrice(offBase);
+            for (; pos <= reach; pos++) {
+              _optMlen[pos] = pos;
+              _optOff[pos] = offBase;
+              _optLitlen[pos] = 0;
+              _optPrice[pos] = _optPrice[0] +
+                  offsetPrice + prices.matchLengthPrice(pos) +
+                  prices.litLengthPrice(0);
+            }
           }
         }
         lastPos = pos - 1;
@@ -1995,21 +2024,40 @@ class ZstdMatchFinder {
             final offBase = _matchOffBases[n];
             final reach = _matchLengths[n];
             final from = n > 0 ? _matchLengths[n - 1] + 1 : _minMatch;
-            for (var mlen = reach; mlen >= from; mlen--) {
-              final pos = cur + mlen;
-              final price = base + prices.matchPrice(offBase, mlen);
-              if (pos > lastPos || price < _optPrice[pos]) {
-                while (lastPos < pos) {
-                  lastPos++;
-                  _optPrice[lastPos] = zstdPriceMax;
-                  _optLitlen[lastPos] = 1;
+            if (prices.level == 0) {
+              for (var mlen = reach; mlen >= from; mlen--) {
+                final pos = cur + mlen;
+                final price = base + prices.matchPrice(offBase, mlen);
+                if (pos > lastPos || price < _optPrice[pos]) {
+                  while (lastPos < pos) {
+                    lastPos++;
+                    _optPrice[lastPos] = zstdPriceMax;
+                    _optLitlen[lastPos] = 1;
+                  }
+                  _optMlen[pos] = mlen;
+                  _optOff[pos] = offBase;
+                  _optLitlen[pos] = 0;
+                  _optPrice[pos] = price;
+                } else {
+                  break;
                 }
-                _optMlen[pos] = mlen;
-                _optOff[pos] = offBase;
-                _optLitlen[pos] = 0;
-                _optPrice[pos] = price;
-              } else if (prices.level == 0) {
-                break;
+              }
+            } else {
+              final offsetPrice = prices.matchOffsetPrice(offBase);
+              for (var mlen = reach; mlen >= from; mlen--) {
+                final pos = cur + mlen;
+                final price = base + offsetPrice + prices.matchLengthPrice(mlen);
+                if (pos > lastPos || price < _optPrice[pos]) {
+                  while (lastPos < pos) {
+                    lastPos++;
+                    _optPrice[lastPos] = zstdPriceMax;
+                    _optLitlen[lastPos] = 1;
+                  }
+                  _optMlen[pos] = mlen;
+                  _optOff[pos] = offBase;
+                  _optLitlen[pos] = 0;
+                  _optPrice[pos] = price;
+                }
               }
             }
           }

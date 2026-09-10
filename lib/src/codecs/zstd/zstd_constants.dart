@@ -149,7 +149,8 @@ Uint8List _buildHighBitTable() {
 @pragma('vm:prefer-inline')
 int zstdHighestBit(int value) => value.bitLength - 1;
 
-const _deBruijn = 0x022fdd63cc95386d;
+// Separate words keep the unused constant parseable on JavaScript
+const _deBruijn = (0x022fdd63 << 32) | 0xcc95386d;
 
 /// Where each de Bruijn slot lands. A `const` list so that reading it is a
 /// load, where a lazily built one costs a call to its initialiser guard on
@@ -163,6 +164,9 @@ const List<int> _deBruijnSlots = [
 /// costs far more than the dozen operations here
 @pragma('vm:prefer-inline')
 int zstdHighestBitFast(int value) {
+  if (!const bool.fromEnvironment('dart.library.isolate')) {
+    return zstdHighestBit(value);
+  }
   var v = value;
   v |= v >>> 1;
   v |= v >>> 2;

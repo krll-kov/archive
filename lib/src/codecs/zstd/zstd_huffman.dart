@@ -221,6 +221,9 @@ void decodeHuffmanStreamSlow(ZstdHuffmanTable table, Uint8List src, int start,
     reader.skip(row >> 8);
     reader.reload();
   }
+  if (!reader.isAtEnd) {
+    _streamLengthMismatch();
+  }
 }
 
 /// Every throw here lives out of line: inline, the exception's own
@@ -268,6 +271,10 @@ Never _streamIsEmptyOr() =>
 @pragma('vm:never-inline')
 Never _streamIsShorterThan() =>
     throw ZstdHuffmanException('Stream is shorter than its literals');
+
+@pragma('vm:never-inline')
+Never _streamLengthMismatch() =>
+    throw ZstdHuffmanException('Stream length does not match its literals');
 
 @pragma('vm:never-inline')
 Never _weightCountOutOfRange(int weightCount) =>

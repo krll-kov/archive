@@ -158,7 +158,13 @@ class ZstdFrameEncoder {
       final left = size - coded;
       final take =
           _splitter.sizeFor(buffer, at, left, blockSizeMax, params, savings);
-      final reach = at - matchWindow;
+      // `ZSTD_checkDictValidity` measures from the end of the block, and what
+      // it drops stays dropped
+      if (blocks.dictionaryEnd != 0 &&
+          at + take - blocks.dictionaryEnd > matchWindow) {
+        blocks.dropDictionary();
+      }
+      final reach = blocks.dictionaryEnd != 0 ? base : at - matchWindow;
       final before = out.length;
       blocks.encode(buffer, at, at + take, reach > base ? reach : base, out,
           coded + take == size, _rep);

@@ -40,6 +40,110 @@ Uint8List _literals(int length, int spread) {
 }
 
 void main() {
+  group('zstd fixed-width stream ends', () {
+    for (final slow in [false, true]) {
+      for (final symbols in [8, 32, 64]) {
+        for (final count in [symbols - 1, symbols, symbols + 1]) {
+          test('slow $slow accepts exactly $symbols one-bit symbols, count $count',
+              () {
+            final table = ZstdHuffmanTable();
+            final tree = _direct([1]);
+            readHuffmanTable(tree, 0, tree.length, table, ZstdHuffmanScratch());
+            final encoded = Uint8List((symbols >> 3) + 1)..last = 1;
+            final output = Uint8List(symbols + 8)
+              ..fillRange(0, symbols + 8, 0xa5);
+            void decode() {
+              if (slow) {
+                decodeHuffmanStreamSlow(
+                    table, encoded, 0, encoded.length, output, 3, count);
+              } else {
+                decodeHuffmanStream(
+                    table, encoded, 0, encoded.length, output, 3, count);
+              }
+            }
+            if (count == symbols) {
+              decode();
+              expect(output.sublist(0, 3), everyElement(0xa5));
+              expect(output.sublist(3, symbols + 3), everyElement(0));
+              expect(output.sublist(symbols + 3), everyElement(0xa5));
+            } else {
+              expect(decode, throwsA(isA<ZstdHuffmanException>()));
+            }
+          });
+        }
+      }
+    }
+  });
+
+  group('zstd single-stream boundaries', () {
+    for (final slow in [false, true]) {
+      for (final count in [1, 2, 3, 4, 7, 8, 13, 14, 15, 16, 17,
+        31, 32, 33, 34, 65, 66, 67]) {
+        test('slow $slow count $count consumes exactly its stream', () {
+          final fixture = _SingleStreamFixture(count);
+          final decoded = fixture.decode(slow: slow);
+          expect(Uint8List.sublistView(decoded, 7, 7 + count), fixture.source);
+          expect(decoded.sublist(0, 7), everyElement(0xa5));
+          expect(decoded.sublist(7 + count), everyElement(0xa5));
+        });
+      }
+      for (final count in [2, 3, 14, 15, 16, 17, 66, 67]) {
+        for (final delta in [-1, 1]) {
+          test('slow $slow count $count rejects a $delta symbol mismatch', () {
+            final fixture = _SingleStreamFixture(count);
+            expect(() => fixture.decode(slow: slow, count: count + delta),
+                throwsA(isA<ZstdHuffmanException>()));
+          });
+        }
+      }
+    }
+  });
+
+  group('zstd four-stream boundaries', () {
+    for (final wide in [false, true]) {
+      for (final segment in [65, 66, 67, 68, 129, 130, 131, 132]) {
+        for (var missing = 0; missing < 4; missing++) {
+          test('wide $wide segment $segment missing $missing', () {
+            final fixture = _FourStreamFixture(segment, missing, wide: wide);
+            final decoded = fixture.decode();
+            expect(Uint8List.sublistView(decoded, 7, 7 + fixture.source.length),
+                fixture.source);
+            expect(decoded.sublist(0, 7), everyElement(0xa5));
+            expect(decoded.sublist(7 + fixture.source.length),
+                everyElement(0xa5));
+          });
+        }
+      }
+      for (var stream = 0; stream < 4; stream++) {
+        test('wide $wide stream $stream requires its end marker', () {
+          final fixture = _FourStreamFixture(66, 0, wide: wide);
+          final broken = Uint8List.fromList(fixture.encoded);
+          broken[fixture.starts[stream] + fixture.lengths[stream] - 1] = 0;
+          expect(() => fixture.decode(bytes: broken),
+              throwsA(isA<ZstdHuffmanException>()));
+        });
+      }
+    }
+    for (final segment in [66, 67]) {
+      for (var stream = 0; stream < 4; stream++) {
+        test('segment $segment stream $stream rejects a truncated prefix', () {
+          final fixture = _FourStreamFixture(segment, 0, wide: false);
+          final starts = Uint32List.fromList(fixture.starts);
+          final lengths = Uint32List.fromList(fixture.lengths);
+          starts[stream]++;
+          lengths[stream]--;
+          expect(() => fixture.decode(starts: starts, lengths: lengths),
+              throwsA(isA<ZstdHuffmanException>()));
+        });
+      }
+    }
+    test('coded symbols beyond the declared output are rejected', () {
+      final fixture = _FourStreamFixture(66, 0, wide: false);
+      expect(() => fixture.decode(total: 260, segment: 65),
+          throwsA(isA<ZstdHuffmanException>()));
+    });
+  });
+
   group('zstd huffman table', () {
     final table = ZstdHuffmanTable();
     final scratch = ZstdHuffmanScratch();
@@ -263,4 +367,88 @@ void main() {
       }
     });
   });
+}
+
+class _FourStreamFixture {
+  final int segment;
+  final Uint8List source;
+  final Uint8List encoded;
+  final table = ZstdHuffmanTable();
+  final starts = Uint32List(4);
+  final lengths = Uint32List(4);
+
+  _FourStreamFixture(this.segment, int missing, {required bool wide})
+      : source = Uint8List(segment * 4 - missing),
+        encoded = Uint8List(segment * 8 + 1024) {
+    final weights = wide
+        ? Uint8List.fromList([11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 1])
+        : (Uint8List(16)..fillRange(0, 16, 1));
+    for (var i = 0; i < source.length; i++) {
+      source[i] = (i * 13 + (i >> 4)) % weights.length;
+    }
+    final encoder = ZstdHuffmanEncoder()
+      ..loadWeights(weights, wide ? 11 : 4);
+    final treeSize = encoder.writeTable(encoded, 0);
+    final coded =
+        encoder.encodeLiterals(encoded, treeSize, source, 0, source.length);
+    if (treeSize <= 0 || coded <= 0) throw StateError('Fixture encoding failed');
+    readHuffmanTable(encoded, 0, treeSize, table, ZstdHuffmanScratch());
+    var at = treeSize + 6;
+    for (var stream = 0; stream < 4; stream++) {
+      final header = treeSize + stream * 2;
+      final length = stream < 3
+          ? encoded[header] | (encoded[header + 1] << 8)
+          : treeSize + coded - at;
+      if (length < 8) throw StateError('Fixture missed the wide decoding path');
+      starts[stream] = at;
+      lengths[stream] = length;
+      at += length;
+    }
+  }
+
+  Uint8List decode({Uint8List? bytes, Uint32List? starts, Uint32List? lengths,
+      int? total, int? segment}) {
+    final output = Uint8List(source.length + 14)
+      ..fillRange(0, source.length + 14, 0xa5);
+    decodeHuffman4Streams(table, bytes ?? encoded, starts ?? this.starts,
+        lengths ?? this.lengths, output, 7, total ?? source.length,
+        segment ?? this.segment);
+    return output;
+  }
+}
+
+class _SingleStreamFixture {
+  final Uint8List source;
+  final Uint8List encoded;
+  final table = ZstdHuffmanTable();
+  late final int start;
+  late final int length;
+
+  _SingleStreamFixture(int count)
+      : source = Uint8List(count),
+        encoded = Uint8List(count * 2 + 1024) {
+    for (var i = 0; i < count; i++) {
+      source[i] = i & 15;
+    }
+    final encoder = ZstdHuffmanEncoder()
+      ..loadWeights(Uint8List(16)..fillRange(0, 16, 1), 4)
+      ..oneStream = true;
+    start = encoder.writeTable(encoded, 0);
+    length = encoder.encodeLiterals(encoded, start, source, 0, count);
+    if (start <= 0 || length <= 0) throw StateError('Fixture encoding failed');
+    readHuffmanTable(encoded, 0, start, table, ZstdHuffmanScratch());
+  }
+
+  Uint8List decode({required bool slow, int? count}) {
+    final output = Uint8List(source.length + 16)
+      ..fillRange(0, source.length + 16, 0xa5);
+    if (slow) {
+      decodeHuffmanStreamSlow(table, encoded, start, length, output, 7,
+          count ?? source.length);
+    } else {
+      decodeHuffmanStream(table, encoded, start, length, output, 7,
+          count ?? source.length);
+    }
+    return output;
+  }
 }

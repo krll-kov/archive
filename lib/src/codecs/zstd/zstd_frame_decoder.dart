@@ -224,6 +224,7 @@ class ZstdFrameDecoder {
 
     final blockSizeMax = header.blockSizeMax;
     final reserve = header.blockReserve;
+    window.blockReserve = reserve;
     final before = window.length;
     var at = start;
     while (true) {

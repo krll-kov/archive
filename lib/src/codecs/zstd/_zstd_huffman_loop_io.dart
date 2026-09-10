@@ -50,7 +50,7 @@ void decodeHuffmanStream(ZstdHuffmanTable table, Uint8List src, int start,
       container = view.getUint64(position, Endian.little);
     }
   }
-  if (position != start || consumed > 64) {
+  if (position != start || consumed != 64) {
     _lengthMismatch();
   }
 }
@@ -103,20 +103,65 @@ void decodeHuffman4Streams(
   var o2 = dstStart + 2 * segment;
   var o3 = dstStart + 3 * segment;
 
-  for (var i = 0; i < tail; i++) {
-    final r0 = rows[(c0 << n0) >>> 1 >>> shift];
-    final r1 = rows[(c1 << n1) >>> 1 >>> shift];
-    final r2 = rows[(c2 << n2) >>> 1 >>> shift];
-    final r3 = rows[(c3 << n3) >>> 1 >>> shift];
-    dst[o0++] = r0;
-    dst[o1++] = r1;
-    dst[o2++] = r2;
-    dst[o3++] = r3;
-    n0 += r0 >> 8;
-    n1 += r1 >> 8;
-    n2 += r2 >> 8;
-    n3 += r3 >> 8;
-    if (i & 3 == 3) {
+  final grouped = tail - (tail & 3);
+  for (var i = 0; i < grouped; i += 4) {
+    {
+      final r0 = rows[(c0 << n0) >>> 1 >>> shift];
+      final r1 = rows[(c1 << n1) >>> 1 >>> shift];
+      final r2 = rows[(c2 << n2) >>> 1 >>> shift];
+      final r3 = rows[(c3 << n3) >>> 1 >>> shift];
+      dst[o0++] = r0;
+      dst[o1++] = r1;
+      dst[o2++] = r2;
+      dst[o3++] = r3;
+      n0 += r0 >> 8;
+      n1 += r1 >> 8;
+      n2 += r2 >> 8;
+      n3 += r3 >> 8;
+    }
+    {
+      final r0 = rows[(c0 << n0) >>> 1 >>> shift];
+      final r1 = rows[(c1 << n1) >>> 1 >>> shift];
+      final r2 = rows[(c2 << n2) >>> 1 >>> shift];
+      final r3 = rows[(c3 << n3) >>> 1 >>> shift];
+      dst[o0++] = r0;
+      dst[o1++] = r1;
+      dst[o2++] = r2;
+      dst[o3++] = r3;
+      n0 += r0 >> 8;
+      n1 += r1 >> 8;
+      n2 += r2 >> 8;
+      n3 += r3 >> 8;
+    }
+    {
+      final r0 = rows[(c0 << n0) >>> 1 >>> shift];
+      final r1 = rows[(c1 << n1) >>> 1 >>> shift];
+      final r2 = rows[(c2 << n2) >>> 1 >>> shift];
+      final r3 = rows[(c3 << n3) >>> 1 >>> shift];
+      dst[o0++] = r0;
+      dst[o1++] = r1;
+      dst[o2++] = r2;
+      dst[o3++] = r3;
+      n0 += r0 >> 8;
+      n1 += r1 >> 8;
+      n2 += r2 >> 8;
+      n3 += r3 >> 8;
+    }
+    {
+      final r0 = rows[(c0 << n0) >>> 1 >>> shift];
+      final r1 = rows[(c1 << n1) >>> 1 >>> shift];
+      final r2 = rows[(c2 << n2) >>> 1 >>> shift];
+      final r3 = rows[(c3 << n3) >>> 1 >>> shift];
+      dst[o0++] = r0;
+      dst[o1++] = r1;
+      dst[o2++] = r2;
+      dst[o3++] = r3;
+      n0 += r0 >> 8;
+      n1 += r1 >> 8;
+      n2 += r2 >> 8;
+      n3 += r3 >> 8;
+    }
+    {
       {
         final step = n0 >> 3;
         if (p0 - step < s0) {
@@ -165,6 +210,20 @@ void decodeHuffman4Streams(
         _oneStreamShort();
       }
     }
+  }
+  for (var i = grouped; i < tail; i++) {
+    final r0 = rows[(c0 << n0) >>> 1 >>> shift];
+    final r1 = rows[(c1 << n1) >>> 1 >>> shift];
+    final r2 = rows[(c2 << n2) >>> 1 >>> shift];
+    final r3 = rows[(c3 << n3) >>> 1 >>> shift];
+    dst[o0++] = r0;
+    dst[o1++] = r1;
+    dst[o2++] = r2;
+    dst[o3++] = r3;
+    n0 += r0 >> 8;
+    n1 += r1 >> 8;
+    n2 += r2 >> 8;
+    n3 += r3 >> 8;
   }
   {
     final step = n0 >> 3;
@@ -295,7 +354,8 @@ void decodeHuffman4Streams(
     c2 = view.getUint64(p2, Endian.little);
   }
 
-  if (p0 != s0 || p1 != s1 || p2 != s2 || p3 != s3) {
+  if (p0 != s0 || p1 != s1 || p2 != s2 || p3 != s3 ||
+      n0 != 64 || n1 != 64 || n2 != 64 || n3 != 64) {
     _notConsumed();
   }
 }

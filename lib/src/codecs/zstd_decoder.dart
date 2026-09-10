@@ -201,7 +201,7 @@ class ZstdDecoder {
     return total;
   }
 
-  void _decode(Uint8List bytes, bool verify, OutputStream? output,
+  void _decode(Uint8List bytes, bool verify, OutputMemoryStream? output,
       List<Uint8List>? parts) {
     final end = bytes.length;
     var at = 0;
@@ -248,13 +248,21 @@ class ZstdDecoder {
       }
       final frame = ZstdFrameDecoder();
       at += 4 + header.size;
-      at += frame.decodeBlocks(
-          bytes, at, end, window, header, verify, dictionary);
-      if (output != null) {
-        window.finish();
-      } else {
-        parts!.add(Uint8List.sublistView(
-            window.buffer, window.origin, window.position));
+      final completed = output?.length ?? 0;
+      try {
+        at += frame.decodeBlocks(
+            bytes, at, end, window, header, verify, dictionary);
+        if (output != null) {
+          window.finish();
+        } else {
+          parts!.add(Uint8List.sublistView(
+              window.buffer, window.origin, window.position));
+        }
+      } catch (_) {
+        if (output != null) {
+          output.length = completed;
+        }
+        rethrow;
       }
     }
   }

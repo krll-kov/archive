@@ -230,8 +230,14 @@ class InputFileStream extends InputStream {
   }
 
   @override
-  @override
   int readInto(Uint8List into, int at, int count) {
+    final remaining = fileRemaining;
+    if (count > remaining) {
+      count = remaining;
+    }
+    if (count <= 0) {
+      return 0;
+    }
     final got = _file.readInto(_fileOffset + position, into, at, count);
     _position += got;
     return got;

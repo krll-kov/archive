@@ -2,11 +2,14 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/src/codecs/zstd/zstd_dictionary.dart';
+import 'package:archive/src/codecs/zstd/zstd_frame_decoder.dart';
+import 'package:archive/src/codecs/zstd/zstd_window.dart';
 import 'package:archive/src/codecs/zstd_decoder.dart';
 import 'package:archive/src/codecs/zstd_encoder.dart';
 import 'package:archive/src/util/crc32.dart';
 import 'package:archive/src/util/input_memory_stream.dart';
 import 'package:archive/src/util/output_memory_stream.dart';
+import 'package:archive/src/util/xxh64.dart';
 import 'package:test/test.dart';
 
 // Vectors written by zstd 1.5.7. Only the compressed side is stored: each row
@@ -302,8 +305,49 @@ void main() {
     });
   });
 
-  // A window narrower than the content is what makes the decoder's ring buffer
-  // wrap, which only the streaming path has
+  group('zstd concatenated windows', () {
+    final source = Uint8List.fromList(
+        List.generate(32 << 10, (i) => (i * 7 + (i >> 9)) & 255));
+    final frame = _rawWindowFrame(source);
+    final prefix = Uint8List.fromList([1, 2, 3]);
+    final first = const ZstdEncoder().encodeBytes(prefix);
+
+    test('buffer blocks keep the decoding window bounded', () {
+      final header = readFrameHeader(frame, 4, frame.length, 1024);
+      final sink = OutputMemoryStream();
+      final window = ZstdWindow(header.windowSize, output: sink);
+      ZstdFrameDecoder().decodeBlocks(frame, 4 + header.size, frame.length,
+          window, header, true, null);
+      expect(window.capacity,
+          lessThanOrEqualTo(header.windowSize + 2 * header.blockReserve));
+      window.finish();
+      expect(sink.getBytes(), source);
+    });
+
+    test('concatenated frames preserve output across window wraps', () {
+      final joined = Uint8List.fromList([...first, ...frame, ...first]);
+      expect(ZstdDecoder().decodeBytes(joined, verify: true, throwOnError: true),
+          [...prefix, ...source, ...prefix]);
+    });
+
+    for (final failure in ['checksum', 'block']) {
+      test('a late $failure failure returns only completed frames', () {
+        final broken = Uint8List.fromList(frame);
+        if (failure == 'checksum') {
+          broken[broken.length - 1] ^= 1;
+        } else {
+          broken[6 + 31 * 1027] |= 6;
+        }
+        final joined = Uint8List.fromList([...first, ...broken]);
+        expect(ZstdDecoder().decodeBytes(joined, verify: true), prefix);
+        expect(
+            () => ZstdDecoder()
+                .decodeBytes(joined, verify: true, throwOnError: true),
+            throwsA(anything));
+      });
+    }
+  });
+
   group('zstd wraps its window', () {
     final source = Uint8List(3 << 20);
     for (var at = 0; at < source.length; at++) {
@@ -336,6 +380,20 @@ void main() {
       expect(getCrc32(out.getBytes()), getCrc32(source));
     });
   });
+}
+
+Uint8List _rawWindowFrame(Uint8List source) {
+  final bytes = BytesBuilder()..add([0x28, 0xb5, 0x2f, 0xfd, 4, 0]);
+  for (var at = 0; at < source.length; at += 1024) {
+    final end = at + 1024 < source.length ? at + 1024 : source.length;
+    final header = ((end - at) << 3) | (end == source.length ? 1 : 0);
+    bytes.add([header & 255, (header >> 8) & 255, header >> 16]);
+    bytes.add(Uint8List.sublistView(source, at, end));
+  }
+  final hash = Xxh64()..update(source, 0, source.length);
+  final checksum = ByteData(4)..setUint32(0, hash.digestLow, Endian.little);
+  bytes.add(checksum.buffer.asUint8List());
+  return bytes.takeBytes();
 }
 
 /// Where the first block header sits: the magic, the descriptor, and whatever

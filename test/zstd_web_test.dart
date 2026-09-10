@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:archive/src/codecs/zstd/zstd_constants.dart';
 import 'package:archive/src/codecs/zstd/zstd_dictionary.dart';
 import 'package:archive/src/codecs/zstd_decoder.dart';
 import 'package:archive/src/util/crc32.dart';
@@ -169,6 +170,20 @@ const _dictionaries = <String>[
 ];
 
 void main() {
+  test('highest bit handles every exact integer width', () {
+    const native = bool.fromEnvironment('dart.library.isolate');
+    final maximumBit = native ? 62 : 52;
+    var power = 1;
+    for (var bit = 0; bit <= maximumBit; bit++) {
+      expect(zstdHighestBitFast(power), bit);
+      if (bit > 0) {
+        expect(zstdHighestBitFast(power - 1), bit - 1);
+        expect(zstdHighestBitFast(power + 1), bit);
+      }
+      power *= 2;
+    }
+  });
+
   final dictionaries = [
     for (final d in _dictionaries) ZstdDictionary(base64.decode(d))
   ];

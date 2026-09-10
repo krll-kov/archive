@@ -246,8 +246,34 @@ class ZstdOptPrices {
     final mlCode = zstdMatchLengthCode(mlBase);
     price += (zstdMatchLengthExtraBits[mlCode] << zstdPriceBits) +
         (_matchLengthBase - _matchLengthWeight[mlCode]);
+    return price + zstdPriceOne ~/ 5;
+  }
+
+  /// [offBase] one to three names a repeat, anything above is offset plus three
+  int matchOffsetPrice(int offBase) {
+    final offCode = zstdHighestBit(offBase);
+    if (_predef) {
+      return (16 + offCode) << zstdPriceBits;
+    }
+    var price =
+        (offCode << zstdPriceBits) + (_offCodeBase - _offCodeWeight[offCode]);
+    // A distant offset is charged extra below btultra, where the parse is
+    // meant to leave the decoder's cache alone
+    if (level < 2 && offCode >= 20) {
+      price += (offCode - 19) * 2 * zstdPriceOne;
+    }
     // Nudges the parse towards fewer, longer sequences
     return price + zstdPriceOne ~/ 5;
+  }
+
+  int matchLengthPrice(int matchLength) {
+    final mlBase = matchLength - zstdMatchLengthFloor;
+    if (_predef) {
+      return _weight(mlBase);
+    }
+    final mlCode = zstdMatchLengthCode(mlBase);
+    return (zstdMatchLengthExtraBits[mlCode] << zstdPriceBits) +
+        (_matchLengthBase - _matchLengthWeight[mlCode]);
   }
 
   void record(

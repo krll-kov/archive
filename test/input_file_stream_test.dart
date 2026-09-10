@@ -22,6 +22,23 @@ void main() {
       expect(fs.length, testData.length);
     });
 
+    test('readInto stays within a subset and stops at its end', () {
+      final file = InputFileStream(testPath, bufferSize: 2);
+      addTearDown(file.closeSync);
+      final input = file.subset(position: 10, length: 3);
+      final bytes = Uint8List(10)..fillRange(0, 10, 255);
+
+      expect(input.readInto(bytes, 1, 1), 1);
+      expect(input.readInto(bytes, 2, 8), 2);
+      expect(bytes, [255, 10, 11, 12, 255, 255, 255, 255, 255, 255]);
+      expect(input.position, 3);
+      expect(input.length, 0);
+      expect(input.isEOS, isTrue);
+      expect(input.readInto(bytes, 0, 10), 0);
+      expect(input.position, 3);
+      expect(bytes, [255, 10, 11, 12, 255, 255, 255, 255, 255, 255]);
+    });
+
     test('readBytes', () async {
       final input = InputFileStream(testPath)..open();
       expect(input.length, equals(120));

@@ -22,6 +22,8 @@ class ZstdBitReader {
   /// overrunning by one reads container zeros rather than leaving the buffer
   bool get isOverrun => _overrun || consumed > _bitLimit;
 
+  bool get isAtEnd => !_overrun && position == _start && consumed == _bitLimit;
+
   /// False when the stream is empty or ends in a zero byte, which the format
   /// forbids and which leaves no defined first bit
   bool setStream(Uint8List data, int start, int length) {

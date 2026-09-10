@@ -85,6 +85,14 @@ class ZstdBlockEncoder {
     }
   }
 
+  /// `loadedDictEnd`: where the dictionary this frame was primed with ends,
+  /// zero once a block has left it a whole window behind
+  int get dictionaryEnd => _finder.dictionaryEnd;
+
+  void dropDictionary() {
+    _finder.dictionaryEnd = 0;
+  }
+
   /// What a slide of the source buffer has to be a multiple of for the tables
   /// to survive it
   int get slideStep => _finder.slideStep;
