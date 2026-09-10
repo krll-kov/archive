@@ -1,15 +1,79 @@
 import 'dart:typed_data';
 
+import 'package:archive/src/codecs/zstd/zstd_dictionary.dart';
 import 'package:archive/src/codecs/zstd/zstd_level_params.dart';
 import 'package:archive/src/codecs/zstd_decoder.dart';
 import 'package:archive/src/codecs/zstd_encoder.dart';
+import 'package:archive/src/util/byte_order.dart';
 import 'package:archive/src/util/crc32.dart';
 import 'package:archive/src/util/input_memory_stream.dart';
+import 'package:archive/src/util/input_stream.dart';
 import 'package:archive/src/util/output_memory_stream.dart';
 import 'package:test/test.dart';
 
 Uint8List _pattern(int length, int Function(int) byte) =>
     Uint8List.fromList(List.generate(length, byte));
+
+/// A stream that cannot hand out a view of its own storage, the way a file or
+/// a socket cannot. Only such a stream makes the encoder slide a window, since
+/// one that can view is handed straight to the whole buffer path
+class _Piped extends InputStream {
+  final InputMemoryStream _held;
+
+  _Piped(Uint8List bytes)
+      : _held = InputMemoryStream(bytes),
+        super(byteOrder: ByteOrder.littleEndian);
+
+  @override
+  int get position => _held.position;
+
+  @override
+  set position(int v) => _held.position = v;
+
+  @override
+  int get length => _held.length;
+
+  @override
+  bool get isEOS => _held.isEOS;
+
+  @override
+  bool open() => _held.open();
+
+  @override
+  Future<void> close() => _held.close();
+
+  @override
+  void closeSync() => _held.closeSync();
+
+  @override
+  void reset() => _held.reset();
+
+  @override
+  void setPosition(int v) => _held.setPosition(v);
+
+  @override
+  void rewind([int length = 1]) => _held.rewind(length);
+
+  @override
+  void skip(int length) => _held.skip(length);
+
+  @override
+  int readInto(Uint8List into, int at, int count) =>
+      _held.readInto(into, at, count);
+
+  @override
+  InputStream readBytes(int count) => _held.readBytes(count);
+
+  @override
+  int readByte() => _held.readByte();
+
+  @override
+  InputStream subset({int? position, int? length, int? bufferSize}) =>
+      _held.subset(position: position, length: length, bufferSize: bufferSize);
+
+  @override
+  Uint8List toUint8List() => _held.toUint8List();
+}
 
 /// Words drawn at random from a small vocabulary, which is the shape a deeper
 /// search pays off on where a plain repeat does not
@@ -163,9 +227,94 @@ void main() {
       expect(high.length * 3, lessThan(low.length * 2));
     });
 
-    test('the top level function agrees with the class', () {
-      final source = cases['eight bytes']!;
-      expect(zstdEncode(source), const ZstdEncoder().encodeBytes(source));
+    test('a stream over memory is handed the whole buffer', () {
+      final source = cases['several blocks']!;
+      final out = OutputMemoryStream();
+      const ZstdEncoder().encodeStream(InputMemoryStream(source), out);
+      expect(out.getBytes(), const ZstdEncoder().encodeBytes(source));
+    });
+
+    // A frame slides once the source passes the window plus the slack the
+    // encoder keeps beside it, which is thirteen megabytes at level twelve and
+    // twenty four at level sixteen. Below that the buffer holds everything and
+    // nothing is reduced, so a smaller source would test nothing
+    test('a stream longer than the window writes what one buffer writes', () {
+      final source = _words(13 << 20);
+      for (final level in [1, 3, 5, 6, 9, 12]) {
+        final whole = ZstdEncoder(level: level).encodeBytes(source);
+        final out = OutputMemoryStream();
+        ZstdEncoder(level: level).encodeStream(_Piped(source), out);
+        expect(out.getBytes(), whole, reason: 'level $level');
+      }
+    });
+
+    // The tree and the optimal parse raise a position by two and keep a mark
+    // of their own, so their tables reduce by different rules than the rest.
+    // Seventeen megabytes is the least that makes both of these slide
+    test('a slid tree writes what one buffer writes', () {
+      final source = _words(17 << 20);
+      for (final level in [13, 16]) {
+        final whole = ZstdEncoder(level: level).encodeBytes(source);
+        final out = OutputMemoryStream();
+        ZstdEncoder(level: level).encodeStream(_Piped(source), out);
+        expect(out.getBytes(), whole, reason: 'level $level');
+      }
+    });
+
+    test('a stream shorter than the window writes what one buffer writes', () {
+      for (final entry in cases.entries) {
+        final out = OutputMemoryStream();
+        const ZstdEncoder().encodeStream(_Piped(entry.value), out);
+        expect(out.getBytes(), const ZstdEncoder().encodeBytes(entry.value),
+            reason: entry.key);
+      }
+    });
+
+    test('a frame slid past its dictionary writes what one buffer writes', () {
+      final source = _words(13 << 20);
+      final dictionary = ZstdDictionary(_words(1 << 16));
+      for (final level in [3, 6, 12]) {
+        final coder = ZstdEncoder(level: level, dictionary: dictionary);
+        final out = OutputMemoryStream();
+        coder.encodeStream(_Piped(source), out);
+        expect(out.getBytes(), coder.encodeBytes(source),
+            reason: 'level $level');
+      }
+    });
+
+    test('a stream without a checksum still writes what one buffer writes', () {
+      final source = _words(13 << 20);
+      const coder = ZstdEncoder(checksum: false);
+      final out = OutputMemoryStream();
+      coder.encodeStream(_Piped(source), out);
+      expect(out.getBytes(), coder.encodeBytes(source));
+    });
+
+    test('a slid frame reads back', () {
+      final source = _words(13 << 20);
+      final out = OutputMemoryStream();
+      const ZstdEncoder().encodeStream(_Piped(source), out);
+      final decoded = ZstdDecoder()
+          .decodeBytes(out.getBytes(), verify: true, throwOnError: true);
+      expect(decoded.length, source.length);
+      expect(getCrc32(decoded), getCrc32(source));
+    });
+
+    test('an empty stream writes an empty frame', () {
+      final out = OutputMemoryStream();
+      const ZstdEncoder().encodeStream(_Piped(Uint8List(0)), out);
+      expect(out.getBytes(), const ZstdEncoder().encodeBytes(Uint8List(0)));
+    });
+
+    test('a stream reads only the bytes it was given', () {
+      final source = _words(3 << 20);
+      final held = _Piped(source)..skip(1024);
+      final out = OutputMemoryStream();
+      const ZstdEncoder().encodeStream(held, out);
+      expect(
+          out.getBytes(),
+          const ZstdEncoder()
+              .encodeBytes(Uint8List.sublistView(source, 1024)));
     });
   });
 }

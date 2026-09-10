@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
+import '../../util/input_stream.dart';
 import '../../util/output_stream.dart';
 import '../../util/xxh64.dart';
 import 'zstd_block_encoder.dart';
@@ -19,7 +21,35 @@ class ZstdFrameEncoder {
       {bool checksum = true,
       int level = zstdDefaultLevel,
       ZstdDictionary? dictionary}) {
-    final size = end - start;
+    _write(null, src, start, end - start, out,
+        checksum: checksum, level: level, dictionary: dictionary);
+  }
+
+  /// Writes one frame of [size] bytes pulled from [input]. Only the window and
+  /// the block being parsed are held, so the frame's memory follows the level
+  /// rather than the input. The blocks fall where a whole buffer would put
+  /// them, so the bytes are the ones [encode] would have written
+  void encodeStream(InputStream input, int size, OutputStream out,
+      {bool checksum = true,
+      int level = zstdDefaultLevel,
+      ZstdDictionary? dictionary}) {
+    // A stream over memory hands out its own buffer, which spares the frame
+    // both the copy and the window
+    final held = input.viewBytes(size);
+    if (held != null) {
+      _write(null, held, 0, size, out,
+          checksum: checksum, level: level, dictionary: dictionary);
+      return;
+    }
+    _write(input, null, 0, size, out,
+        checksum: checksum, level: level, dictionary: dictionary);
+  }
+
+  void _write(InputStream? input, Uint8List? src, int start, int size,
+      OutputStream out,
+      {required bool checksum,
+      required int level,
+      required ZstdDictionary? dictionary}) {
     final dict = dictionary != null && dictionary.content.isNotEmpty
         ? dictionary
         : null;
@@ -40,47 +70,110 @@ class ZstdFrameEncoder {
 
     if (checksum) {
       _hash.reset();
-      _hash.update(src, start, size);
+      if (src != null) {
+        _hash.update(src, start, size);
+      }
     }
-
-    // The parse works in one buffer of absolute positions, so the dictionary
-    // has to sit directly before the content it is a dictionary for
-    var body = src;
-    var at = start;
-    var last = end;
-    if (dict != null) {
-      body = Uint8List(prefix + size);
-      body.setRange(0, prefix, dict.content);
-      body.setRange(prefix, prefix + size, src, start);
-      at = prefix;
-      last = prefix + size;
-    }
-    final base = at - prefix;
 
     final blockSizeMax =
         windowSize < zstdBlockMaximumSize ? windowSize : zstdBlockMaximumSize;
     final blocks = ZstdBlockEncoder(blockSizeMax, params);
+    // A slide has to leave the low bits of a position alone for the chain and
+    // the tree to stay addressable, so it goes in whole steps of this
+    final step = blocks.slideStep;
+
+    // The parse works in one buffer of absolute positions, so the dictionary
+    // has to sit directly before the content it is a dictionary for. A frame
+    // read from a stream keeps the window and enough spare beside it that a
+    // slide, which walks every table, is paid for by the bytes it frees
+    var slack = blocks.slideCost;
+    if (slack < matchWindow) {
+      slack = matchWindow;
+    }
+    var body = src;
+    var at = start;
+    if (src == null || dict != null) {
+      var span = size;
+      if (src == null && matchWindow + slack + blockSizeMax + step < span) {
+        span = matchWindow + slack + blockSizeMax + step;
+      }
+      final held = Uint8List(prefix + span);
+      if (dict != null) {
+        held.setRange(0, prefix, dict.content);
+      }
+      if (src != null) {
+        held.setRange(prefix, prefix + size, src, start);
+      }
+      body = held;
+      at = prefix;
+    }
+    final buffer = body!;
+    var base = at - prefix;
+
     _rep.setAll(0, dict?.repeatOffsets ?? zstdInitialRepeatOffsets);
     if (dict != null) {
-      blocks.prime(body, base, at, dict);
+      blocks.prime(buffer, base, at, dict);
     }
 
     if (size == 0) {
-      blocks.encode(body, at, at, base, out, true, _rep);
+      blocks.encode(buffer, at, at, base, out, true, _rep);
     }
     // Everything a block saved so far, which is what stops the splitter from
     // cutting up data that does not compress
     var savings = 0;
-    while (at < last) {
-      final left = last - at;
+    var filled = src == null ? at : at + size;
+    var read = src == null ? 0 : size;
+    var coded = 0;
+    while (coded < size) {
+      // A whole block has to be here before it can be parsed, and the front of
+      // the buffer goes once the window has moved past it
+      if (filled - at < blockSizeMax && read < size) {
+        if (filled == buffer.length) {
+          var delta = at > matchWindow ? at - matchWindow : 0;
+          delta -= delta % step;
+          buffer.setRange(0, filled - delta, buffer, delta);
+          at -= delta;
+          filled -= delta;
+          base = base > delta ? base - delta : 0;
+          blocks.slide(delta);
+        }
+        var want = buffer.length - filled;
+        if (want > size - read) {
+          want = size - read;
+        }
+        var got = 0;
+        while (got < want) {
+          final part = input!.readInto(buffer, filled + got, want - got);
+          if (part <= 0) {
+            throw ArchiveException('zstd: the input ended $want bytes early');
+          }
+          got += part;
+        }
+        if (checksum) {
+          _hash.update(buffer, filled, want);
+        }
+        filled += want;
+        read += want;
+      }
+      final left = size - coded;
       final take =
-          _splitter.sizeFor(body, at, left, blockSizeMax, params, savings);
+          _splitter.sizeFor(buffer, at, left, blockSizeMax, params, savings);
       final reach = at - matchWindow;
       final before = out.length;
-      blocks.encode(body, at, at + take, reach > base ? reach : base, out,
-          at + take == last, _rep);
+      blocks.encode(buffer, at, at + take, reach > base ? reach : base, out,
+          coded + take == size, _rep);
       savings += take - (out.length - before);
       at += take;
+      coded += take;
+      // What the first block cost says what the rest will, near enough that a
+      // sink holding its data takes the room once instead of doubling into it.
+      // A frame never exceeds its own bound, so neither does the estimate
+      if (coded == take && coded < size) {
+        final bound = size + (size >> 7) + 64;
+        var want = out.length + (out.length * (size - coded)) ~/ coded;
+        want += want >> 3;
+        out.reserve(want < bound ? want : bound);
+      }
     }
 
     if (checksum) {

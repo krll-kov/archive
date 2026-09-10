@@ -85,6 +85,21 @@ class ZstdBlockEncoder {
     }
   }
 
+  /// What a slide of the source buffer has to be a multiple of for the tables
+  /// to survive it
+  int get slideStep => _finder.slideStep;
+
+  /// How many entries a slide walks, so a caller can buy back the cost with
+  /// the bytes it holds spare
+  int get slideCost => _finder.slideCost;
+
+  /// Moves every position this frame has stored down by [delta], which is what
+  /// lets a caller drop the front of the buffer once the window has left it
+  void slide(int delta) {
+    _finder.slide(delta);
+    _ldm?.slide(delta);
+  }
+
   void encode(Uint8List src, int start, int end, int lowLimit, OutputStream out,
       bool isLast, Uint32List rep) {
     final first = _first;

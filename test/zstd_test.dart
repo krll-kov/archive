@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:archive/src/codecs/zstd/zstd_dictionary.dart';
 import 'package:archive/src/codecs/zstd_decoder.dart';
+import 'package:archive/src/codecs/zstd_encoder.dart';
 import 'package:archive/src/util/crc32.dart';
 import 'package:archive/src/util/input_memory_stream.dart';
 import 'package:archive/src/util/output_memory_stream.dart';
@@ -154,4 +156,195 @@ void main() {
           throwsA(anything));
     });
   });
+
+  // A frame is rejected by whichever part of it stops making sense first, and
+  // each of those parts reports on its own. A checksum catches what gets that
+  // far, so a corruption has to be aimed to reach the tables at all
+  group('zstd rejects', () {
+    final frame =
+        File('${directory.path}/mix-70k-l19.zst').readAsBytesSync();
+    final short = File('${directory.path}/text-1k-l19.zst').readAsBytesSync();
+
+    Uint8List broken(Uint8List from, int at, int value) =>
+        Uint8List.fromList(from)..[at] = value;
+
+    void reject(Uint8List bytes, String reason) {
+      expect(() => ZstdDecoder().decodeBytes(bytes, throwOnError: true),
+          throwsA(anything), reason: reason);
+    }
+
+    test('a frame cut at any length', () {
+      for (var cut = 1; cut < frame.length; cut++) {
+        expect(
+            () => ZstdDecoder().decodeBytes(
+                Uint8List.sublistView(frame, 0, cut),
+                verify: true,
+                throwOnError: true),
+            throwsA(anything),
+            reason: 'cut to $cut bytes');
+      }
+    });
+
+    test('a frame cut inside its first block', () {
+      for (var cut = 1; cut < short.length; cut++) {
+        expect(
+            () => ZstdDecoder().decodeBytes(
+                Uint8List.sublistView(short, 0, cut),
+                verify: true,
+                throwOnError: true),
+            throwsA(anything),
+            reason: 'cut to $cut bytes');
+      }
+    });
+
+    test('every byte of a frame, changed, is caught or harmless', () {
+      final whole =
+          ZstdDecoder().decodeBytes(short, verify: true, throwOnError: true);
+      final crc = getCrc32(whole);
+      for (var at = 4; at < short.length; at++) {
+        for (final mask in [0x01, 0x55, 0x80]) {
+          final bytes = Uint8List.fromList(short);
+          bytes[at] ^= mask;
+          Uint8List? decoded;
+          try {
+            decoded = ZstdDecoder()
+                .decodeBytes(bytes, verify: true, throwOnError: true);
+          } catch (_) {
+            continue;
+          }
+          expect(getCrc32(decoded), crc,
+              reason: 'byte $at with $mask changed the output silently');
+        }
+      }
+    });
+
+    // Block type three is reserved, and the header is the three bytes after
+    // the frame header, which for this file is five bytes long
+    test('a reserved block type', () {
+      final header = _firstBlockAt(short);
+      reject(broken(short, header, short[header] | 6), 'reserved block type');
+    });
+
+    test('a block that claims more than a block', () {
+      final header = _firstBlockAt(short);
+      final bytes = Uint8List.fromList(short);
+      // Size sits in the top twenty one bits of the three byte header
+      bytes[header] |= 0xf8;
+      bytes[header + 1] = 0xff;
+      bytes[header + 2] = 0xff;
+      reject(bytes, 'block larger than the limit');
+    });
+
+    test('a literals section that claims more than a block', () {
+      final at = _firstBlockAt(short) + 3;
+      final bytes = Uint8List.fromList(short);
+      // Type two, size format three, so the header is five bytes wide
+      bytes[at] = 0x0e;
+      bytes[at + 1] = 0xff;
+      bytes[at + 2] = 0xff;
+      bytes[at + 3] = 0xff;
+      bytes[at + 4] = 0xff;
+      reject(bytes, 'literals larger than a block');
+    });
+
+    test('treeless literals in the first block', () {
+      final at = _firstBlockAt(short) + 3;
+      // Type three reuses the tree of an earlier block, and there is none
+      reject(broken(short, at, (short[at] & ~3) | 3), 'treeless without a tree');
+    });
+
+    test('an empty archive', () {
+      expect(() => ZstdDecoder().decodeBytes(Uint8List(0), throwOnError: true),
+          throwsA(anything));
+      final out = OutputMemoryStream();
+      expect(
+          () => ZstdDecoder().decodeStream(
+              InputMemoryStream(Uint8List(0)), out,
+              throwOnError: true),
+          throwsA(anything));
+    });
+
+    test('a skippable frame that runs off the end', () {
+      final bytes = Uint8List.fromList(
+          [0x50, 0x2a, 0x4d, 0x18, 0xff, 0xff, 0xff, 0x7f, 1, 2, 3]);
+      reject(bytes, 'skippable frame is truncated');
+    });
+
+    test('a frame header that stops inside its content size', () {
+      reject(Uint8List.fromList([0x28, 0xb5, 0x2f, 0xfd, 0xa0]),
+          'content size is truncated');
+    });
+
+    // The tables of a block are read before anything is written, so a change
+    // there is reported by whichever table stops making sense, not by the
+    // checksum. The first few hundred bytes of a block are those tables
+    test('every bit of the tables of a block, flipped', () {
+      final whole =
+          ZstdDecoder().decodeBytes(frame, verify: true, throwOnError: true);
+      final crc = getCrc32(whole);
+      final from = _firstBlockAt(frame) + 3;
+      final to = from + 400 < frame.length ? from + 400 : frame.length;
+      for (var at = from; at < to; at++) {
+        for (var bit = 0; bit < 8; bit++) {
+          final bytes = Uint8List.fromList(frame);
+          bytes[at] ^= 1 << bit;
+          Uint8List? decoded;
+          try {
+            decoded = ZstdDecoder()
+                .decodeBytes(bytes, verify: true, throwOnError: true);
+          } catch (_) {
+            continue;
+          }
+          expect(getCrc32(decoded), crc,
+              reason: 'bit $bit of byte $at changed the output silently');
+        }
+      }
+    });
+  });
+
+  // A window narrower than the content is what makes the decoder's ring buffer
+  // wrap, which only the streaming path has
+  group('zstd wraps its window', () {
+    final source = Uint8List(3 << 20);
+    for (var at = 0; at < source.length; at++) {
+      source[at] = 0x20 + ((at * 7 + (at >> 9)) % 90);
+    }
+
+    for (final level in [1, 3, 6]) {
+      test('level $level round trips through a window it outgrows', () {
+        final encoded = ZstdEncoder(level: level).encodeBytes(source);
+        final out = OutputMemoryStream();
+        final ok = ZstdDecoder().decodeStream(
+            InputMemoryStream(encoded), out,
+            verify: true, throwOnError: true);
+        expect(ok, isTrue);
+        final decoded = out.getBytes();
+        expect(decoded.length, source.length);
+        expect(getCrc32(decoded), getCrc32(source));
+      });
+    }
+
+    test('a frame with a dictionary wraps the same way', () {
+      final dictionary = ZstdDictionary(Uint8List.fromList(
+          List.generate(1 << 16, (i) => 0x20 + (i * 11 % 90))));
+      final encoded =
+          ZstdEncoder(level: 3, dictionary: dictionary).encodeBytes(source);
+      final out = OutputMemoryStream();
+      ZstdDecoder(dictionary: dictionary).decodeStream(
+          InputMemoryStream(encoded), out,
+          verify: true, throwOnError: true);
+      expect(getCrc32(out.getBytes()), getCrc32(source));
+    });
+  });
+}
+
+/// Where the first block header sits: the magic, the descriptor, and whatever
+/// widths the descriptor asks of the window, the dictionary id and the size
+int _firstBlockAt(Uint8List frame) {
+  final descriptor = frame[4];
+  final sizeFlag = descriptor >> 6;
+  final single = (descriptor & 0x20) != 0;
+  final idBytes = const [0, 1, 2, 4][descriptor & 3];
+  final sizeBytes = sizeFlag == 0 ? (single ? 1 : 0) : 1 << sizeFlag;
+  return 5 + (single ? 0 : 1) + idBytes + sizeBytes;
 }

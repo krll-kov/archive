@@ -27,6 +27,7 @@ class OutputMemoryStream extends OutputStream {
 
   /// Grows the buffer to hold [total] bytes without another copy. A caller that
   /// knows the size up front saves every doubling it would have taken
+  @override
   void reserve(int total) {
     if (total > _buffer.length) {
       _buffer = Uint8List(total)..setRange(0, length, _buffer);

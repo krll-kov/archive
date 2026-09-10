@@ -95,9 +95,8 @@ class ZstdDecoder {
     return frames;
   }
 
-  /// Decompress [input] into [output], holding only a window of the result in
-  /// memory. The compressed side is still read whole, so this bounds the
-  /// output, not the input
+  /// Decompress [input] into [output], holding one block of the compressed
+  /// side and a window of the result, whatever the archive weighs
   bool decodeStream(InputStream input, OutputStream output,
       {bool verify = false, bool throwOnError = false}) {
     try {
@@ -285,7 +284,3 @@ class ZstdDecoder {
       (bytes[at + 2] << 16) |
       (bytes[at + 3] << 24);
 }
-
-/// Decompress [data], throwing an [ArchiveException] if it is not valid zstd
-Uint8List zstdDecode(List<int> data, {bool verify = false}) =>
-    ZstdDecoder().decodeBytes(data, verify: verify, throwOnError: true);

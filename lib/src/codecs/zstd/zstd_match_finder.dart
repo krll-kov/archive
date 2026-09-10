@@ -51,13 +51,13 @@ const _searchTree = 2;
 /// compiler cannot prove is a Smi becomes a call through the dispatch table
 const _deBruijn = 0x022fdd63cc95386d;
 
-Uint8List _bitSlots() {
-  final slots = Uint8List(64);
-  for (var i = 0; i < 64; i++) {
-    slots[((1 << i) * _deBruijn) >>> 58] = i;
-  }
-  return slots;
-}
+/// Where the one set bit of a value sits, indexed by `(v * _deBruijn) >>> 58`
+const _slots = <int>[
+  0, 1, 2, 53, 3, 7, 54, 27, 4, 38, 41, 8, 34, 55, 48, 28,
+  62, 5, 39, 46, 44, 42, 22, 9, 24, 35, 59, 56, 49, 18, 29, 11,
+  63, 52, 6, 26, 37, 40, 33, 47, 61, 45, 43, 21, 23, 58, 17, 10,
+  51, 25, 36, 32, 60, 20, 57, 16, 50, 31, 19, 15, 30, 14, 13, 12,
+];
 
 /// Finds the sequences of a block. A slot holds a position plus one, so zero
 /// means it was never filled, and the tables hold absolute positions so they
@@ -103,10 +103,8 @@ class ZstdMatchFinder {
   /// last insertion took
   final Uint32List _rows;
   final Uint64List _tags;
-  final Uint8List _heads;
-
-  /// Where the one set bit of a value sits, indexed by its de Bruijn slot
-  final Uint8List _slots = _bitSlots();
+  final Uint8List _tagBytes;
+  final int _tagByteXor = Endian.host == Endian.little ? 0 : 7;
 
   /// How far ahead the optimal parse plans, `ZSTD_OPT_NUM`
   static const _optMax = 1 << 12;
@@ -164,8 +162,14 @@ class ZstdMatchFinder {
   /// stops inserting every position, only the ones it searches
   bool _skipping = false;
 
-  ZstdMatchFinder(this.params)
-      : _hashTable = Uint32List(_usesTable(params) ? 1 << params.hashLog : 1),
+  ZstdMatchFinder(ZstdLevelParams params)
+      : this._(params, Uint64List(
+            _usesRows(params) ? 1 << (params.hashLog - 3) : 1));
+
+  ZstdMatchFinder._(this.params, Uint64List tags)
+      : _tags = tags,
+        _tagBytes = tags.buffer.asUint8List(),
+        _hashTable = Uint32List(_usesTable(params) ? 1 << params.hashLog : 1),
         _chain = Uint32List(_usesChain(params) ? 1 << params.chainLog : 1),
         _btMask = params.strategy >= zstdStrategyBinaryTree
             ? (1 << (params.chainLog - 1)) - 1
@@ -187,11 +191,7 @@ class ZstdMatchFinder {
         _entryMask = (1 << (1 << _rowLogFor(params))) - 1,
         _words = 1 << (_rowLogFor(params) - 3),
         _rowShift = 56 - params.hashLog + _rowLogFor(params),
-        _rows = Uint32List(_usesRows(params) ? 1 << params.hashLog : 1),
-        _tags = Uint64List(
-            _usesRows(params) ? 1 << (params.hashLog - 3) : 1),
-        _heads = Uint8List(
-            _usesRows(params) ? 1 << (params.hashLog - _rowLogFor(params)) : 1);
+        _rows = Uint32List(_usesRows(params) ? 1 << params.hashLog : 1);
 
   static int _shortLogFor(ZstdLevelParams params) =>
       params.windowLog < _shortLogMax ? params.windowLog : _shortLogMax;
@@ -243,10 +243,62 @@ class ZstdMatchFinder {
     _chain.fillRange(0, _chain.length, 0);
     _rows.fillRange(0, _rows.length, 0);
     _tags.fillRange(0, _tags.length, 0);
-    _heads.fillRange(0, _heads.length, 0);
     _nextToUpdate = 0;
     _nextShort = 0;
     _short.fillRange(0, _short.length, 0);
+  }
+
+  /// `ZSTD_cycleLog`: the chain and the tree address a node by the low bits of
+  /// a position, so only a slide that leaves those bits alone keeps them
+  /// reachable. The other searches key on the bytes and take any slide
+  int get slideStep {
+    if (params.strategy >= zstdStrategyBinaryTree) {
+      return _btMask + 1;
+    }
+    return _usesChainSearch(params) ? 1 << params.chainLog : 1;
+  }
+
+  /// How many entries a slide has to walk, which is what the bytes it frees
+  /// have to pay for
+  int get slideCost =>
+      _hashTable.length + _chain.length + _rows.length + _short.length;
+
+  /// `ZSTD_reduceIndex`: the buffer moved [delta] bytes down, so every stored
+  /// position moves with it and whatever fell off the front is dropped
+  void slide(int delta) {
+    if (params.strategy >= zstdStrategyBinaryTree) {
+      _reduceTree(_hashTable, delta);
+      _reduceTree(_chain, delta);
+    } else {
+      _reduce(_hashTable, delta);
+      _reduce(_chain, delta);
+    }
+    _reduce(_rows, delta);
+    _reduce(_short, delta);
+    _nextToUpdate = _nextToUpdate > delta ? _nextToUpdate - delta : 0;
+    _nextShort = _nextShort > delta ? _nextShort - delta : 0;
+    prefixStart = prefixStart > delta ? prefixStart - delta : 0;
+  }
+
+  /// A slot holds a position raised by one, so anything at or below the slide
+  /// was pushed out of the buffer and reads as never filled
+  static void _reduce(Uint32List table, int delta) {
+    for (var at = 0; at < table.length; at++) {
+      final held = table[at];
+      table[at] = held <= delta ? 0 : held - delta;
+    }
+  }
+
+  /// `ZSTD_reduceTable_btlazy2`: the tree raises a position by [_lift] and
+  /// keeps [_unsorted] as a mark of its own, which is not a position
+  static void _reduceTree(Uint32List table, int delta) {
+    for (var at = 0; at < table.length; at++) {
+      final held = table[at];
+      if (held == _unsorted) {
+        continue;
+      }
+      table[at] = held < delta + _lift ? 0 : held - delta;
+    }
   }
 
   /// Puts a dictionary's positions in this level's tables, so the first block
@@ -1262,7 +1314,7 @@ class ZstdMatchFinder {
     }
     mask = ~mask & _entryMask;
 
-    final head = _heads[row];
+    final head = _tagBytes[(row << _rowLog) ^ _tagByteXor];
     // The masks are literal so the shift counts are provably under sixty four,
     // which is what keeps the guarded slow path out of the loop
     var rest = ((mask >>> (head & 63)) |
@@ -1272,6 +1324,7 @@ class ZstdMatchFinder {
     rest &= ~(1 << ((_rowEntries - head) & _rowMask));
     final base = row << _rowLog;
     var tries = _tries;
+    var probe = view.getUint32(ip, Endian.little);
     while (rest != 0 && tries > 0) {
       final low = rest & -rest;
       rest ^= low;
@@ -1285,8 +1338,7 @@ class ZstdMatchFinder {
       tries--;
       // Four bytes ending where the best match does: a candidate that differs
       // there cannot beat it, and this is most of what the search costs
-      if (view.getUint32(candidate + best - 3, Endian.little) !=
-          view.getUint32(ip + best - 3, Endian.little)) {
+      if (view.getUint32(candidate + best - 3, Endian.little) != probe) {
         continue;
       }
       final length = _extendRow(src, view, ip, candidate, end);
@@ -1296,6 +1348,7 @@ class ZstdMatchFinder {
         if (ip + length >= end) {
           break;
         }
+        probe = view.getUint32(ip + best - 3, Endian.little);
       }
     }
 
@@ -2060,15 +2113,14 @@ class ZstdMatchFinder {
   /// first, which the reference keeps its head in
   @pragma('vm:prefer-inline')
   void _insertOne(int row, int tag, int at) {
-    var head = (_heads[row] - 1) & _rowMask;
+    final base = row << _rowLog;
+    var head = (_tagBytes[base ^ _tagByteXor] - 1) & _rowMask;
     if (head == 0) {
       head = _rowMask;
     }
-    _heads[row] = head;
-    _rows[(row << _rowLog) | head] = at + 1;
-    final word = (row << (_rowLog - 3)) + (head >> 3);
-    final shift = (head & 7) << 3;
-    _tags[word] = (_tags[word] & ~(0xff << shift)) | (tag << shift);
+    _tagBytes[base ^ _tagByteXor] = head;
+    _rows[base | head] = at + 1;
+    _tagBytes[(base | head) ^ _tagByteXor] = tag;
   }
 
   @pragma('vm:prefer-inline')

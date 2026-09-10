@@ -170,22 +170,31 @@ class ZstdFrameDecoder {
       }
     }
 
-    final produced = window.length - before;
+    _checkProduced(window.length - before, header);
+    if (header.hasChecksum) {
+      _take(input, scratch, 0, 4, 'Content checksum is truncated');
+      _checkDigest(
+          scratch[0] |
+              (scratch[1] << 8) |
+              (scratch[2] << 16) |
+              (scratch[3] << 24),
+          checked);
+    }
+  }
+
+  /// A frame that declared its content size has to have written exactly that
+  static void _checkProduced(int produced, ZstdFrameHeader header) {
     final expected = header.contentSize;
     if (expected != null && produced != expected) {
       throw ZstdFrameException(
           'Frame produced $produced bytes against the $expected it declared');
     }
+  }
 
-    if (header.hasChecksum) {
-      _take(input, scratch, 0, 4, 'Content checksum is truncated');
-      final stored = scratch[0] |
-          (scratch[1] << 8) |
-          (scratch[2] << 16) |
-          (scratch[3] << 24);
-      if (checked && _hash.digestLow != stored) {
-        throw ZstdFrameException('Content checksum does not match');
-      }
+  /// The frame carries the low half of an XXH64 of everything it decoded to
+  void _checkDigest(int stored, bool checked) {
+    if (checked && _hash.digestLow != stored) {
+      throw ZstdFrameException('Content checksum does not match');
     }
   }
 
@@ -231,24 +240,17 @@ class ZstdFrameDecoder {
       }
     }
 
-    final produced = window.length - before;
-    final expected = header.contentSize;
-    if (expected != null && produced != expected) {
-      throw ZstdFrameException(
-          'Frame produced $produced bytes against the $expected it declared');
-    }
-
+    _checkProduced(window.length - before, header);
     if (header.hasChecksum) {
       if (at + 4 > end) {
         throw ZstdFrameException('Content checksum is truncated');
       }
-      final stored = src[at] |
-          (src[at + 1] << 8) |
-          (src[at + 2] << 16) |
-          (src[at + 3] << 24);
-      if (checked && _hash.digestLow != stored) {
-        throw ZstdFrameException('Content checksum does not match');
-      }
+      _checkDigest(
+          src[at] |
+              (src[at + 1] << 8) |
+              (src[at + 2] << 16) |
+              (src[at + 3] << 24),
+          checked);
       at += 4;
     }
     return at - start;

@@ -217,6 +217,16 @@ class ZstdLdm {
 
   int capacityFor(int blockSize) => blockSize ~/ minMatch + 1;
 
+  /// The buffer moved [delta] bytes down. A bucket is keyed on the bytes, not
+  /// on a position, so only the positions it holds move
+  void slide(int delta) {
+    for (var at = 0; at < _entryPos.length; at++) {
+      final held = _entryPos[at];
+      _entryPos[at] = held <= delta ? 0 : held - delta;
+    }
+    _dictLimit = _dictLimit > delta + 1 ? _dictLimit - delta : 1;
+  }
+
   /// `ZSTD_ldm_fillHashTable`: a dictionary's split points, registered without
   /// looking for a match, so the first block can reach into it
   void fill(Uint8List src, int start, int end) {

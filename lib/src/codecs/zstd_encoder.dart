@@ -31,15 +31,11 @@ class ZstdEncoder {
   List<int> encode(List<int> data, {int? level}) =>
       encodeBytes(data, level: level);
 
-  /// Compress [input] into [output] as one frame, reading the input whole
+  /// Compress [input] into [output] as one frame, holding only its window
   void encodeStream(InputStream input, OutputStream output, {int? level}) {
-    final bytes = input.toUint8List();
-    ZstdFrameEncoder().encode(bytes, 0, bytes.length, output,
+    ZstdFrameEncoder().encodeStream(input, input.length, output,
         checksum: checksum,
         level: level ?? this.level,
         dictionary: dictionary);
   }
 }
-
-Uint8List zstdEncode(List<int> data, {int? level}) =>
-    const ZstdEncoder().encodeBytes(data, level: level);
