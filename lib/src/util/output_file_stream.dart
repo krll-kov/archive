@@ -103,6 +103,25 @@ class OutputFileStream extends OutputStream {
 
   /// Write a set of bytes to the end of the buffer.
   @override
+  void writeRange(Uint8List bytes, int start, int end) {
+    final length = end - start;
+    if (_bufferPosition + length >= _buffer.length) {
+      flush();
+    }
+    if (_bufferPosition + length < _buffer.length) {
+      _buffer.setRange(_bufferPosition, _bufferPosition + length, bytes, start);
+      _bufferPosition += length;
+      _length += length;
+      return;
+    }
+    flush();
+    // The whole list with a range, not a view of it: dart:io copies anything
+    // that is not a `Uint8List` starting at zero
+    _fileHandle.writeFromSync(bytes, start, end);
+    _length += length;
+  }
+
+  @override
   void writeBytes(List<int> bytes, {int? length}) {
     length ??= bytes.length;
     if (_bufferPosition + length >= _buffer.length) {

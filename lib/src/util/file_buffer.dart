@@ -204,6 +204,28 @@ class FileBuffer {
   }
 
   /// Read [count] bytes starting at the given [position] within the file.
+  /// Reads [count] bytes at [position] into [into] at [at], without a buffer of
+  /// its own. Returns how many were read, which is short only at end of file
+  int readInto(int position, Uint8List into, int at, int count) {
+    if (position + count > _fileSize) {
+      count = _fileSize - position;
+    }
+    if (count <= 0) {
+      return 0;
+    }
+    if (count > buffer.length) {
+      file.position = position;
+      return file.readInto(Uint8List.sublistView(into, at, at + count), count);
+    }
+    if (position < _position ||
+        (position + count) > (_position + _bufferLength)) {
+      _readBuffer(position);
+    }
+    final start = position - _position;
+    into.setRange(at, at + count, _buffer!, start);
+    return count;
+  }
+
   Uint8List readBytes(int position, int count,
       [@Deprecated('Ignored') int? fileSize]) {
     if (count > buffer.length) {

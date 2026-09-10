@@ -230,6 +230,13 @@ class InputFileStream extends InputStream {
   }
 
   @override
+  @override
+  int readInto(Uint8List into, int at, int count) {
+    final got = _file.readInto(_fileOffset + position, into, at, count);
+    _position += got;
+    return got;
+  }
+
   Uint8List toUint8List([Uint8List? bytes]) {
     if (isEOS) {
       return Uint8List(0);

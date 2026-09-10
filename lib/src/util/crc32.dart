@@ -1,9 +1,20 @@
+import 'dart:typed_data';
+
+import '_crc32_fast_html.dart'
+    if (dart.library.isolate) '_crc32_fast_io.dart';
+
 /// Get the CRC-32 checksum of the given int.
 int getCrc32Byte(int crc, int b) => _crc32Table[(crc ^ b) & 0xff] ^ (crc >> 8);
 
 /// Get the CRC-32 checksum of the given array. You can append bytes to an
 /// already computed crc by specifying the previous [crc] value.
 int getCrc32(List<int> array, [int crc = 0]) {
+  if (array is Uint8List && isCrc32FastSupported_()) {
+    final fast = crc32Fast_(array, crc, _crc32Table);
+    if (fast >= 0) {
+      return fast;
+    }
+  }
   var len = array.length;
   crc = crc ^ 0xffffffff;
   var ip = 0;

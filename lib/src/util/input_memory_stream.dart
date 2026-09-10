@@ -126,6 +126,35 @@ class InputMemoryStream extends InputStream {
   }
 
   @override
+  Uint8List? viewBytes(int count) {
+    final source = buffer;
+    if (source == null || _position + count > source.length) {
+      return null;
+    }
+    final view = Uint8List.sublistView(source, _position, _position + count);
+    _position += count;
+    return view;
+  }
+
+  @override
+  int readInto(Uint8List into, int at, int count) {
+    final source = buffer;
+    if (source == null) {
+      return 0;
+    }
+    var got = count;
+    if (_position + got > source.length) {
+      got = source.length - _position;
+    }
+    if (got <= 0) {
+      return 0;
+    }
+    into.setRange(at, at + got, source, _position);
+    _position += got;
+    return got;
+  }
+
+  @override
   Uint8List toUint8List() {
     if (buffer == null) {
       return Uint8List(0);

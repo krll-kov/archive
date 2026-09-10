@@ -645,6 +645,32 @@ void main() {
     expect(files.length, 4);
   });
 
+  test('extractFileToDisk tar.zst', () async {
+    final inPath = 'test/_data/test2.tar.zst';
+    final outPath = '$testOutputPath/extractFileToDisk_tar_zst';
+    final dir = Directory(outPath);
+    if (dir.existsSync()) {
+      dir.deleteSync(recursive: true);
+    }
+    await extractFileToDisk(inPath, outPath);
+
+    final files = dir.listSync(recursive: true);
+    expect(files.length, 4);
+  });
+
+  test('extractFileToDisk tzst', () async {
+    final inPath = 'test/_data/test2.tzst';
+    final outPath = '$testOutputPath/extractFileToDisk_tzst';
+    final dir = Directory(outPath);
+    if (dir.existsSync()) {
+      dir.deleteSync(recursive: true);
+    }
+    await extractFileToDisk(inPath, outPath);
+
+    final files = dir.listSync(recursive: true);
+    expect(files.length, 4);
+  });
+
   test('extractFileToDisk zip', () async {
     final inPath = 'test/_data/test.zip';
     final outPath = '$testOutputPath/extractFileToDisk_zip';

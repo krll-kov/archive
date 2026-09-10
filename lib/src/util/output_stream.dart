@@ -30,6 +30,13 @@ abstract class OutputStream {
   /// Write a set of bytes to the output stream.
   void writeBytes(List<int> bytes, {int? length});
 
+  /// Writes `bytes[start...end]`. A sink that hands its data to something
+  /// outside Dart takes the range rather than a view of it, since a view is
+  /// copied on the way out
+  void writeRange(Uint8List bytes, int start, int end) {
+    writeBytes(Uint8List.sublistView(bytes, start, end));
+  }
+
   /// Write an InputStream to the output stream.
   void writeStream(InputStream stream);
 
