@@ -251,8 +251,8 @@ class LzmaDecoder {
   // Decode [input], which contains compressed LZMA data that unpacks to
   // [uncompressedLength] bytes, appending the result directly to [output].
   //
-  // This avoids the intermediate copy [decode] has to make. The view handed to
-  // [OutputStream.writeBytes] does not outlive the call, so a later
+  // This avoids the intermediate copy [decode] has to make. The range handed
+  // to [OutputStream.writeRange] is read before the call returns, so a later
   // [trimDictionary] cannot invalidate it.
   void decodeToOutput(
       InputStream input, int uncompressedLength, OutputStream output) {
@@ -262,8 +262,7 @@ class LzmaDecoder {
     final initialSize = _reserve(uncompressedLength);
     _decodePackets(initialSize + uncompressedLength);
 
-    output.writeBytes(
-        Uint8List.sublistView(_dictionary, initialSize, _writePosition));
+    output.writeRange(_dictionary, initialSize, _writePosition);
   }
 
   // Returns true if the previous packet seen was a literal. The first seven
