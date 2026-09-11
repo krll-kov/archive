@@ -30,6 +30,11 @@ class _ZipFileData {
   /// Set instead of [compressedData] where the entry is deflated straight into
   /// the output rather than into a buffer first
   InputStream? source;
+
+  /// General purpose bit 3, which says the check and the sizes follow the
+  /// data. The central directory has to carry it too, or a reader that
+  /// compares the two headers calls the pair broken
+  bool deferred = false;
   CompressionType compression = CompressionType.deflate;
   String? comment = '';
   int position = 0;
@@ -324,6 +329,7 @@ class ZipEncoder {
         (_pwdVer?.length ?? 0);
     // Not known until the deflate has run, and filled in by _writeFile
     final deferred = fileData.source != null;
+    fileData.deferred = deferred;
 
     _data.localFileSize += 30 + encodedFilename.length + dataLen;
 
@@ -412,8 +418,7 @@ class ZipEncoder {
         fileData.uncompressedSize > 0xFFFFFFFF;
 
     var flags = 0;
-    // General purpose bit 3: the check and the sizes follow the data
-    if (fileData.source != null) {
+    if (fileData.deferred) {
       flags |= 0x08;
     }
     if (filenameEncoding.name == "utf-8") {
@@ -433,7 +438,7 @@ class ZipEncoder {
     final lastModFileTime = fileData.time;
     final lastModFileDate = fileData.date;
     // With bit 3 the three of them are zero here and carried behind the data
-    final deferred = fileData.source != null;
+    final deferred = fileData.deferred;
     final crc32 = deferred ? 0 : fileData.crc32;
     final compressedSize =
         deferred ? 0 : (needsZip64 ? 0xFFFFFFFF : fileData.compressedSize);
@@ -526,6 +531,9 @@ class ZipEncoder {
       final versionMadeBy = (os << 8) | version;
       final versionNeededToExtract = version;
       var generalPurposeBitFlag = languageEncodingBitUtf8;
+      if (fileData.deferred) {
+        generalPurposeBitFlag |= 0x08;
+      }
       if (password != null) {
         generalPurposeBitFlag |= fileEncryptionBit;
       }

@@ -94,6 +94,21 @@ void main() {
       expect(back.files[1].content, want);
     });
 
+    test('the central directory carries bit 3 as well', () {
+      // A reader that compares the two headers, 7-zip among them, calls the
+      // pair broken when only one of them says the sizes follow the data
+      final bytes = _zip([ArchiveFile.bytes('a.bin', _source(60000, 7))]);
+      final eocd = bytes.length - 22;
+      final centralAt = bytes[eocd + 16] |
+          (bytes[eocd + 17] << 8) |
+          (bytes[eocd + 18] << 16) |
+          (bytes[eocd + 19] << 24);
+      // signature, version made by, version needed, then the flag word
+      expect(bytes[centralAt] | (bytes[centralAt + 1] << 8), 0x4b50);
+      expect(bytes[centralAt + 8] & 0x08, 0x08);
+      expect(bytes[6] & 0x08, 0x08, reason: 'the local header too');
+    });
+
     test('the local header defers the check and the sizes', () {
       final bytes = _zip([ArchiveFile.bytes('a.bin', _source(60000, 7))]);
       // General purpose bit 3, then zeros where the check and sizes go

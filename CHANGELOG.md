@@ -44,6 +44,7 @@
   `verify: true` was used with an output that cannot be read back, such as an
   `OutputFileStream` or any multithreaded decode. The output now stops in the
   same place whichever way the decode was asked for.
+* Tar reader/writer fixes for modern formats, symlinks, etc.
 
 
 # 4.2.0
