@@ -220,6 +220,9 @@ class _Collected implements Sink<List<int>> {
   }
 }
 
+/// Under the block every codec here gathers into
+const _streamPiece = 1 << 16;
+
 /// The output side of a chunked codec: what a codec's core writes into an
 /// `OutputStream`, handed to a `Sink` piece by piece.
 ///
@@ -236,7 +239,20 @@ class SinkOutputStream extends OutputStream {
 
   /// Where the bytes go instead of the sink, for the stretch a filter has to
   /// read back before anything may be handed over
-  OutputMemoryStream? divert;
+  OutputMemoryStream? get divert => _divert;
+  OutputMemoryStream? _divert;
+
+  set divert(OutputMemoryStream? held) {
+    // What is queued belongs in front of what is about to be diverted
+    _drain();
+    _divert = held;
+  }
+
+  /// Small writes are gathered here rather than handed over one at a time: a
+  /// bit writer hands over single bytes, and a sink that is a file or a socket
+  /// pays for every one of them
+  final Uint8List _buffer = Uint8List(_streamPiece);
+  int _queued = 0;
 
   /// Folded in as the bytes go past, which is how a check is computed without
   /// holding what it covers
@@ -264,8 +280,21 @@ class SinkOutputStream extends OutputStream {
   @override
   void writeByte(int value) => _emit(Uint8List.fromList([value]));
 
+  /// A piece at a time rather than one buffer, since `toUint8List` on a file
+  /// reads the whole remainder. The read position ends where it started
   @override
-  void writeStream(InputStream stream) => _emit(stream.toUint8List());
+  void writeStream(InputStream stream) {
+    final held = stream.position;
+    final buffer = Uint8List(_streamPiece);
+    while (!stream.isEOS) {
+      final got = stream.readInto(buffer, 0, buffer.length);
+      if (got <= 0) {
+        break;
+      }
+      _emit(Uint8List.sublistView(buffer, 0, got));
+    }
+    stream.setPosition(held);
+  }
 
   void _emit(Uint8List piece) {
     if (piece.isEmpty) {
@@ -273,12 +302,43 @@ class SinkOutputStream extends OutputStream {
     }
     written += piece.length;
     watch?.call(piece);
-    final held = divert;
+    final held = _divert;
     if (held != null) {
       held.writeBytes(piece);
-    } else {
-      sink.add(Uint8List.fromList(piece));
+      return;
     }
+    // A range the core wrote can be megabytes, and a sink handed it in one go
+    // has no way to hold the codec back while it deals with it
+    if (piece.length >= _streamPiece) {
+      _drain();
+      for (var at = 0; at < piece.length; at += _streamPiece) {
+        final end =
+            at + _streamPiece < piece.length ? at + _streamPiece : piece.length;
+        sink.add(Uint8List.fromList(Uint8List.sublistView(piece, at, end)));
+      }
+      return;
+    }
+    var at = 0;
+    while (at < piece.length) {
+      var take = _streamPiece - _queued;
+      if (take > piece.length - at) {
+        take = piece.length - at;
+      }
+      _buffer.setRange(_queued, _queued + take, piece, at);
+      _queued += take;
+      at += take;
+      if (_queued == _streamPiece) {
+        _drain();
+      }
+    }
+  }
+
+  void _drain() {
+    if (_queued == 0) {
+      return;
+    }
+    sink.add(Uint8List.fromList(Uint8List.sublistView(_buffer, 0, _queued)));
+    _queued = 0;
   }
 
   @override
@@ -288,6 +348,8 @@ class SinkOutputStream extends OutputStream {
   @override
   void clear() => written = 0;
 
+  /// Hands over whatever is queued. Every codec calls this when it is done,
+  /// which is what makes the gathering safe
   @override
-  void flush() {}
+  void flush() => _drain();
 }

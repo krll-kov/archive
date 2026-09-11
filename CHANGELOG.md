@@ -1,3 +1,12 @@
+# 4.4.0
+* Added zstd (Zstandard) support, both decode and encode (lvl 1-22, with custom dictionaries)
+* Added Dart async StreamTransformers/ByteConversionSink/Converter support
+  (xzCodec, zstdCodec, bzip2Codec, tarCodec and zipCodec) for decode and encode (decoders for all formats except for zip)
+* Added CodecsRecognizer with ArchiveFormat to recognize compressed file types by with their header bytes
+* Fixed XZEncoder (without compression) for large files
+* Made CRC32 faster on IO (non-js-web platforms)
+* Slightly reduces amount of RAM for lzma decoder 
+
 # 4.3.0
 
 * Added multithreaded decoding to XZDecoder. Passing an `XZMultithreadOptions`

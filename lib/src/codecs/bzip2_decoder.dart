@@ -87,6 +87,26 @@ class BZip2Decoder {
     return true;
   }
 
+  /// Allocates what one stream's blocks need.
+  ///
+  /// [BZip2ChunkedDecoder] walks the blocks itself, one per arrival of enough
+  /// input, so it sets this up rather than [decodeStream]
+  void beginStream(int blockSize100k) {
+    _blockSize100k = blockSize100k;
+    _tt = Uint32List(_blockSize100k * 100000);
+    _groupPos = 0;
+    _groupNo = 0;
+    _gSel = 0;
+    _gMinlen = 0;
+  }
+
+  /// Decodes one block whose 48 bit marker and stored check have already been
+  /// read, and returns that block's finalized check, or -1 if it is malformed
+  int decodeBlock(Bz2BitReader br, OutputStream output) {
+    final crc = _readCompressed(br, output);
+    return crc < 0 ? -1 : BZip2.finalizeCrc(crc);
+  }
+
   int _readBlockType(Bz2BitReader br) {
     var eos = true;
     var compressed = true;

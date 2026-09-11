@@ -119,10 +119,20 @@ void main() {
 Codecs that take data as it arrives expose a `Codec` with a converter for each
 direction, the shape `dart:io` uses for `gzip`.
 
-| codec | decoding | encoding |
-| --- | --- | --- |
-| xz | `xzCodec.decoder` | `xzCodec.encoder` (stores, does not compress) |
-| zstd | `zstdCodec.decoder` | `zstdCodec.encoder` |
+| codec | decoding                             | encoding                                     |
+|-------|--------------------------------------|----------------------------------------------|
+| xz    | `xzCodec.decoder`                    | `xzCodec.encoder` (stores, doesn't compress) |
+| zstd  | `zstdCodec.decoder`                  | `zstdCodec.encoder`                          |
+| bzip2 | `bzip2Codec.decoder`                 | `bzip2Codec.encoder`                         |
+| tar   | `tarCodec.decoder`                   | `tarCodec.encoder`                           |
+| zip   | `-- (impractical by format)*`        | `zipCodec.encoder**`                         |
+| zlib  | `-- (dart already has zlib.decoder)` | `-- (dart already has zlib.encoder)`         |
+| gzip  | `-- (dart already has gzip.decoder)` | `-- (dart already has gzip.encoder)`         |
+> *Zip stores its central directory at the end of the file so decode converter is of no use here. 
+> It needs to access data from the end of archive, while converter does not provide such access.
+> **ZipCodec for encoder uses `streamed = true` by default, this means it enabled 3 general purpose flag, CRC remains
+> filled with zeroes and goes to data descriptor with real data to consume less RAM. If default format is needed, use as 
+> const ZipCodec(streamed: false);
 
 Decoding as the bytes arrive, single-threaded, holding the window the archive
 asks for and one chunk rather than the archive:
@@ -134,6 +144,22 @@ import 'dart:io';
 await for (final piece
     in File('data.xz').openRead().transform(xzCodec.decoder)) {
   // piece is the next part of the decoded data
+}
+```
+
+A `.tar.zst` downloaded and unpacked as it arrives, without holding the body:
+
+```dart
+final request =
+    await HttpClient().getUrl(Uri.parse('https://example.com/data.tar.zst'));
+final HttpClientResponse response = await request.close();
+
+await for (final TarEntry entry in response
+    .transform(zstdCodec.decoder)
+    .transform(tarCodec.decoder)) {
+  if (entry.type == TarEntryType.file) {
+    await entry.content.pipe(File('out/${entry.name}').openWrite());
+  }
 }
 ```
 
@@ -151,6 +177,41 @@ await File('data')
     .pipe(out);
 ```
 
+A `.tar.zst` packed straight into an upload, with no temporary file:
+
+```dart
+Stream<ArchiveFile> filesOf(Directory dir) async* {
+  await for (final entity in dir.list(recursive: true)) {
+    if (entity is File) {
+      yield ArchiveFile.stream(
+          p.relative(entity.path, from: dir.path),
+          InputFileStream(entity.path));
+    }
+  }
+}
+
+final upload =
+    await HttpClient().putUrl(Uri.parse('https://example.com/backup'));
+upload.headers.contentType = ContentType('application', 'zstd');
+await upload.addStream(filesOf(Directory('data'))
+    .transform(tarCodec.encoder)      // Stream<ArchiveFile> -> Stream<List<int>>
+    .transform(zstdCodec.encoder));
+final response = await upload.close();
+```
+
+`zipCodec.encoder` packs the same `Stream<ArchiveFile>` with no second
+transform, since zip deflates each entry itself:
+
+```dart
+final upload =
+    await HttpClient().putUrl(Uri.parse('https://example.com/backup'));
+upload.headers.contentType = ContentType('application', 'zip');
+await upload.addStream(
+    filesOf(Directory('data')).transform(zipCodec.encoder));
+final response = await upload.close();
+```
+
+
 Both directions also take a whole buffer: `xzCodec.decode(bytes)` and
 `xzCodec.encode(bytes)`, or the sinks directly through
 `startChunkedConversion` for code that pushes rather than awaits.
@@ -162,6 +223,70 @@ worth about 6% of the decode.
 
 A failure reaches the stream as an error, and a sink that has failed reports the
 same failure rather than reading what follows it.
+
+### Running a codec off the UI isolate
+
+The converters are asynchronous in shape only: the work for a piece runs to
+completion synchronously. Longest single call over 3 MB fed in 16 KiB pieces,
+AOT on an Apple M-series:
+
+| call | worst single call |
+| --- | --- |
+| `zstdCodec.decoder` | 0.5 ms |
+| `ZstdEncoderConverter(level: 3)` | 1.3 ms |
+| `xzCodec.decoder` | 2.2 ms |
+| `BZip2DecoderConverter()`, 100k blocks | 5 ms |
+| `bzip2Codec.decoder`, 900k blocks | 34 ms |
+| `bzip2Codec.encoder`, 900k blocks | 73 ms |
+| `ZstdEncoderConverter(level: 19)` | 98 ms |
+| `zipCodec.encoder` | one entry: 4 ms per 256 KiB, 67 ms per 4 MiB |
+
+zip blocks for one whole entry, since deflate runs to the end of it in one go.
+tar is not in the table: reading 20000 entries costs 42 ms in total, so the
+cost of a `.tar.zst` is the zstd row. A frame is 16 ms at 60 Hz, so use an
+isolate for the lower half of that table and for anything large. Keep the whole pipeline on the worker, so only paths
+cross the boundary rather than every piece:
+
+```dart
+await Isolate.run(() async {
+  final out = File('data.tar').openWrite();
+  await File('data.tar.bz2').openRead().transform(bzip2Codec.decoder).pipe(out);
+});
+```
+
+### Recognizing a format from its first bytes
+
+`CodecsRecognizer` reads a header and says what wrote it, without decoding
+anything:
+
+```dart
+import 'package:archive/archive.dart';
+import 'dart:io';
+
+final head = await File('data.bin').openRead(0, CodecsRecognizer.headerBytes)
+    .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
+
+switch (CodecsRecognizer.recognize(head)) {
+  case ArchiveFormat.zstd:
+    // ...
+  case ArchiveFormat.xz:
+    // ...
+  default:
+    // ArchiveFormat.unknown
+}
+```
+
+Each format is also its own check: `isGZip`, `isZLib`, `isBZip2`, `isXZ`,
+`isZstd`, `isZip`, `isTar`.
+
+How much of the file is needed depends on the format: two bytes for zlib, three
+for gzip, four for bzip2, zstd and zip, six for xz. Only tar needs more, since a
+header written before the ustar versions carries no magic at all and is
+identified by the checksum over its whole 512 byte block. 263 bytes are enough
+for a ustar tar, `CodecsRecognizer.headerBytes` for any of them.
+
+Formats with no header of their own, raw LZMA and raw deflate among them, cannot
+be recognized this way.
 
 #### extractFileToDisk
 `extractFileToDisk` is a convenience function to extract the contents of

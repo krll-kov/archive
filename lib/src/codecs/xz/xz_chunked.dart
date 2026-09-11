@@ -139,6 +139,7 @@ class XzChunkedDecoder extends ChunkedSink {
       throw ArchiveException(
           'xz: stream padding is not a multiple of four bytes');
     }
+    _sink.flush();
   }
 
   /// Reads what has arrived, one field at a time, and returns as soon as a

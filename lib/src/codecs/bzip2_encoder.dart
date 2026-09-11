@@ -12,28 +12,47 @@ import 'bzip2/bzip2.dart';
 /// Compress data using the BZip2 format.
 /// Derived from libbzip2 (http://www.bzip.org).
 class BZip2Encoder {
-  Uint8List encodeBytes(List<int> data) {
+  Uint8List encodeBytes(List<int> data, {int blockSize100k = 9}) {
     final inputStream = InputMemoryStream(data, byteOrder: ByteOrder.bigEndian);
     final output = OutputMemoryStream(byteOrder: ByteOrder.bigEndian);
-    encodeStream(inputStream, output);
+    encodeStream(inputStream, output, blockSize100k: blockSize100k);
     return output.getBytes();
   }
 
   /// Alias for [encodeBytes], kept for backwards compatibility.
   List<int> encode(List<int> bytes) => encodeBytes(bytes);
 
-  bool encodeStream(InputStream input, OutputStream output) {
+  bool encodeStream(InputStream input, OutputStream output,
+      {int blockSize100k = 9}) {
     this.input = input;
-    bw = Bz2BitWriter(output);
+    beginStream(output, blockSize100k: blockSize100k);
+    while (!input.isEOS) {
+      var full = false;
+      while (!full && !input.isEOS) {
+        full = addByte(input.readByte());
+      }
+      if (!endBlock()) {
+        return false;
+      }
+    }
+    endStream();
+    return true;
+  }
 
-    final blockSize100k = 9;
+  /// Sets up what one stream's blocks need and writes the signature.
+  ///
+  /// [BZip2ChunkedEncoder] drives this, [addByte], [endBlock] and [endStream]
+  /// itself rather than pulling from an [InputStream], so what a stream writes
+  /// is what [encodeStream] writes for the same bytes
+  void beginStream(OutputStream output, {int blockSize100k = 9}) {
+    bw = Bz2BitWriter(output);
 
     bw.writeBytes(BZip2.bzhSignature);
     bw.writeByte(BZip2.hdr0 + blockSize100k);
 
     _nblockMax = 100000 * blockSize100k - 19;
     _workFactor = 30;
-    var combinedCRC = 0;
+    _combinedCRC = 0;
 
     var n = 100000 * blockSize100k;
     _arr1 = Uint32List(n);
@@ -62,51 +81,54 @@ class BZip2Encoder {
       _lenPack[i] = Uint32List(4);
     }
 
-    // Write blocks
-    while (!input.isEOS) {
-      final blockCRC = _writeBlock();
-      if (blockCRC < 0) {
-        return false;
-      }
-      combinedCRC = ((combinedCRC << 1) | (combinedCRC >> 31)) & 0xffffffff;
-      combinedCRC ^= blockCRC;
-      _blockNo++;
-    }
-
-    bw.writeBytes(BZip2.eosMagic);
-    bw.writeUint32(combinedCRC);
-    bw.flush();
-
-    return true;
+    _startBlock();
   }
 
-  int _writeBlock() {
-    _inUse = Uint8List(256);
+  /// Takes one byte into the block being built. True once the block is full,
+  /// which is when [endBlock] has to run before the next byte
+  bool addByte(int byte) {
+    _addCharToBlock(byte);
+    return _nblock >= _nblockMax;
+  }
 
-    _nblock = 0;
-    _blockCRC = BZip2.initialCrc;
-
-    // copy_input_until_stop
-    _stateInCh = 256;
-    _stateInLen = 0;
-    while (_nblock < _nblockMax && !input.isEOS) {
-      _addCharToBlock(input.readByte());
+  /// Codes the block built so far and folds its check into the stream's. A
+  /// block no byte reached is not written, since an empty one would still turn
+  /// the combined check
+  bool endBlock() {
+    if (_nblock == 0 && _stateInCh == 256) {
+      return true;
     }
-
     if (_stateInCh < 256) {
       _addPairToBlock();
     }
-
     _stateInCh = 256;
     _stateInLen = 0;
-
     _blockCRC = BZip2.finalizeCrc(_blockCRC);
-
     if (!_compressBlock()) {
-      return -1;
+      return false;
     }
+    _combinedCRC =
+        ((_combinedCRC << 1) | (_combinedCRC >> 31)) & 0xffffffff;
+    _combinedCRC ^= _blockCRC;
+    _blockNo++;
+    _startBlock();
+    return true;
+  }
 
-    return _blockCRC;
+  /// The end of stream marker, the combined check, and the padding that takes
+  /// the last byte whole
+  void endStream() {
+    bw.writeBytes(BZip2.eosMagic);
+    bw.writeUint32(_combinedCRC);
+    bw.flush();
+  }
+
+  void _startBlock() {
+    _inUse = Uint8List(256);
+    _nblock = 0;
+    _blockCRC = BZip2.initialCrc;
+    _stateInCh = 256;
+    _stateInLen = 0;
   }
 
   bool _compressBlock() {
@@ -2073,6 +2095,10 @@ class BZip2Encoder {
   late InputStream input;
   late Bz2BitWriter bw;
   late int _nblockMax;
+
+  /// The checks of the blocks written so far, rolled together the way the
+  /// footer names them
+  var _combinedCRC = 0;
   late int _stateInCh;
   late int _stateInLen;
   late int _nblock;

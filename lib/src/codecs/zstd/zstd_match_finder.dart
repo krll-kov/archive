@@ -162,6 +162,14 @@ class ZstdMatchFinder {
     return at - lowLimit > maxDistance ? at - maxDistance : lowLimit;
   }
 
+  /// `prefixStartIndex == dictStartIndex`: the two fastest loops drop back to
+  /// their plain variant when the window, measured from the end of the block,
+  /// has caught up with the segment boundary and left nothing outside it. The
+  /// deeper strategies have no such line and run their ext loop either way
+  @pragma('vm:prefer-inline')
+  bool _reaches(int end, int lowLimit) =>
+      prefixStart > _lowestFrom(end, lowLimit, 1 << params.windowLog);
+
   /// True while a dictionary the parse can still reach sits before the data.
   /// The reference then runs a loop of its own for every strategy, and the
   /// differences are all in how a candidate is admitted
@@ -318,6 +326,14 @@ class ZstdMatchFinder {
     }
   }
 
+  /// `ZSTD_window_update` on input that does not follow what came before: what
+  /// is already held becomes a segment of its own, reached from here on through
+  /// the ext paths, and insertion resumes at the cut
+  void cut(int at) {
+    prefixStart = at;
+    _nextToUpdate = at;
+  }
+
   /// Puts a dictionary's positions in this level's tables, so the first block
   /// can match into it rather than only through the repeat offsets it starts
   /// with. `ZSTD_loadDictionaryContent`
@@ -381,6 +397,12 @@ class ZstdMatchFinder {
       ZstdSequenceStore store, Uint32List rep) {
     store.reset();
     _skipping = false;
+    // `ZSTD_compress_frameChunk` raises the cursor to the window before the
+    // catch-up below weighs it, so a position the window has dropped never
+    // decides how far back the catch-up reaches
+    if (_nextToUpdate < lowLimit) {
+      _nextToUpdate = lowLimit;
+    }
     // `ZSTD_buildSeqStore`: a match running over the end of the last block
     // leaves the tables far behind, and only the last positions before this
     // one are worth catching up on
@@ -389,19 +411,18 @@ class ZstdMatchFinder {
       _nextToUpdate = start - (gap < 192 ? gap : 192);
     }
     final view = ByteData.sublistView(src);
+    // `ZSTD_matchState_dictMode`, which weighs the window as the block starts
     _ext = prefixStart > lowLimit;
     if (params.strategy == zstdStrategyOptimal) {
       _parseOptimal(src, view, start, end, lowLimit, store, rep);
     } else if (params.strategy == zstdStrategyFast) {
-      if (_ext) {
+      if (_reaches(end, lowLimit)) {
         _parseFastExt(src, view, start, end, lowLimit, store, rep);
       } else {
         _parseFast(src, view, start, end, lowLimit, store, rep);
       }
     } else if (params.strategy == zstdStrategyDouble) {
-      // `prefixStartIndex == dictStartIndex`: once the window has slid past a
-      // dictionary there is no outside segment left and the plain loop runs
-      if (_ext) {
+      if (_reaches(end, lowLimit)) {
         _parseDoubleExt(src, view, start, end, lowLimit, store, rep);
       } else {
         _parseDouble(src, view, start, end, lowLimit, store, rep);
@@ -434,8 +455,10 @@ class ZstdMatchFinder {
     var rep0 = rep[0];
     var rep1 = rep[1];
     // A repeat that reaches outside the window is not usable here, and zero
-    // says so without a bounds test in the loop
-    final maxRep = ip0 - lowLimit;
+    // says so without a bounds test in the loop. `ZSTD_getLowestPrefixIndex`
+    // measures from where the block starts, not from where it ends, and stops
+    // at the segment the data is in rather than at the whole window
+    final maxRep = ip0 - _prefixFrom(_lowestFrom(ip0, lowLimit, maxDistance));
     var saved0 = 0;
     var saved1 = 0;
     final table = _hashTable;
@@ -636,8 +659,11 @@ class ZstdMatchFinder {
         final repeat = ip2 - rep0;
         current0 = ip0;
         table[hash0] = ip0 + 1;
+        // `(U32)(prefixStartIndex - repIndex) >= 4`, which rejects a repeat
+        // landing on the boundary as well as one straddling it. Every other
+        // site in the reference takes the boundary itself
         if (rep0 > 0 &&
-            !_spansDictionary(repeat) &&
+            (repeat <= prefix - 4 || repeat > prefix) &&
             view.getUint32(ip2, Endian.little) ==
                 view.getUint32(repeat, Endian.little)) {
           ip0 = ip2;
@@ -695,7 +721,8 @@ class ZstdMatchFinder {
         rep0 = current0 - match;
         code = rep0 + 3;
         length = zstdMinMatch;
-        final low = match < prefix ? lowLimit : prefix;
+        // `dictStart`, which is the window as the end of the block leaves it
+        final low = match < prefix ? floor : prefix;
         while (ip0 > anchor && match > low && src[ip0 - 1] == src[match - 1]) {
           ip0--;
           match--;
@@ -892,7 +919,8 @@ class ZstdMatchFinder {
         : start;
     var rep0 = rep[0];
     var rep1 = rep[1];
-    final maxRep = ip - lowLimit;
+    // `ZSTD_getLowestPrefixIndex` again, measured from where the block starts
+    final maxRep = ip - _prefixFrom(_lowestFrom(ip, lowLimit, maxDistance));
     var saved0 = 0;
     var saved1 = 0;
     if (rep1 > maxRep) {
@@ -1514,6 +1542,9 @@ class ZstdMatchFinder {
   void _sortDubt(Uint8List src, ByteData view, int curr, int lowLimit, int end,
       int tries, int btLow) {
     final ip = curr - _lift;
+    // A node outside the data is compared only as far as the segment it sits
+    // in reaches, since the reference holds that segment in a buffer of its own
+    final iend = ip < prefixStart ? prefixStart : end;
     final reach = 1 << params.windowLog;
     final valid = lowLimit + _lift;
     final windowLow = curr - valid > reach ? curr - reach : valid;
@@ -1529,9 +1560,9 @@ class ZstdMatchFinder {
       final at = match - _lift;
       final child = (match & _btMask) << 1;
       var length = smallerLength < largerLength ? smallerLength : largerLength;
-      length += _extend(src, view, ip + length, at + length, end);
+      length += _extend(src, view, ip + length, at + length, iend);
       // Equal to the end of the input, so which side it belongs on is unknown
-      if (ip + length == end) {
+      if (ip + length == iend) {
         break;
       }
       if (src[at + length] < src[ip + length]) {

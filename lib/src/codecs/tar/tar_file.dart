@@ -353,3 +353,168 @@ class TarFile {
     _writeString(output, s, numBytes);
   }
 }
+
+/// What the headers carrying no data of their own say about the entry that
+/// follows: GNU long names and links, and PAX extended records. Both
+/// `TarDecoder` and the streamed reader walk them, so they live here
+class TarMetadata {
+  static const _space = 0x20;
+  static const _equals = 0x3d;
+  static const _newline = 0x0a;
+
+  String? name;
+  String? linkName;
+  int? modTime;
+  int? ownerId;
+  int? groupId;
+
+  /// A PAX size record, read before the entry whose length it gives
+  int? size;
+
+  /// True where [file] is one of those headers rather than an entry
+  static bool describesNext(TarFile file) =>
+      file.filename == '././@LongLink' ||
+      file.typeFlag == TarFile.longName ||
+      file.typeFlag == TarFile.longLinkName ||
+      file.typeFlag == TarFile.gExHeader ||
+      file.typeFlag == TarFile.gExHeader2 ||
+      file.typeFlag == TarFile.exHeader ||
+      file.typeFlag == TarFile.exHeader2;
+
+  /// Takes what such a header carries, its content already in `rawContent`
+  bool take(TarFile file) {
+    // GNU tar puts filenames in files when they exceed tar's native length.
+    // Both kinds are named '././@LongLink', so only the type flag says
+    // whether the content is the next entry's name or its link target.
+    if (file.filename == '././@LongLink' ||
+        file.typeFlag == TarFile.longName ||
+        file.typeFlag == TarFile.longLinkName) {
+      if (file.typeFlag == TarFile.longLinkName) {
+        linkName = file.rawContent!.readString();
+      } else {
+        name = file.rawContent!.readString();
+      }
+      return true;
+    }
+    if (file.typeFlag == TarFile.gExHeader ||
+        file.typeFlag == TarFile.gExHeader2) {
+      // TODO handle PAX global header.
+      return true;
+    }
+    if (file.typeFlag == TarFile.exHeader ||
+        file.typeFlag == TarFile.exHeader2) {
+      _readRecords(file.rawContent!.toUint8List());
+      return true;
+    }
+    return false;
+  }
+
+  /// Puts it on the entry it described, then forgets it: one entry only
+  void applyTo(TarFile file) {
+    size = null;
+    if (name != null) {
+      file.filename = name!;
+      name = null;
+    }
+    if (linkName != null) {
+      file.nameOfLinkedFile = linkName;
+      linkName = null;
+    }
+    if (modTime != null) {
+      file.lastModTime = modTime!;
+      modTime = null;
+    }
+    if (ownerId != null) {
+      file.ownerId = ownerId!;
+      ownerId = null;
+    }
+    if (groupId != null) {
+      file.groupId = groupId!;
+      groupId = null;
+    }
+  }
+
+  /// Records are "%d %s=%s\n", the length covering the whole record. Walked by
+  /// that length rather than split on newlines, and not decoded as UTF-8 up
+  /// front: SCHILY.xattr and its kind hold raw bytes with embedded newlines
+  void _readRecords(List<int> records) {
+    var pos = 0;
+    while (pos < records.length) {
+      // The length field, terminated by a space.
+      var sp = pos;
+      while (sp < records.length && records[sp] != _space) {
+        sp++;
+      }
+      if (sp == records.length) {
+        break;
+      }
+      final length = int.tryParse(String.fromCharCodes(records, pos, sp));
+      // A record has to at least hold the length field and its space,
+      // and can't run past the end of the header.
+      if (length == null ||
+          length <= sp - pos + 1 ||
+          pos + length > records.length) {
+        break;
+      }
+      final recordEnd = pos + length;
+      pos = recordEnd;
+
+      // The keyword, terminated by '='. Keywords are portable
+      // characters, so decoding them as ASCII is safe.
+      var eq = sp + 1;
+      while (eq < recordEnd && records[eq] != _equals) {
+        eq++;
+      }
+      if (eq == recordEnd) {
+        continue;
+      }
+      final keyword = String.fromCharCodes(records, sp + 1, eq);
+      if (keyword != 'path' &&
+          keyword != 'linkpath' &&
+          keyword != 'size' &&
+          keyword != 'mtime' &&
+          keyword != 'uid' &&
+          keyword != 'gid') {
+        // TODO: support other pax headers.
+        continue;
+      }
+
+      // The value runs to the end of the record, minus the newline.
+      var valueEnd = recordEnd;
+      if (records[valueEnd - 1] == _newline) {
+        valueEnd--;
+      }
+      // The values of these keywords are UTF-8, but don't let a malformed
+      // one abort the whole archive.
+      final value = utf8.decode(records.sublist(eq + 1, valueEnd),
+          allowMalformed: true);
+      switch (keyword) {
+        case 'path':
+          name = value;
+          break;
+        case 'linkpath':
+          linkName = value;
+          break;
+        case 'size':
+          // A pax size record overrides the header's own field, which is
+          // how a file of 8GB or more is stored in this format.
+          size = int.tryParse(value);
+          break;
+        case 'mtime':
+          // Stored as seconds, with an optional fractional part that the
+          // archive has nowhere to keep. Truncated off the string rather
+          // than through a double, which for a long enough fraction would
+          // round up and report the wrong second.
+          final dot = value.indexOf('.');
+          modTime = int.tryParse(dot < 0 ? value : value.substring(0, dot));
+          break;
+        case 'uid':
+          ownerId = int.tryParse(value);
+          break;
+        case 'gid':
+          groupId = int.tryParse(value);
+          break;
+      }
+    }
+  }
+}

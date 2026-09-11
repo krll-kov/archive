@@ -125,8 +125,10 @@ class ArchiveFile {
   ArchiveFile.noData(this.name) : mode = 0x1a4;
 
   /// A directory, usually representing an empty directory in an archive.
+  /// 0755 rather than the 0644 a file gets: without the execute bit the
+  /// directory cannot be entered once it is unpacked
   ArchiveFile.directory(this.name)
-      : mode = 0x1a4,
+      : mode = 0x1ed,
         isFile = false;
 
   /// Helper constructor to define a file storing the given [data], which

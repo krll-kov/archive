@@ -26,6 +26,10 @@ class _ZipFileData {
   int compressedSize = 0;
   int uncompressedSize = 0;
   InputStream? compressedData;
+
+  /// Set instead of [compressedData] where the entry is deflated straight into
+  /// the output rather than into a buffer first
+  InputStream? source;
   CompressionType compression = CompressionType.deflate;
   String? comment = '';
   int position = 0;
@@ -74,7 +78,23 @@ class ZipEncoder {
   final Random _random = Random.secure();
   final String? password;
 
-  ZipEncoder({this.filenameEncoding = const Utf8Codec(), this.password});
+  /// Deflates an entry straight into the output instead of into a buffer, and
+  /// writes its check and its sizes behind the data rather than in front of
+  /// it, which is what general purpose bit 3 is for. The peak is then one
+  /// deflate buffer rather than the largest entry.
+  ///
+  /// It costs a second pass over the source for the check, and an entry of
+  /// 4 GB or more still goes through a buffer, since the lengths behind the
+  /// data would have to be zip64. Off by default: the bytes differ from what
+  /// [encodeBytes] has always written
+  final bool streamed;
+
+  ZipEncoder(
+      {this.filenameEncoding = const Utf8Codec(),
+      this.password,
+      this.streamed = false});
+
+  static const _dataDescriptorSignature = 0x08074b50;
 
   /// Bit 1 of the general purpose flag, File encryption flag
   static const fileEncryptionBit = 1;
@@ -212,6 +232,11 @@ class ZipEncoder {
     int crc32 = 0;
 
     var compressionType = entry.compression ?? CompressionType.deflate;
+    // A directory carries no data, and naming a compression for it leaves a
+    // reader inflating nothing
+    if (!entry.isFile) {
+      compressionType = CompressionType.none;
+    }
 
     if (entry.isFile) {
       final file = entry;
@@ -242,7 +267,12 @@ class ZipEncoder {
         // Otherwise we need to compress it now.
         crc32 = getFileCrc32(file);
 
-        if (compressionType == CompressionType.deflate) {
+        if (streamed &&
+            compressionType == CompressionType.deflate &&
+            password == null &&
+            entry.size <= 0xFFFFFFFF) {
+          fileData.source = file.rawContent?.getStream(decompress: false);
+        } else if (compressionType == CompressionType.deflate) {
           final content = file.rawContent;
           final output = OutputMemoryStream();
           platformZLibEncoder.encodeStream(
@@ -292,6 +322,8 @@ class ZipEncoder {
         (salt?.length ?? 0) +
         (_mac?.length ?? 0) +
         (_pwdVer?.length ?? 0);
+    // Not known until the deflate has run, and filled in by _writeFile
+    final deferred = fileData.source != null;
 
     _data.localFileSize += 30 + encodedFilename.length + dataLen;
 
@@ -299,7 +331,7 @@ class ZipEncoder {
         46 + encodedFilename.length + (comment != null ? comment.length : 0);
 
     fileData.crc32 = crc32;
-    fileData.compressedSize = dataLen;
+    fileData.compressedSize = deferred ? 0 : dataLen;
     fileData.compressedData = compressedData;
     fileData.uncompressedSize = entry.size;
     fileData.compression = compressionType;
@@ -308,7 +340,13 @@ class ZipEncoder {
 
     _writeFile(fileData, _output!, salt: salt);
 
+    if (deferred) {
+      // 30 for the local header, 16 for the descriptor behind the data
+      _data.localFileSize += 46 + encodedFilename.length +
+          fileData.compressedSize;
+    }
     fileData.compressedData = null;
+    fileData.source = null;
 
     /*if (entry.isDirectory) {
       for (final file in entry) {
@@ -374,6 +412,10 @@ class ZipEncoder {
         fileData.uncompressedSize > 0xFFFFFFFF;
 
     var flags = 0;
+    // General purpose bit 3: the check and the sizes follow the data
+    if (fileData.source != null) {
+      flags |= 0x08;
+    }
     if (filenameEncoding.name == "utf-8") {
       flags |= languageEncodingBitUtf8;
     }
@@ -390,10 +432,13 @@ class ZipEncoder {
                 : ZipFile.zipCompressionStore;
     final lastModFileTime = fileData.time;
     final lastModFileDate = fileData.date;
-    final crc32 = fileData.crc32;
-    final compressedSize = needsZip64 ? 0xFFFFFFFF : fileData.compressedSize;
+    // With bit 3 the three of them are zero here and carried behind the data
+    final deferred = fileData.source != null;
+    final crc32 = deferred ? 0 : fileData.crc32;
+    final compressedSize =
+        deferred ? 0 : (needsZip64 ? 0xFFFFFFFF : fileData.compressedSize);
     final uncompressedSize =
-        needsZip64 ? 0xFFFFFFFF : fileData.uncompressedSize;
+        deferred ? 0 : (needsZip64 ? 0xFFFFFFFF : fileData.uncompressedSize);
 
     final extra = <int>[];
     if (needsZip64) {
@@ -426,7 +471,18 @@ class ZipEncoder {
       output.writeBytes(_pwdVer!);
     }
 
-    if (compressedData != null) {
+    if (fileData.source != null) {
+      // Deflated straight into the output, so its length is only known once it
+      // is there, and it goes into the descriptor behind the data
+      final before = output.length;
+      platformZLibEncoder.encodeStream(fileData.source!, output,
+          level: _data.level ?? 6, raw: true);
+      fileData.compressedSize = output.length - before;
+      output.writeUint32(_dataDescriptorSignature);
+      output.writeUint32(fileData.crc32);
+      output.writeUint32(fileData.compressedSize);
+      output.writeUint32(fileData.uncompressedSize);
+    } else if (compressedData != null) {
       // local file data
       output.writeStream(compressedData);
     }

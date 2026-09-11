@@ -162,6 +162,7 @@ void main() {
       final out = SinkOutputStream(held);
       final buffer = Uint8List.fromList([1, 2, 3, 4]);
       out.writeRange(buffer, 0, 4);
+      out.flush();
       buffer.fillRange(0, 4, 9);
       expect(held.bytes, [1, 2, 3, 4]);
       expect(out.written, 4);
@@ -175,7 +176,8 @@ void main() {
         ..divert = buffer
         ..writeBytes([1, 2, 3])
         ..divert = null
-        ..writeBytes([4, 5]);
+        ..writeBytes([4, 5])
+        ..flush();
       expect(buffer.getBytes(), [1, 2, 3]);
       expect(held.bytes, [4, 5]);
       expect(out.written, 5);
@@ -187,14 +189,17 @@ void main() {
       SinkOutputStream(held)
         ..watch = ((piece) => seen.addAll(piece))
         ..writeBytes([7, 8])
-        ..writeByte(9);
+        ..writeByte(9)
+        ..flush();
       expect(seen, [7, 8, 9]);
       expect(held.bytes, [7, 8, 9]);
     });
 
     test('reset only clears the count', () {
       final held = _Held();
-      final out = SinkOutputStream(held)..writeBytes([1, 2, 3]);
+      final out = SinkOutputStream(held)
+        ..writeBytes([1, 2, 3])
+        ..flush();
       expect(out.written, 3);
       out.reset();
       expect(out.written, 0);

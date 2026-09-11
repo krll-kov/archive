@@ -93,6 +93,10 @@ class ZstdBlockEncoder {
     _finder.dictionaryEnd = 0;
   }
 
+  /// `ZSTD_window_update` on input that does not follow the last: what sits
+  /// before [at] becomes an outside segment
+  void cut(int at) => _finder.cut(at);
+
   /// What a slide of the source buffer has to be a multiple of for the tables
   /// to survive it
   int get slideStep => _finder.slideStep;
@@ -101,8 +105,7 @@ class ZstdBlockEncoder {
   /// the bytes it holds spare
   int get slideCost => _finder.slideCost;
 
-  /// Moves every position this frame has stored down by [delta], which is what
-  /// lets a caller drop the front of the buffer once the window has left it
+  /// Lets a caller drop the front of the buffer once the window has left it
   void slide(int delta) {
     _finder.slide(delta);
     _ldm?.slide(delta);

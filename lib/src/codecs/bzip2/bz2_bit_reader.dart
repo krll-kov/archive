@@ -8,6 +8,10 @@ class Bz2BitReader {
 
   int readByte() => readBits(8);
 
+  /// Bits still unread in the byte being taken apart, which is what a caller
+  /// resuming at a bit that is not on a byte boundary has to account for
+  int get bitsLeft => _bitPos;
+
   /// Read a number of bits from the input stream.
   int readBits(int numBits) {
     if (numBits == 0) {
