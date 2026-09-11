@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'zstd_bit_writer.dart';
 import 'zstd_constants.dart';
 import 'zstd_fse.dart';
+import 'zstd_web.dart';
 
 class ZstdFseEncoderException implements Exception {
   final String message;
@@ -60,6 +61,7 @@ bool zstdNormalizeCount(Int16List into, Uint32List counts, int total,
   final scale = 62 - accuracyLog;
   final step = (1 << 62) ~/ total;
   final vStep = 1 << (scale - 20);
+  final webScale = zstdUse64Bit ? null : ZstdFseScale.normalize(total, accuracyLog);
   var left = 1 << accuracyLog;
   var largest = 0;
   var largestPoints = 0;
@@ -78,10 +80,15 @@ bool zstdNormalizeCount(Int16List into, Uint32List counts, int total,
       left--;
       continue;
     }
-    final scaled = count * step;
-    var points = scaled >> scale;
-    if (points < 8 && scaled - (points << scale) > vStep * _roundUpAt[points]) {
-      points++;
+    int points;
+    if (webScale == null) {
+      final scaled = count * step;
+      points = scaled >> scale;
+      if (points < 8 && scaled - (points << scale) > vStep * _roundUpAt[points]) {
+        points++;
+      }
+    } else {
+      points = webScale.probability(count, _roundUpAt);
     }
     if (points > largestPoints) {
       largestPoints = points;
@@ -166,6 +173,20 @@ void _spreadRemainder(Int16List into, Uint32List counts, int total,
     return;
   }
   final stepLog = 62 - accuracyLog;
+  if (!zstdUse64Bit) {
+    final scale = ZstdFseScale.remainder(left, toGive, accuracyLog);
+    for (var s = 0; s <= maxSymbol; s++) {
+      if (into[s] == notYet) {
+        final weight = scale.advance(counts[s]);
+        if (weight < 1) {
+          throw ZstdFseEncoderException(
+              'Accuracy of $accuracyLog is too small for $maxSymbol symbols');
+        }
+        into[s] = weight;
+      }
+    }
+    return;
+  }
   final mid = (1 << (stepLog - 1)) - 1;
   final step = ((1 << stepLog) * toGive + mid) ~/ left;
   var running = mid;
@@ -277,7 +298,7 @@ class ZstdFseCTable {
 
   /// `FSE_symbolCompressionTransform`, which the reference reads as one eight
   /// byte value: the bit delta in the high half, the state delta in the low
-  final Int64List symbolTT;
+  final TypedData symbolTT;
   int accuracyLog = 0;
 
   /// The highest symbol this table was built for, above which its deltas hold
@@ -286,7 +307,7 @@ class ZstdFseCTable {
 
   ZstdFseCTable(int maxLog, int maxSymbolCount)
       : nextState = Uint16List(1 << maxLog),
-        symbolTT = Int64List(maxSymbolCount);
+        symbolTT = zstdUse64Bit ? Int64List(maxSymbolCount) : Int32List(maxSymbolCount * 2);
 
   void build(Int16List counts, int maxSymbol, int accuracyLog, Uint8List spread,
       Uint16List scratch, Uint32List cumulative) {
@@ -324,17 +345,32 @@ class ZstdFseCTable {
         find = total - count;
         total += count;
       }
-      symbolTT[s] = (bits << 32) | (find & 0xffffffff);
+      if (zstdUse64Bit) {
+        (symbolTT as Int64List)[s] = (bits << 32) | (find & 0xffffffff);
+      } else {
+        final table = symbolTT as Int32List;
+        table[s * 2] = bits;
+        table[s * 2 + 1] = find;
+      }
     }
   }
 
   /// `FSE_getMaxNbBits`: the widest this symbol can be, in whole bits
-  int maxBits(int symbol) => ((symbolTT[symbol] >> 32) + (1 << 16) - 1) >> 16;
+  int maxBits(int symbol) =>
+      ((zstdUse64Bit ? (symbolTT as Int64List)[symbol] >> 32 :
+          (symbolTT as Int32List)[symbol * 2]) + (1 << 16) - 1) >> 16;
 
   /// The state the last symbol of a stream starts from, which costs no bits
   @pragma('vm:prefer-inline')
   int initialState(int symbol) {
-    final packed = symbolTT[symbol];
+    if (!zstdUse64Bit) {
+      final table = symbolTT as Int32List;
+      final delta = table[symbol * 2];
+      final nbBits = (delta + (1 << 15)) >> 16;
+      final value = (nbBits << 16) - delta;
+      return nextState[(value >> nbBits) + table[symbol * 2 + 1]];
+    }
+    final packed = (symbolTT as Int64List)[symbol];
     final delta = packed >> 32;
     final nbBits = (delta + (1 << 15)) >> 16;
     final value = (nbBits << 16) - delta;
@@ -345,7 +381,8 @@ class ZstdFseCTable {
   /// probability at all reads as one bit past the accuracy, which is the value
   /// the caller compares against to reject a table it cannot use
   int bitCost(int symbol) {
-    final delta = symbolTT[symbol] >> 32;
+    final delta = zstdUse64Bit ? (symbolTT as Int64List)[symbol] >> 32 :
+        (symbolTT as Int32List)[symbol * 2];
     final least = delta >> 16;
     final beyond = ((least + 1) << 16) - (delta + (1 << accuracyLog));
     return ((least + 1) << 8) - ((beyond << 8) >> accuracyLog);
@@ -356,7 +393,13 @@ class ZstdFseCTable {
   /// Writes the bits [state] owes and returns the state [symbol] leads to
   @pragma('vm:prefer-inline')
   int encode(ZstdBitWriter out, int state, int symbol) {
-    final packed = symbolTT[symbol];
+    if (!zstdUse64Bit) {
+      final table = symbolTT as Int32List;
+      final nbBits = ((state + table[symbol * 2]) >> 16) & 63;
+      out.add(state, nbBits);
+      return nextState[(state >> nbBits) + table[symbol * 2 + 1]];
+    }
+    final packed = (symbolTT as Int64List)[symbol];
     final nbBits = ((state + (packed >> 32)) >> 16) & 63;
     out.add(state, nbBits);
     return nextState[(state >> nbBits) + ((packed << 32) >> 32)];

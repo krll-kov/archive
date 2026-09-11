@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'zstd_web.dart';
 
 import 'zstd_constants.dart';
 import 'zstd_ldm.dart';
@@ -14,20 +15,21 @@ const zstdMinMatch = 4;
 const zstdMatchLengthFloor = 3;
 
 /// Constants of the byte at a time compare that tests a whole row of tags
-const _x01 = 0x0101010101010101;
-const _x80 = 0x8080808080808080;
-const _gather = 0x0002040810204081;
+const _x01 = (0x01010101 << 32) | 0x01010101;
+const _x80 = (0x80808080 << 32) | 0x80808080;
+const _gather = (0x00020408 << 32) | 0x10204081;
 
 /// One multiply per key, the reference's own primes. The key is the top
 /// `hashBytes` of a little endian eight byte read, shifted up so the bytes it
 /// does not use fall off the bottom
 const _primes = [
   0, 0, 0, 0, 2654435761, 889523592379, //
-  227718039650203, 58295818150454627, 0xCF1BBCDCB7A56463
+  227718039650203, (0x00cf1bbc << 32) | 0xdcbfa563,
+  (0xcf1bbcdc << 32) | 0xb7a56463
 ];
 
 /// The key of the double parse's long table, always over eight bytes
-const _longPrime = 0xCF1BBCDCB7A56463;
+const _longPrime = (0xcf1bbcdc << 32) | 0xb7a56463;
 
 /// The optimal parse's own three byte table, which is what lets a level with a
 /// minimum match of three find one
@@ -49,7 +51,7 @@ const _searchTree = 2;
 
 /// A de Bruijn sequence and its table, since `int.bitLength` on a value the
 /// compiler cannot prove is a Smi becomes a call through the dispatch table
-const _deBruijn = 0x022fdd63cc95386d;
+const _deBruijn = (0x022fdd63 << 32) | 0xcc95386d;
 
 /// Where the one set bit of a value sits, indexed by `(v * _deBruijn) >>> 58`
 const _slots = <int>[
@@ -102,7 +104,7 @@ class ZstdMatchFinder {
   /// A row of positions, its tags packed eight to a word, and the slot the
   /// last insertion took
   final Uint32List _rows;
-  final Uint64List _tags;
+  final TypedData _tags;
   final Uint8List _tagBytes;
   final int _tagByteXor = Endian.host == Endian.little ? 0 : 7;
 
@@ -186,10 +188,11 @@ class ZstdMatchFinder {
   bool _skipping = false;
 
   ZstdMatchFinder(ZstdLevelParams params)
-      : this._(params, Uint64List(
-            _usesRows(params) ? 1 << (params.hashLog - 3) : 1));
+      : this._(params, zstdUse64Bit
+            ? Uint64List(_usesRows(params) ? 1 << (params.hashLog - 3) : 1)
+            : Uint8List(_usesRows(params) ? 1 << params.hashLog : 8));
 
-  ZstdMatchFinder._(this.params, Uint64List tags)
+  ZstdMatchFinder._(this.params, TypedData tags)
       : _tags = tags,
         _tagBytes = tags.buffer.asUint8List(),
         _hashTable = Uint32List(_usesTable(params) ? 1 << params.hashLog : 1),
@@ -206,8 +209,10 @@ class ZstdMatchFinder {
         _minMatch = params.hashBytes == 3 ? 3 : zstdMinMatch,
         _tries = _triesFor(params),
         _shift = 64 - params.hashLog,
-        _keyMul = _primes[params.hashBytes < 4 ? 4 : params.hashBytes] <<
-            (64 - ((params.hashBytes < 4 ? 4 : params.hashBytes) << 3)),
+        _keyMul = zstdUse64Bit
+            ? _primes[params.hashBytes < 4 ? 4 : params.hashBytes] <<
+                (64 - ((params.hashBytes < 4 ? 4 : params.hashBytes) << 3))
+            : (params.hashBytes < 4 ? 4 : params.hashBytes),
         _rowLog = _rowLogFor(params),
         _rowEntries = 1 << _rowLogFor(params),
         _rowMask = (1 << _rowLogFor(params)) - 1,
@@ -265,7 +270,12 @@ class ZstdMatchFinder {
     _hashTable.fillRange(0, _hashTable.length, 0);
     _chain.fillRange(0, _chain.length, 0);
     _rows.fillRange(0, _rows.length, 0);
-    _tags.fillRange(0, _tags.length, 0);
+    if (zstdUse64Bit) {
+      final tags = _tags as Uint64List;
+      tags.fillRange(0, tags.length, 0);
+    } else {
+      _tagBytes.fillRange(0, _tagBytes.length, 0);
+    }
     _nextToUpdate = 0;
     _nextShort = 0;
     _short.fillRange(0, _short.length, 0);
@@ -367,6 +377,11 @@ class ZstdMatchFinder {
       final longShift = 64 - params.hashLog;
       final shortShift = 64 - params.chainLog;
       for (var at = from; at + step - 1 <= limit; at += step) {
+        if (!zstdUse64Bit) {
+          _hashTable[_longKey(view, at, longShift)] = at + 1;
+          _chain[_keyTo(view, at, shortShift)] = at + 1;
+          continue;
+        }
         final word = view.getUint64(at, Endian.little);
         _hashTable[(word * _longPrime) >>> longShift] = at + 1;
         _chain[(word * _keyMul) >>> shortShift] = at + 1;
@@ -792,10 +807,8 @@ class ZstdMatchFinder {
       // The position the tables took this pass, which the insertion after a
       // match measures from rather than from where the match was finally placed
       final curr = ip;
-      final shortSlot = (view.getUint64(ip, Endian.little) * _keyMul) >>>
-          shortShift;
-      final longSlot =
-          (view.getUint64(ip, Endian.little) * _longPrime) >>> longShift;
+      final shortSlot = _keyTo(view, ip, shortShift);
+      final longSlot = _longKey(view, ip, longShift);
       final shortHit = _chain[shortSlot] - 1;
       final longHit = _hashTable[longSlot] - 1;
       _chain[shortSlot] = ip + 1;
@@ -810,9 +823,7 @@ class ZstdMatchFinder {
         length = 4 + _extend(src, view, ip + 5, repeat + 4, end);
         ip++;
         store.add(src, anchor, ip - anchor, 1, length - zstdMatchLengthFloor);
-      } else if (longHit > floor &&
-          view.getUint64(longHit, Endian.little) ==
-              view.getUint64(ip, Endian.little)) {
+      } else if (longHit > floor && _same8(view, longHit, ip)) {
         length = 8 + _extend(src, view, ip + 8, longHit + 8, end);
         var match = longHit;
         final low = match < prefix ? lowLimit : prefix;
@@ -828,14 +839,11 @@ class ZstdMatchFinder {
       } else if (shortHit > floor &&
           view.getUint32(shortHit, Endian.little) ==
               view.getUint32(ip, Endian.little)) {
-        final aheadSlot =
-            (view.getUint64(ip + 1, Endian.little) * _longPrime) >>> longShift;
+        final aheadSlot = _longKey(view, ip + 1, longShift);
         final ahead = _hashTable[aheadSlot] - 1;
         _hashTable[aheadSlot] = ip + 2;
         var match = shortHit;
-        if (ahead > floor &&
-            view.getUint64(ahead, Endian.little) ==
-                view.getUint64(ip + 1, Endian.little)) {
+        if (ahead > floor && _same8(view, ahead, ip + 1)) {
           length = 8 + _extend(src, view, ip + 9, ahead + 8, end);
           ip++;
           match = ahead;
@@ -863,14 +871,10 @@ class ZstdMatchFinder {
       if (ip <= ilimit) {
         // The two positions the match ran over, and the two before its end
         final inside = curr + 2;
-        _hashTable[(view.getUint64(inside, Endian.little) * _longPrime) >>>
-            longShift] = inside + 1;
-        _hashTable[(view.getUint64(ip - 2, Endian.little) * _longPrime) >>>
-            longShift] = ip - 1;
-        _chain[(view.getUint64(inside, Endian.little) * _keyMul) >>>
-            shortShift] = inside + 1;
-        _chain[(view.getUint64(ip - 1, Endian.little) * _keyMul) >>>
-            shortShift] = ip;
+        _hashTable[_longKey(view, inside, longShift)] = inside + 1;
+        _hashTable[_longKey(view, ip - 2, longShift)] = ip - 1;
+        _chain[_keyTo(view, inside, shortShift)] = inside + 1;
+        _chain[_keyTo(view, ip - 1, shortShift)] = ip;
 
         while (ip <= ilimit) {
           final held = ip - rep1;
@@ -885,10 +889,8 @@ class ZstdMatchFinder {
           rep1 = rep0;
           rep0 = swap;
           store.add(src, anchor, 0, 1, more - zstdMatchLengthFloor);
-          _chain[(view.getUint64(ip, Endian.little) * _keyMul) >>> shortShift] =
-              ip + 1;
-          _hashTable[(view.getUint64(ip, Endian.little) * _longPrime) >>>
-              longShift] = ip + 1;
+          _chain[_keyTo(view, ip, shortShift)] = ip + 1;
+          _hashTable[_longKey(view, ip, longShift)] = ip + 1;
           ip += more;
           anchor = ip;
         }
@@ -939,8 +941,7 @@ class ZstdMatchFinder {
       if (ip1 > ilimit) {
         break;
       }
-      var longSlot = (view.getUint64(ip, Endian.little) * _longPrime) >>>
-          longShift;
+      var longSlot = _longKey(view, ip, longShift);
       var heldLong = _hashTable[longSlot];
 
       var match = -1;
@@ -951,8 +952,7 @@ class ZstdMatchFinder {
       var stored = false;
 
       do {
-        final shortSlot =
-            (view.getUint64(ip, Endian.little) * _keyMul) >>> shortShift;
+        final shortSlot = _keyTo(view, ip, shortShift);
         final heldShort = _chain[shortSlot];
         here = ip;
         _hashTable[longSlot] = ip + 1;
@@ -970,13 +970,11 @@ class ZstdMatchFinder {
           break;
         }
 
-        longSlot1 = (view.getUint64(ip1, Endian.little) * _longPrime) >>>
-            longShift;
+        longSlot1 = _longKey(view, ip1, longShift);
 
         if (heldLong != 0 &&
             heldLong - 1 >= floor &&
-            view.getUint64(heldLong - 1, Endian.little) ==
-                view.getUint64(ip, Endian.little)) {
+            _same8(view, heldLong - 1, ip)) {
           match = heldLong - 1;
           length = 8 + _extend(src, view, ip + 8, match + 8, end);
           while (ip > anchor && match > floor && src[ip - 1] == src[match - 1]) {
@@ -1000,8 +998,7 @@ class ZstdMatchFinder {
           // longer one position on
           // The reference tests this one strictly, unlike the two above it
           if (heldLong1 - 1 > floor &&
-              view.getUint64(heldLong1 - 1, Endian.little) ==
-                  view.getUint64(ip1, Endian.little)) {
+              _same8(view, heldLong1 - 1, ip1)) {
             final other = 8 + _extend(src, view, ip1 + 8, heldLong1 - 1 + 8, end);
             if (other > length) {
               ip = ip1;
@@ -1047,14 +1044,10 @@ class ZstdMatchFinder {
 
       if (ip <= ilimit) {
         final inside = here + 2;
-        _hashTable[(view.getUint64(inside, Endian.little) * _longPrime) >>>
-            longShift] = inside + 1;
-        _hashTable[(view.getUint64(ip - 2, Endian.little) * _longPrime) >>>
-            longShift] = ip - 1;
-        _chain[(view.getUint64(inside, Endian.little) * _keyMul) >>>
-            shortShift] = inside + 1;
-        _chain[(view.getUint64(ip - 1, Endian.little) * _keyMul) >>>
-            shortShift] = ip;
+        _hashTable[_longKey(view, inside, longShift)] = inside + 1;
+        _hashTable[_longKey(view, ip - 2, longShift)] = ip - 1;
+        _chain[_keyTo(view, inside, shortShift)] = inside + 1;
+        _chain[_keyTo(view, ip - 1, shortShift)] = ip;
 
         while (ip <= ilimit &&
             rep1 > 0 &&
@@ -1066,10 +1059,8 @@ class ZstdMatchFinder {
           final held = rep1;
           rep1 = rep0;
           rep0 = held;
-          _chain[(view.getUint64(ip, Endian.little) * _keyMul) >>> shortShift] =
-              ip + 1;
-          _hashTable[(view.getUint64(ip, Endian.little) * _longPrime) >>>
-              longShift] = ip + 1;
+          _chain[_keyTo(view, ip, shortShift)] = ip + 1;
+          _hashTable[_longKey(view, ip, longShift)] = ip + 1;
           store.add(src, anchor, 0, 1, run - zstdMatchLengthFloor);
           ip += run;
           anchor = ip;
@@ -1337,7 +1328,41 @@ class ZstdMatchFinder {
   /// The candidates of one hash sit together in a row, their tags packed a byte
   /// each, so a whole row is tested for the tag in a couple of words and only a
   /// tag hit costs a look at the input
+  int _bestWeb(Uint8List src, ByteData view, int ip, int lowLimit, int end) {
+    final floor = _lowestFrom(ip, lowLimit, 1 << params.windowLog);
+    var best = zstdMinMatch - 1;
+    var found = 0;
+    _insert(view, ip);
+    final keyed = _keyTo(view, ip, _rowShift);
+    final row = keyed >>> 8;
+    final tag = keyed & 0xff;
+    final head = _tagBytes[(row << _rowLog) ^ _tagByteXor];
+    final base = row << _rowLog;
+    var tries = _tries;
+    var probe = view.getUint32(ip, Endian.little);
+    for (var n = 0; n < _rowEntries && tries > 0; n++) {
+      final entry = (head + n) & _rowMask;
+      if (entry == 0 || _tagBytes[base + entry] != tag) continue;
+      final candidate = _rows[base + entry] - 1;
+      if (candidate < floor) break;
+      tries--;
+      if (view.getUint32(candidate + best - 3, Endian.little) != probe) continue;
+      final length = _extendRow(src, view, ip, candidate, end);
+      if (length > best) {
+        best = length;
+        found = ip - candidate;
+        if (ip + length >= end) break;
+        probe = view.getUint32(ip + best - 3, Endian.little);
+      }
+    }
+    _insertOne(row, tag, ip);
+    _nextToUpdate = ip + 1;
+    _foundOffset = found;
+    return best;
+  }
+
   int _best(Uint8List src, ByteData view, int ip, int lowLimit, int end) {
+    if (!zstdUse64Bit) return _bestWeb(src, view, ip, lowLimit, end);
     // The row search bounds a candidate by the window as it stands at this
     // position, not at the block's
     final maxDistance = 1 << params.windowLog;
@@ -1353,7 +1378,7 @@ class ZstdMatchFinder {
     final wordBase = row << (_rowLog - 3);
     var mask = 0;
     for (var w = _words - 1; w >= 0; w--) {
-      var chunk = _tags[wordBase + w] ^ splat;
+      var chunk = (_tags as Uint64List)[wordBase + w] ^ splat;
       chunk = (((chunk | _x80) - _x01) | chunk) & _x80;
       mask = (mask << 8) | (((chunk * _gather) >>> 56) & 0xff);
     }
@@ -2229,6 +2254,7 @@ class ZstdMatchFinder {
   /// work and the caller has registers to spare
   @pragma('vm:prefer-inline')
   int _extendRow(Uint8List src, ByteData view, int a, int b, int end) {
+    if (!zstdUse64Bit) return zstdWebCount(src, view, a, b, end);
     var length = 0;
     while (a + length + 8 <= end) {
       final left = view.getUint64(a + length, Endian.little);
@@ -2259,6 +2285,7 @@ class ZstdMatchFinder {
   /// pair of reads costs about what one costs and this is the hottest loop of
   /// the whole encoder
   int _extend(Uint8List src, ByteData view, int a, int b, int end) {
+    if (!zstdUse64Bit) return zstdWebCount(src, view, a, b, end);
     var length = 0;
     while (a + length + 8 <= end) {
       final left = view.getUint64(a + length, Endian.little);
@@ -2287,23 +2314,39 @@ class ZstdMatchFinder {
 
   @pragma('vm:prefer-inline')
   int _shortKey(ByteData view, int at) =>
-      (((view.getUint32(at, Endian.little) << 8) * _shortPrime) & 0xffffffff) >>>
-          (32 - _shortLog);
+      zstdUse64Bit
+          ? (((view.getUint32(at, Endian.little) << 8) * _shortPrime) & 0xffffffff) >>>
+              (32 - _shortLog)
+          : zstdWebMultiply32(view.getUint32(at, Endian.little) << 8, _shortPrime) >>>
+              (32 - _shortLog);
 
   /// The key of the position at [at], in the table's own width
   @pragma('vm:prefer-inline')
   int _key(ByteData view, int at) =>
-      (view.getUint64(at, Endian.little) * _keyMul) >>> _shift;
+      zstdUse64Bit ? (view.getUint64(at, Endian.little) * _keyMul) >>> _shift
+          : zstdWebKey(view, at, _keyMul, _shift);
 
   /// The same key kept to [shift] bits from the top, for a table of its own
   /// width or for a row index with its tag below it
   @pragma('vm:prefer-inline')
   int _keyTo(ByteData view, int at, int shift) =>
-      (view.getUint64(at, Endian.little) * _keyMul) >>> shift;
+      zstdUse64Bit ? (view.getUint64(at, Endian.little) * _keyMul) >>> shift
+          : zstdWebKey(view, at, _keyMul, shift);
 
   /// The same key from a multiplier and a shift the caller already holds, so a
   /// parse that hashes three times a pass does not reload two fields each time
   @pragma('vm:prefer-inline')
   static int _keyWith(ByteData view, int at, int keyMul, int shift) =>
-      (view.getUint64(at, Endian.little) * keyMul) >>> (shift & 63);
+      zstdUse64Bit ? (view.getUint64(at, Endian.little) * keyMul) >>> (shift & 63)
+          : zstdWebKey(view, at, keyMul, shift);
+
+  @pragma('vm:prefer-inline')
+  static int _longKey(ByteData view, int at, int shift) => zstdUse64Bit
+      ? (view.getUint64(at, Endian.little) * _longPrime) >>> shift
+      : zstdWebKey(view, at, 8, shift);
+
+  @pragma('vm:prefer-inline')
+  static bool _same8(ByteData view, int a, int b) => zstdUse64Bit
+      ? view.getUint64(a, Endian.little) == view.getUint64(b, Endian.little)
+      : zstdWebSame8(view, a, b);
 }

@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'zstd_web.dart';
 
 import '../../util/xxh64.dart';
 import 'zstd_ldm_geartab.dart';
@@ -159,7 +160,7 @@ class ZstdLdm {
   /// Where the next insertion of each bucket goes
   final Uint8List _next;
 
-  final Uint64List _gear = zstdLdmGearTab;
+  final Uint64List? _gear = zstdUse64Bit ? zstdLdmGearTab : null;
   final Xxh64 _xxh = Xxh64();
   final Int32List _splits = Int32List(_batch);
   final Int32List _splitHash = Int32List(_batch);
@@ -169,7 +170,9 @@ class ZstdLdm {
   /// What the rolling hash has to land on for a position to be hashed, and the
   /// state it carries between passes
   final int _stopMask;
+  int _stopMaskHigh = 0;
   int _rolling = 0;
+  int _rollingHigh = 0;
 
   /// `window.dictLimit` in the reference's index space, which is a file
   /// position raised by one. Nothing at or below it may be matched
@@ -201,13 +204,16 @@ class ZstdLdm {
     if (bucketLog > hashLog) {
       bucketLog = hashLog;
     }
-    return ZstdLdm(minMatch, bucketLog, hashLog - bucketLog, windowLog,
+    final ldm = ZstdLdm(minMatch, bucketLog, hashLog - bucketLog, windowLog,
         _stopMaskFor(minMatch, rateLog));
+    if (!zstdUse64Bit) ldm._stopMaskHigh = _webMask(minMatch, rateLog, 32);
+    return ldm;
   }
 
   /// `ZSTD_ldm_gear_init`: the mask takes the bits the rolling hash gives the
   /// most weight to, so a split point depends on a whole match's worth of bytes
   static int _stopMaskFor(int minMatch, int rateLog) {
+    if (!zstdUse64Bit) return _webMask(minMatch, rateLog, 0);
     final width = minMatch < 64 ? minMatch : 64;
     if (rateLog > 0 && rateLog <= width) {
       return ((1 << rateLog) - 1) << (width - rateLog);
@@ -233,6 +239,7 @@ class ZstdLdm {
     final hashMask = (1 << hashBits) - 1;
     var ip = start;
     _rolling = 0xffffffff;
+    if (!zstdUse64Bit) _rollingHigh = 0;
     while (ip < end) {
       final hashed = _feed(src, ip, end - ip);
       for (var n = 0; n < _found; n++) {
@@ -274,6 +281,7 @@ class ZstdLdm {
     // block are stepped over rather than hashed
     var ip = start + minMatch;
     _rolling = 0xffffffff;
+    if (!zstdUse64Bit) _rollingHigh = 0;
 
     while (ip < limit) {
       final hashed = _feed(src, ip, limit - ip);
@@ -343,13 +351,48 @@ class ZstdLdm {
 
   /// `ZSTD_ldm_gear_feed`: records where the hash lands on the mask, and stops
   /// once a batch is full. Returns how many bytes it read
+  static int _webMask(int minMatch, int rateLog, int half) {
+    final width = minMatch < 64 ? minMatch : 64;
+    final start = rateLog > 0 && rateLog <= width ? width - rateLog : 0;
+    var mask = 0;
+    for (var bit = start; bit < start + rateLog; bit++) {
+      if (bit >= half && bit < half + 32) mask |= 1 << (bit - half);
+    }
+    return mask;
+  }
+
+  int _feedWeb(Uint8List src, int at, int size) {
+    var hi = _rollingHigh;
+    var lo = _rolling;
+    var count = 0;
+    var n = 0;
+    while (n < size) {
+      final byte = src[at + n];
+      final upper = zstdWebShift(hi, 1) | (lo >>> 31);
+      final sum = zstdWebShift(lo, 1) + zstdLdmGearWords[byte * 2 + 1];
+      lo = sum & 0xffffffff;
+      hi = (upper + zstdLdmGearWords[byte * 2] +
+          (sum >= 4294967296 ? 1 : 0)) & 0xffffffff;
+      n++;
+      if ((hi & _stopMaskHigh) == 0 && (lo & _stopMask) == 0) {
+        _splits[count++] = n;
+        if (count == _batch) break;
+      }
+    }
+    _rollingHigh = hi;
+    _rolling = lo;
+    _found = count;
+    return n;
+  }
+
   int _feed(Uint8List src, int at, int size) {
+    if (!zstdUse64Bit) return _feedWeb(src, at, size);
     var hash = _rolling;
     final mask = _stopMask;
     var count = 0;
     var n = 0;
     while (n < size) {
-      hash = (hash << 1) + _gear[src[at + n]];
+      hash = (hash << 1) + _gear![src[at + n]];
       n++;
       if (hash & mask == 0) {
         _splits[count++] = n;
@@ -371,6 +414,7 @@ class ZstdLdm {
   }
 
   static int _count(Uint8List src, ByteData view, int a, int b, int end) {
+    if (!zstdUse64Bit) return zstdWebCount(src, view, a, b, end);
     var length = 0;
     while (a + length + 8 <= end) {
       if (view.getUint64(a + length, Endian.little) !=

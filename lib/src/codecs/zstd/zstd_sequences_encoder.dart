@@ -6,6 +6,7 @@ import 'zstd_dictionary.dart';
 import 'zstd_fse_encoder.dart';
 import 'zstd_fse_predefined.dart';
 import 'zstd_level_params.dart';
+import 'zstd_web.dart';
 
 class ZstdSequencesEncoderException implements Exception {
   final String message;
@@ -114,7 +115,7 @@ class ZstdSequenceStore {
       // write past the run cost less than a call that has to be exact.
       // `litLimit_w`: near the end of the input there is nothing to over read
       // into, so the exact copy is the only safe one
-      if (length <= 16 &&
+      if (zstdUse64Bit && length <= 16 &&
           from + 16 <= src.length &&
           literalsLength + 16 <= literals.length) {
         final view = _viewOf(src);
@@ -192,7 +193,7 @@ const _mlBitsShift = 23;
 
 /// Stands in for the reference's error return, which its unsigned comparisons
 /// read as a cost nothing can beat
-const _costError = 1 << 40;
+const _costError = 1099511627776;
 
 const _modePredefined = 0;
 const _modeRle = 1;

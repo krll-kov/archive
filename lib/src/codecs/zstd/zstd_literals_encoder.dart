@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'zstd_web.dart';
 
 import 'zstd_constants.dart';
 import 'zstd_huffman_encoder.dart';
@@ -244,6 +245,20 @@ class ZstdLiteralsEncoder {
     var at = start;
     final limit = end - 8;
     while (at <= limit) {
+      if (!zstdUse64Bit) {
+        final low = view.getUint32(at, Endian.little);
+        final high = view.getUint32(at + 4, Endian.little);
+        _tallies[low & 0xff]++;
+        _tallies[0x100 + ((low >>> 8) & 0xff)]++;
+        _tallies[0x200 + ((low >>> 16) & 0xff)]++;
+        _tallies[0x300 + (low >>> 24)]++;
+        _tallies[high & 0xff]++;
+        _tallies[0x100 + ((high >>> 8) & 0xff)]++;
+        _tallies[0x200 + ((high >>> 16) & 0xff)]++;
+        _tallies[0x300 + (high >>> 24)]++;
+        at += 8;
+        continue;
+      }
       final word = view.getUint64(at, Endian.little);
       _tallies[word & 0xff]++;
       _tallies[0x100 + ((word >>> 8) & 0xff)]++;

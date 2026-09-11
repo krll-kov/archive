@@ -145,7 +145,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
 
   /// What the reference reads for a size it does not know, which is the row it
   /// picks and the window it leaves unclamped
-  static const _sizeUnknown = 1 << 40;
+  static const _sizeUnknown = 1099511627776;
 
   Uint8List _makeBuffer() {
     var slack = _blocks.slideCost;

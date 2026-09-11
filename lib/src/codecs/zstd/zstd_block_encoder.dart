@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'zstd_web.dart';
 
 import '../../util/output_stream.dart';
 import 'zstd_constants.dart';
@@ -273,7 +274,13 @@ class ZstdBlockEncoder {
   /// says so in its first word, and one that is has to be read whole
   static bool _isRepeated(Uint8List src, int start, int end) {
     final first = src[start];
-    final splat = first * 0x0101010101010101;
+    if (!zstdUse64Bit) {
+      for (var at = start + 1; at < end; at++) {
+        if (src[at] != first) return false;
+      }
+      return true;
+    }
+    final splat = first * ((0x01010101 << 32) | 0x01010101);
     final view = ByteData.sublistView(src);
     var at = start;
     final limit = end - 8;

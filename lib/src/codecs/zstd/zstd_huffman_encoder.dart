@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'zstd_bit_writer.dart';
 import 'zstd_constants.dart';
 import 'zstd_fse_encoder.dart';
+import 'zstd_web.dart';
 
 class ZstdHuffmanEncoderException implements Exception {
   final String message;
@@ -86,7 +87,7 @@ class ZstdHuffmanEncoder {
   /// built and described, and the one that comes out smallest wins
   int _searchLog(Uint32List counts, int used) {
     final least = zstdHighestBit(used) + 1;
-    var best = 1 << 62;
+    var best = 4611686018427387904;
     var log = zstdHuffmanLogMax;
     for (var guess = least; guess <= zstdHuffmanLogMax; guess++) {
       _sort(counts);
@@ -573,6 +574,18 @@ class ZstdHuffmanEncoder {
   /// Symbols go in from the last to the first, so the reader walking the bytes
   /// backwards sees them in order
   int _encodeOne(Uint8List out, int at, Uint8List src, int start, int end) {
+    if (!zstdUse64Bit) {
+      final writer = ZstdBitWriter(ByteData.sublistView(out), at);
+      var n = end;
+      while (n > start) {
+        for (var group = 0; group < 4 && n > start; group++) {
+          final e = _elt[src[--n]];
+          writer.addClean(e & 0xffff, e >> 16);
+        }
+        writer.flush();
+      }
+      return writer.close() - at;
+    }
     final view = ByteData.sublistView(out);
     final elt = _elt;
     var held = 0;
