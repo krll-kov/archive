@@ -1,4 +1,5 @@
 # 4.4.0
+
 * Added zstd (Zstandard) support, both decode and encode (lvl 1-22, with custom dictionaries)
 * Added Dart async StreamTransformers/ByteConversionSink/Converter support
   (xzCodec, zstdCodec, bzip2Codec, tarCodec and zipCodec) for decode and encode (decoders for all formats except for zip)
