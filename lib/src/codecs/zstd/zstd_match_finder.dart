@@ -61,6 +61,36 @@ const _slots = <int>[
   51, 25, 36, 32, 60, 20, 57, 16, 50, 31, 19, 15, 30, 14, 13, 12,
 ];
 
+/// Older SDKs use this fallback; an int instance getter takes precedence
+extension _ZstdTrailingZeroBitCount on int {
+  @pragma('vm:prefer-inline')
+  // ignore: unused_element
+  int get trailingZeroBitCount => -1;
+}
+
+/// Callers pass a nonzero mismatch; the sentinel selects the SDK implementation
+@pragma('vm:prefer-inline')
+int _trailingZeroBitCount(int value) {
+  // ignore: sdk_version_since
+  if (0.trailingZeroBitCount < 0) {
+    final low = value & -value;
+    return _slots[(low * _deBruijn) >>> 58];
+  }
+  // ignore: sdk_version_since
+  return value.trailingZeroBitCount;
+}
+
+/// The row loop has already isolated its lowest set bit
+@pragma('vm:prefer-inline')
+int _isolatedTrailingZeroBitCount(int low) {
+  // ignore: sdk_version_since
+  if (0.trailingZeroBitCount < 0) {
+    return _slots[(low * _deBruijn) >>> 58];
+  }
+  // ignore: sdk_version_since
+  return low.trailingZeroBitCount;
+}
+
 /// Finds the sequences of a block. A slot holds a position plus one, so zero
 /// means it was never filled, and the tables hold absolute positions so they
 /// carry across the blocks of a frame
@@ -195,9 +225,9 @@ class ZstdMatchFinder {
   bool _skipping = false;
 
   ZstdMatchFinder(ZstdLevelParams params)
-      : this._(params, zstdUse64Bit
+      : this._(params, (zstdUse64Bit
             ? Uint64List(_usesRows(params) ? 1 << (params.hashLog - 3) : 1)
-            : Uint8List(_usesRows(params) ? 1 << params.hashLog : 8));
+            : Uint8List(_usesRows(params) ? 1 << params.hashLog : 8)) as TypedData);
 
   ZstdMatchFinder._(this.params, TypedData tags)
       : _tags = tags,
@@ -982,7 +1012,7 @@ class ZstdMatchFinder {
             view.getUint32(ip + 1 - rep0, Endian.little) ==
                 view.getUint32(ip + 1, Endian.little)) {
           length = zstdMinMatch +
-              _extend(src, view, ip + 1 + zstdMinMatch,
+              _extendRow(src, view, ip + 1 + zstdMinMatch,
                   ip + 1 - rep0 + zstdMinMatch, end);
           ip++;
           store.add(src, anchor, ip - anchor, 1, length - zstdMatchLengthFloor);
@@ -996,7 +1026,7 @@ class ZstdMatchFinder {
             heldLong - 1 >= floor &&
             _same8(view, heldLong - 1, ip)) {
           match = heldLong - 1;
-          length = 8 + _extend(src, view, ip + 8, match + 8, end);
+          length = 8 + _extendRow(src, view, ip + 8, match + 8, end);
           while (ip > anchor && match > floor && src[ip - 1] == src[match - 1]) {
             ip--;
             match--;
@@ -1013,13 +1043,14 @@ class ZstdMatchFinder {
                 view.getUint32(ip, Endian.little)) {
           match = heldShort - 1;
           length = zstdMinMatch +
-              _extend(src, view, ip + zstdMinMatch, match + zstdMinMatch, end);
+              _extendRow(src, view, ip + zstdMinMatch, match + zstdMinMatch, end);
           // A short hit is only worth taking if the long table has nothing
           // longer one position on
           // The reference tests this one strictly, unlike the two above it
           if (heldLong1 - 1 > floor &&
               _same8(view, heldLong1 - 1, ip1)) {
-            final other = 8 + _extend(src, view, ip1 + 8, heldLong1 - 1 + 8, end);
+            final other =
+                8 + _extendRow(src, view, ip1 + 8, heldLong1 - 1 + 8, end);
             if (other > length) {
               ip = ip1;
               length = other;
@@ -1074,7 +1105,7 @@ class ZstdMatchFinder {
             view.getUint32(ip, Endian.little) ==
                 view.getUint32(ip - rep1, Endian.little)) {
           final run = zstdMinMatch +
-              _extend(src, view, ip + zstdMinMatch, ip - rep1 + zstdMinMatch,
+              _extendRow(src, view, ip + zstdMinMatch, ip - rep1 + zstdMinMatch,
                   end);
           final held = rep1;
           rep1 = rep0;
@@ -1419,7 +1450,7 @@ class ZstdMatchFinder {
       final low = rest & -rest;
       rest ^= low;
       final candidate =
-          _rows[base + ((head + _slots[(low * _deBruijn) >>> 58]) & _rowMask)] -
+          _rows[base + ((head + _isolatedTrailingZeroBitCount(low)) & _rowMask)] -
               1;
       // The row runs newest first, so nothing above the window follows
       if (candidate < floor) {
@@ -2288,8 +2319,7 @@ class ZstdMatchFinder {
       final right = view.getUint64(b + length, Endian.little);
       if (left != right) {
         final diff = left ^ right;
-        final low = diff & -diff;
-        return length + (_slots[(low * _deBruijn) >>> 58] >> 3);
+        return length + (_trailingZeroBitCount(diff) >> 3);
       }
       length += 8;
     }
@@ -2297,8 +2327,7 @@ class ZstdMatchFinder {
       final left = view.getUint32(a + length, Endian.little);
       final right = view.getUint32(b + length, Endian.little);
       if (left != right) {
-        final low = (left ^ right) & -(left ^ right);
-        return length + (_slots[(low * _deBruijn) >>> 58] >> 3);
+        return length + (_trailingZeroBitCount(left ^ right) >> 3);
       }
       length += 4;
     }
@@ -2319,8 +2348,7 @@ class ZstdMatchFinder {
       final right = view.getUint64(b + length, Endian.little);
       if (left != right) {
         final diff = left ^ right;
-        final low = diff & -diff;
-        return length + (_slots[(low * _deBruijn) >>> 58] >> 3);
+        return length + (_trailingZeroBitCount(diff) >> 3);
       }
       length += 8;
     }
@@ -2328,8 +2356,7 @@ class ZstdMatchFinder {
       final left = view.getUint32(a + length, Endian.little);
       final right = view.getUint32(b + length, Endian.little);
       if (left != right) {
-        final low = (left ^ right) & -(left ^ right);
-        return length + (_slots[(low * _deBruijn) >>> 58] >> 3);
+        return length + (_trailingZeroBitCount(left ^ right) >> 3);
       }
       length += 4;
     }

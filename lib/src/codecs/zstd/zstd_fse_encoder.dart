@@ -307,7 +307,7 @@ class ZstdFseCTable {
 
   ZstdFseCTable(int maxLog, int maxSymbolCount)
       : nextState = Uint16List(1 << maxLog),
-        symbolTT = zstdUse64Bit ? Int64List(maxSymbolCount) : Int32List(maxSymbolCount * 2);
+        symbolTT = (zstdUse64Bit ? Int64List(maxSymbolCount) : Int32List(maxSymbolCount * 2)) as TypedData;
 
   void build(Int16List counts, int maxSymbol, int accuracyLog, Uint8List spread,
       Uint16List scratch, Uint32List cumulative) {
