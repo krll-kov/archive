@@ -114,7 +114,7 @@ void main() {
 }
 ```
 
-### Dart async StreamTransformers/ByteConversionSink/Converter support
+### Dart async* StreamTransformers/ByteConversionSink/Converter support
 
 Codecs that take data as it arrives expose a `Codec` with a converter for each
 direction, the shape `dart:io` uses for `gzip`.
