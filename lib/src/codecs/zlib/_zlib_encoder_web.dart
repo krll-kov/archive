@@ -26,14 +26,27 @@ class _ZLibEncoder extends ZLibEncoderBase {
 
   void encodeStream(InputStream input, OutputStream output,
       {int? level, int? windowBits, bool raw = false}) {
-    output.byteOrder = ByteOrder.bigEndian;
-
+    // A raw stream is bytes only, so it never reaches a multi-byte write and
+    // has no reason to touch the order the caller set
     if (raw) {
       Deflate.stream(input,
           level: level ?? 6, windowBits: windowBits ?? 15, output: output);
       return;
     }
+    // [output] belongs to the caller, who may be part way through a format of
+    // its own: zip deflates straight into the archive and writes its next
+    // header little-endian behind this
+    final held = output.byteOrder;
+    output.byteOrder = ByteOrder.bigEndian;
+    try {
+      _zlibStream(input, output, level, windowBits);
+    } finally {
+      output.byteOrder = held;
+    }
+  }
 
+  void _zlibStream(
+      InputStream input, OutputStream output, int? level, int? windowBits) {
     final wb = (windowBits ?? 15).clamp(0, 15);
 
     // Compression Method and Flags

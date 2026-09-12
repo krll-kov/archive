@@ -182,7 +182,17 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
     ]);
   }
 
-  receive.listen((message) {
+  final errors = ReceivePort();
+  errors.listen((message) {
+    final pair = message as List;
+    failure ??= pair[0];
+    failureStack ??= StackTrace.fromString('${pair[1]}');
+    if (!done.isCompleted) {
+      done.complete();
+    }
+  });
+
+  void handleReply(Object? message) {
     if (message is SendPort) {
       give(message);
       return;
@@ -225,12 +235,28 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
       return;
     }
     give(worker);
+  }
+
+  receive.listen((message) {
+    // Anything thrown here would leave through this port's zone, where the
+    // call has nothing listening, and `left` would never reach zero
+    try {
+      handleReply(message);
+    } catch (thrown, stack) {
+      failure ??= thrown;
+      failureStack ??= stack;
+      if (!done.isCompleted) {
+        done.complete();
+      }
+    }
   });
 
   try {
     for (var i = 0; i < pool; i++) {
+      // A dead isolate must not arrive on the port the replies come in on:
+      // `[error, stack]` read as a reply is a cast that hangs the pool
       isolates.add(await Isolate.spawn(_zstdMtWorker, receive.sendPort,
-          onError: receive.sendPort, errorsAreFatal: true));
+          onError: errors.sendPort, errorsAreFatal: true));
     }
     await done.future;
   } finally {
@@ -238,6 +264,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
       isolate.kill(priority: Isolate.immediate);
     }
     receive.close();
+    errors.close();
   }
 
   if (failure != null) {
@@ -330,7 +357,17 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
     }
   }
 
-  receive.listen((message) {
+  final errors = ReceivePort();
+  errors.listen((message) {
+    final pair = message as List;
+    failure ??= pair[0];
+    failureStack ??= StackTrace.fromString('${pair[1]}');
+    // No further reply can arrive from a dead worker, so whoever is parked on
+    // `waiting` has to be let go or the frame never ends
+    wake();
+  });
+
+  void handleReply(Object? message) {
     if (message is SendPort) {
       hand(message);
       return;
@@ -350,11 +387,25 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
     back++;
     hand(worker);
     wake();
+  }
+
+  receive.listen((message) {
+    // Anything thrown here would leave through this port's zone, where the
+    // generator has nothing listening, and `back` would never catch `sent`
+    try {
+      handleReply(message);
+    } catch (thrown, stack) {
+      failure ??= thrown;
+      failureStack ??= stack;
+      wake();
+    }
   });
 
   for (var i = 0; i < pool; i++) {
+    // A dead isolate must not arrive on the port the replies come in on:
+    // `[error, stack]` read as a reply is a cast that hangs the pool
     isolates.add(await Isolate.spawn(_zstdMtWorker, receive.sendPort,
-        onError: receive.sendPort, errorsAreFatal: true));
+        onError: errors.sendPort, errorsAreFatal: true));
   }
 
   void submit(Uint8List job, int prefix, bool first, bool last) {
@@ -432,7 +483,7 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
     if (failure == null) {
       submit(ring.close(), sent == 0 ? 0 : geometry[1], sent == 0, true);
     }
-    while (back < sent) {
+    while (failure == null && back < sent) {
       while (ready.isNotEmpty) {
         yield ready.removeAt(0);
       }
@@ -452,6 +503,7 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
       isolate.kill(priority: Isolate.immediate);
     }
     receive.close();
+    errors.close();
   }
 }
 

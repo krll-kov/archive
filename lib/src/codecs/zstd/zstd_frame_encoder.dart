@@ -197,7 +197,7 @@ class ZstdFrameEncoder {
       contentSizeFlag = 0;
     } else if (size >= 256 && size < 65536 + 256) {
       contentSizeFlag = 1;
-    } else if (size < 4294967296) {
+    } else if (size < 4294967295) {
       contentSizeFlag = 2;
     } else {
       contentSizeFlag = 3;
