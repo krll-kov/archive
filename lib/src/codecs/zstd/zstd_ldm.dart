@@ -1,8 +1,8 @@
 import 'dart:typed_data';
-import 'zstd_web.dart';
 
 import '../../util/xxh64.dart';
 import 'zstd_ldm_geartab.dart';
+import 'zstd_web.dart';
 
 /// `LDM_BATCH_SIZE`, how many split points one pass of the rolling hash
 /// collects before they are looked up

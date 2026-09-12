@@ -1,11 +1,11 @@
 import 'dart:typed_data';
-import 'zstd_web.dart';
 
 import 'zstd_constants.dart';
 import 'zstd_ldm.dart';
 import 'zstd_level_params.dart';
 import 'zstd_opt_prices.dart';
 import 'zstd_sequences_encoder.dart';
+import 'zstd_web.dart';
 
 /// The shortest match this parse will take
 const zstdMinMatch = 4;
@@ -347,6 +347,15 @@ class ZstdMatchFinder {
   /// Puts a dictionary's positions in this level's tables, so the first block
   /// can match into it rather than only through the repeat offsets it starts
   /// with. `ZSTD_loadDictionaryContent`
+  /// The raw prefix a threaded job starts from: the same load, but the bytes
+  /// stay ordinary input rather than a dictionary to keep whole
+  void primeRaw(Uint8List src, int start, int end) {
+    prime(src, start, end);
+    dictionaryEnd = 0;
+    // `window.dictLimit` is where the job's own buffer starts, prefix and all
+    prefixStart = start;
+  }
+
   void prime(Uint8List src, int start, int end) {
     // A dictionary wider than the tables can index is loaded from its end only
     var wide = params.hashLog + 3;
@@ -1884,9 +1893,13 @@ class ZstdMatchFinder {
   /// `ZSTD_initStats_ultra`
   void _parseOptimal(Uint8List src, ByteData view, int start, int end,
       int lowLimit, ZstdSequenceStore store, Uint32List rep) {
-    // `ZSTD_compressBlock_btultra2` asks for `window.dictLimit == lowLimit`,
-    // so a frame given a dictionary skips the pass and prices from its tables
-    if (params.depth >= 3 && _prices.litLengthSum == 0 && !_ext) {
+    // `ZSTD_compressBlock_btultra2` asks for `window.dictLimit == lowLimit`
+    // and for the parse to start on `dictLimit` itself, so a frame given a
+    // dictionary, and a job given a prefix, both skip the pass
+    if (params.depth >= 3 &&
+        _prices.litLengthSum == 0 &&
+        !_ext &&
+        start == prefixStart) {
       _repScratch[0] = rep[0];
       _repScratch[1] = rep[1];
       _repScratch[2] = rep[2];

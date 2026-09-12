@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../../util/archive_exception.dart';
 import '../../util/chunked_sink.dart';
+import '../../util/output_memory_stream.dart';
 import '../../util/xxh64.dart';
 import 'zstd_block_decoder.dart';
 import 'zstd_block_encoder.dart';
@@ -11,6 +12,9 @@ import 'zstd_constants.dart';
 import 'zstd_dictionary.dart';
 import 'zstd_frame_decoder.dart';
 import 'zstd_level_params.dart';
+import 'zstd_mt_frame_encoder.dart';
+import 'zstd_mt_parallel.dart';
+import 'zstd_multithread_options.dart';
 import 'zstd_window.dart';
 
 /// zstd for data that arrives in pieces, which is what a `Stream` gives.
@@ -35,7 +39,8 @@ class ZstdCodec extends Codec<List<int>, List<int>> {
       this.dictionary,
       this.windowSizeLimit = zstdDefaultWindowSizeLimit,
       this.level = zstdDefaultLevel,
-      this.frameChecksum = true});
+      this.frameChecksum = true,
+      this.multithread});
 
   @override
   ZstdDecoderConverter get decoder => ZstdDecoderConverter(
@@ -49,9 +54,17 @@ class ZstdCodec extends Codec<List<int>, List<int>> {
   /// Whether a frame this writes carries an XXH64 of its content
   final bool frameChecksum;
 
+  /// Spreads the frame's jobs over isolates, and then the bytes are the ones
+  /// `zstd -T` writes rather than the single threaded ones. Only `transform`
+  /// takes it, since a sink cannot wait for a worker
+  final ZstdMultithreadOptions<Object?>? multithread;
+
   @override
-  ZstdEncoderConverter get encoder =>
-      ZstdEncoderConverter(level: level, checksum: frameChecksum);
+  ZstdEncoderConverter get encoder => ZstdEncoderConverter(
+      level: level,
+      checksum: frameChecksum,
+      multithread: multithread,
+      dictionary: dictionary);
 }
 
 /// The codec with its defaults, for `stream.transform(zstdCodec.decoder)`
@@ -88,15 +101,68 @@ class ZstdEncoderConverter extends ChunkedConverter {
   /// Whether the frame carries an XXH64 of its content
   final bool checksum;
 
+  /// Spreads the jobs of the frame over isolates when this converter is bound
+  /// to a stream. `startChunkedConversion` cannot take it: its sink owes its
+  /// output before it returns, and a worker answers later
+  final ZstdMultithreadOptions<Object?>? multithread;
+
+  /// Placed before the content, as [ZstdChunkedEncoder.dictionary] describes
+  final ZstdDictionary? dictionary;
+
   const ZstdEncoderConverter(
-      {this.level = zstdDefaultLevel, this.checksum = true});
+      {this.level = zstdDefaultLevel,
+      this.checksum = true,
+      this.multithread,
+      this.dictionary});
 
   @override
-  ByteConversionSink startChunkedConversion(Sink<List<int>> sink) =>
-      ZstdChunkedEncoder(
-          sink is ByteConversionSink ? sink : ByteConversionSink.from(sink),
-          level: level,
-          checksum: checksum);
+  ByteConversionSink startChunkedConversion(Sink<List<int>> sink) {
+    if (multithread != null) {
+      throw ArgumentError.value(multithread, 'multithread',
+          'Works through a stream only, since a sink owes its output before '
+              'it returns');
+    }
+    return ZstdChunkedEncoder(
+        sink is ByteConversionSink ? sink : ByteConversionSink.from(sink),
+        level: level,
+        checksum: checksum,
+        dictionary: dictionary);
+  }
+
+  @override
+  Stream<List<int>> bind(Stream<List<int>> stream) {
+    final options = multithread;
+    if (options == null) {
+      return super.bind(stream);
+    }
+    return _bindMultithread(stream, options);
+  }
+
+  Stream<List<int>> _bindMultithread(
+      Stream<List<int>> stream, ZstdMultithreadOptions<Object?> options) async* {
+    final hash = Xxh64()..reset();
+    final header = OutputMemoryStream();
+    writeZstdMtStreamHeader(header, checksum, level, dictionary?.id ?? 0);
+    yield header.getBytes();
+    final counted = checksum
+        ? stream.map((chunk) {
+            final bytes =
+                chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
+            hash.update(bytes, 0, bytes.length);
+            return bytes;
+          })
+        : stream;
+    yield* zstdMtCompressStream(counted, level,
+        jobSize: options.jobSize,
+        overlapLog: options.overlapLog,
+        workers: options.workers ?? 0,
+        dictionary: dictionary);
+    if (checksum) {
+      final out = OutputMemoryStream();
+      writeZstdMtChecksum(out, hash.digestLow);
+      yield out.getBytes();
+    }
+  }
 }
 
 /// Writes one zstd frame over data that arrives in pieces.
@@ -109,8 +175,17 @@ class ZstdChunkedEncoder extends ChunkedSink {
   final int level;
   final bool checksum;
 
+  /// Placed before the content so the first blocks can reach into it, and
+  /// named in the frame header. The bytes are the ones
+  /// `ZSTD_compress_usingDict` writes, not the ones `zstd -D` writes: the
+  /// reference's streaming path goes through a cdict, which chooses
+  /// differently
+  final ZstdDictionary? dictionary;
+
   ZstdChunkedEncoder(super.output,
-      {this.level = zstdDefaultLevel, this.checksum = true});
+      {this.level = zstdDefaultLevel,
+      this.checksum = true,
+      this.dictionary});
 
   late final _out = SinkOutputStream(output);
   late final ZstdLevelParams _params = zstdParamsForLevel(level, _sizeUnknown);
@@ -147,12 +222,37 @@ class ZstdChunkedEncoder extends ChunkedSink {
   /// picks and the window it leaves unclamped
   static const _sizeUnknown = 1099511627776;
 
+  /// Loads the dictionary before anything arrives: it sits at the front of the
+  /// window, and the first block reaches into it
+  void _prime() {
+    final dict = dictionary;
+    if (dict == null || _primed) {
+      return;
+    }
+    _primed = true;
+    final content = dict.content;
+    if (content.isEmpty) {
+      return;
+    }
+    _buffer.setRange(0, content.length, content);
+    _blocks.prime(_buffer, 0, content.length, dict);
+    _rep.setAll(0, dict.repeatOffsets);
+    _at = content.length;
+    _filled = content.length;
+  }
+
+  var _primed = false;
+
   Uint8List _makeBuffer() {
     var slack = _blocks.slideCost;
     if (slack < _matchWindow) {
       slack = _matchWindow;
     }
-    return Uint8List(_matchWindow + slack + _blockSizeMax + _blocks.slideStep);
+    return Uint8List((dictionary?.content.length ?? 0) +
+        _matchWindow +
+        slack +
+        _blockSizeMax +
+        _blocks.slideStep);
   }
 
   @override
@@ -184,6 +284,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
   /// Takes [count] bytes of what arrived into the window, sliding it first if
   /// what is held no longer leaves room
   void _gather(int count) {
+    _prime();
     if (_filled + count > _buffer.length) {
       var delta = _at > _matchWindow ? _at - _matchWindow : 0;
       delta -= delta % _blocks.slideStep;
@@ -225,7 +326,13 @@ class ZstdChunkedEncoder extends ChunkedSink {
     while (left > 0) {
       final take =
           _splitter.sizeFor(_buffer, _at, left, _blockSizeMax, _params, _savings);
-      final reach = _at - _matchWindow;
+      // `ZSTD_checkDictValidity` measures from the end of the block, and what
+      // it drops stays dropped
+      if (_blocks.dictionaryEnd != 0 &&
+          _at + take - _blocks.dictionaryEnd > _matchWindow) {
+        _blocks.dropDictionary();
+      }
+      final reach = _blocks.dictionaryEnd != 0 ? _base : _at - _matchWindow;
       final before = _out.written;
       _blocks.encode(_buffer, _at, _at + take, reach > _base ? reach : _base,
           _out, last && take == left, _rep);
@@ -233,6 +340,11 @@ class ZstdChunkedEncoder extends ChunkedSink {
       _at += take;
       left -= take;
     }
+  }
+
+  int get _idFlag {
+    final id = dictionary?.id ?? 0;
+    return id == 0 ? 0 : (id < 256 ? 1 : (id < 65536 ? 2 : 3));
   }
 
   /// `ZSTD_writeFrameHeader` for a frame that names no content size: the
@@ -247,8 +359,12 @@ class ZstdChunkedEncoder extends ChunkedSink {
       ..writeByte((zstdMagic >>> 8) & 0xff)
       ..writeByte((zstdMagic >>> 16) & 0xff)
       ..writeByte((zstdMagic >>> 24) & 0xff)
-      ..writeByte(checksum ? 4 : 0)
+      ..writeByte((checksum ? 4 : 0) | _idFlag)
       ..writeByte((_params.windowLog - 10) << 3);
+    final id = dictionary?.id ?? 0;
+    for (var i = 0; i < const [0, 1, 2, 4][_idFlag]; i++) {
+      _out.writeByte((id >>> (i << 3)) & 0xff);
+    }
   }
 }
 

@@ -1,8 +1,8 @@
 import 'dart:typed_data';
-import 'zstd_web.dart';
 
 import 'zstd_constants.dart';
 import 'zstd_huffman_encoder.dart';
+import 'zstd_web.dart';
 
 /// What a tree description plus its streams has to beat before the literals
 /// are worth coding at all, `hSize + 12 >= srcSize` in the reference

@@ -254,6 +254,80 @@ await Isolate.run(() async {
 });
 ```
 
+### Spreading one call over isolates
+
+Two codecs split a single call across isolates: xz decoding and zstd
+compression. Pass the options and the call returns at once, with the result
+arriving through `onDone`, since an isolate cannot be waited on synchronously.
+Where isolates do not exist, dart2js and dart2wasm, the same code runs in the
+calling isolate and writes the same bytes.
+
+zstd writes the frame `zstd -T` writes, which is not the frame the single
+threaded encoder writes, and it is the same for any number of workers. Prefer
+the file form: each worker reads its own job straight from disk, so the input
+never sits in the calling isolate, and a gigabyte at level 6 costs 151 MB this
+way against 2 GB through `encodeBytes`:
+
+```dart
+final input = InputFileStream('data.bin');
+final output = OutputFileStream('data.bin.zst');
+final completer = Completer<bool>();
+ZstdEncoder(level: 6).encodeStream(input, output,
+    multithread: ZstdMultithreadOptions(
+      onDone: completer.complete,
+      onError: (error, _) => completer.completeError(error),
+      workers: 4,
+    ));
+await completer.future;
+await output.close();
+await input.close();
+```
+
+xz over a whole buffer, one block to a worker:
+
+```dart
+final completer = Completer<Uint8List>();
+XZDecoder().decodeBytes(compressed,
+    multithread: XZMultithreadOptions(
+      onDone: completer.complete,
+      onError: (error, _) => completer.completeError(error),
+      workers: 4,
+    ));
+final data = await completer.future;
+```
+
+`decodeStream` takes the same options, and over an `InputFileStream` a worker
+reads its own block through a window rather than holding the archive.
+
+A zstd `Stream` takes them too, through the codec, and then `transform` reads
+the way it always did:
+
+```dart
+await File('data.bin')
+    .openRead()
+    .transform(ZstdCodec(
+      level: 6,
+      multithread: ZstdMultithreadOptions(workers: 4),
+    ).encoder)
+    .pipe(File('data.bin.zst').openWrite());
+```
+
+The stream carries its own end and its own errors, so `onDone` stays empty
+here. `startChunkedConversion` refuses the options rather than quietly falling
+back: a sink owes its output before it returns, and a worker answers later.
+
+`workers` never changes the bytes, only the time, and `memoryBudget` caps how
+many of them run at once, a gigabyte by default: a zstd worker is charged for
+its job, its prefix, its output and the level's tables, an xz one for the
+dictionary its block names and the block itself, and at least one always runs.
+xz adds `fileReadBufferSize`, the window a worker reads its block through when
+it opens the file itself.
+
+zstd's `jobSize` and `overlapLog` are the two that do change the bytes, the way
+`zstd -T` does. A value that cannot be honoured throws `ArgumentError` at the
+call rather than reaching `onError`, and an input too small to be worth
+splitting takes the single threaded path on its own.
+
 ### Recognizing a format from its first bytes
 
 `CodecsRecognizer` reads a header and says what wrote it, without decoding

@@ -1,5 +1,4 @@
 import 'dart:typed_data';
-import 'zstd_web.dart';
 
 import '../../util/output_stream.dart';
 import 'zstd_constants.dart';
@@ -10,6 +9,7 @@ import 'zstd_literals_encoder.dart';
 import 'zstd_match_finder.dart';
 import 'zstd_seq_splitter.dart';
 import 'zstd_sequences_encoder.dart';
+import 'zstd_web.dart';
 
 /// Writes the blocks of one frame: a repeated byte, an entropy coded block of
 /// literals and sequences, or the bytes as they stand, whichever is smallest
@@ -85,6 +85,12 @@ class ZstdBlockEncoder {
       prices.dictionaryMatchLengths = _sequences.dictionaryMatchLengths;
     }
   }
+
+  /// Loads a raw prefix into the tables, which is what a job of the threaded
+  /// encoder starts from. The bytes stay ordinary contiguous input: no outside
+  /// segment, nothing to keep whole, no entropy to repeat
+  void primeRawPrefix(Uint8List src, int start, int end) =>
+      _finder.primeRaw(src, start, end);
 
   /// `loadedDictEnd`: where the dictionary this frame was primed with ends,
   /// zero once a block has left it a whole window behind
