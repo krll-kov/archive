@@ -30,3 +30,25 @@ class ZstdMultithreadOptions<T> {
     this.overlapLog = 0,
   });
 }
+
+/// The four fields that describe the work, checked the same way wherever the
+/// options arrive: a value no path can honour is a mistake at the call, not a
+/// failure of the encode
+void checkZstdMultithreadOptions(ZstdMultithreadOptions<Object?> options) {
+  final workers = options.workers;
+  if (workers != null && workers < 1) {
+    throw ArgumentError.value(workers, 'workers', 'Must be at least 1');
+  }
+  final budget = options.memoryBudget;
+  if (budget != null && budget < 1) {
+    throw ArgumentError.value(budget, 'memoryBudget', 'Must be at least 1');
+  }
+  if (options.overlapLog < 0 || options.overlapLog > 9) {
+    throw ArgumentError.value(
+        options.overlapLog, 'overlapLog', 'Must be 0 to 9');
+  }
+  if (options.jobSize < 0) {
+    throw ArgumentError.value(
+        options.jobSize, 'jobSize', 'Must not be negative');
+  }
+}

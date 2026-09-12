@@ -50,9 +50,8 @@ class ZstdFrameEncoder {
       {required bool checksum,
       required int level,
       required ZstdDictionary? dictionary}) {
-    final dict = dictionary != null && dictionary.content.isNotEmpty
-        ? dictionary
-        : null;
+    final dict =
+        dictionary != null && dictionary.usableForEncode ? dictionary : null;
     final prefix = dict?.content.length ?? 0;
     // `ZSTD_getCParamRowSize` and `ZSTD_adjustCParams_internal` both size the
     // frame by the dictionary buffer, headers and all, not by its content

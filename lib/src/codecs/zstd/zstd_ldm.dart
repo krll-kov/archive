@@ -13,8 +13,11 @@ const _bucketLogMax = 8;
 const _hashLogMin = 6;
 const _hashLogMax = 30;
 const _minMatchBase = 64;
-const _btopt = 6;
-const _btultra = 7;
+
+/// `ZSTD_strategy` as the reference numbers it, one to nine, which is what
+/// [ZstdLevelParams.refStrategy] carries. The six the parse has are not these
+const _btopt = 7;
+const _btultra = 8;
 
 /// The matches one block's long distance search found, in the order they cover
 /// the block. `RawSeqStore_t`
@@ -24,10 +27,39 @@ class ZstdLdmSequences {
   final Uint32List offset;
   int size = 0;
 
+  /// `RawSeqStore_t.pos` and `posInSequence`: where a reader of this store has
+  /// got to. A store generated for one block is read whole and the cursor never
+  /// moves off zero; one generated for a whole job is read a block at a time
+  int pos = 0;
+  int inSequence = 0;
+
   ZstdLdmSequences(int capacity)
       : litLength = Uint32List(capacity),
         matchLength = Uint32List(capacity),
         offset = Uint32List(capacity);
+
+  void reset() {
+    size = 0;
+    pos = 0;
+    inSequence = 0;
+  }
+
+  /// `ZSTD_ldm_skipRawSeqStoreBytes`: moves the cursor past [bytes] of the
+  /// input the store covers, which is what a block leaves behind it
+  void skipBytes(int bytes) {
+    var at = inSequence + bytes;
+    while (at != 0 && pos < size) {
+      final span = litLength[pos] + matchLength[pos];
+      if (at >= span) {
+        at -= span;
+        pos++;
+      } else {
+        inSequence = at;
+        return;
+      }
+    }
+    inSequence = 0;
+  }
 }
 
 /// How far the optimal parse plans, `ZSTD_OPT_NUM`
@@ -53,8 +85,11 @@ class ZstdOptLdm {
   /// the parse starts and so keeps a block's last match out of the parse
   void begin(ZstdLdmSequences? store, int size) {
     _store = store;
-    _pos = 0;
-    _inSequence = 0;
+    // The reference copies the store by value, cursor and all, so a parse over
+    // one block of a job's store starts where the block before it stopped and
+    // leaves the store itself alone
+    _pos = store?.pos ?? 0;
+    _inSequence = store?.inSequence ?? 0;
     _start = 0;
     _end = 0;
     _offset = 0;
@@ -259,19 +294,41 @@ class ZstdLdm {
   /// never reaches the reference's chunk size of a megabyte
   void generate(Uint8List src, ByteData view, int start, int end,
       ZstdLdmSequences out) {
-    out.size = 0;
-    final low = end + 1 - (1 << windowLog);
-    if (low > _dictLimit) {
-      _dictLimit = low;
+    out.reset();
+    // `ZSTD_ldm_generateSequences` walks a megabyte at a time, bounding the
+    // window at each chunk's end rather than once over the whole span. A block
+    // never reaches that, a threaded job does
+    const chunkMax = 1 << 20;
+    final capacity = out.litLength.length;
+    var leftover = 0;
+    var at = start;
+    while (at < end && out.size < capacity) {
+      final chunkEnd = end - at < chunkMax ? end : at + chunkMax;
+      final low = chunkEnd + 1 - (1 << windowLog);
+      if (low > _dictLimit) {
+        _dictLimit = low;
+      }
+      final before = out.size;
+      final rest = chunkEnd - at < minMatch
+          ? chunkEnd - at
+          : _generate(src, view, at, chunkEnd, out);
+      // The literals a chunk ends on belong to the first sequence of the next
+      // one, which started measuring from its own beginning
+      if (before < out.size) {
+        out.litLength[before] += leftover;
+        leftover = rest;
+      } else {
+        leftover += chunkEnd - at;
+      }
+      at = chunkEnd;
     }
-    if (end - start < minMatch) {
-      return;
-    }
-    _generate(src, view, start, end, out);
   }
 
-  void _generate(
+  /// Returns the literals left over after the last match it found, which is
+  /// what `ZSTD_ldm_generateSequences_internal` reports
+  int _generate(
       Uint8List src, ByteData view, int start, int end, ZstdLdmSequences out) {
+    final capacity = out.litLength.length;
     final limit = end - 8;
     final floor = _dictLimit - 1;
     final width = 1 << bucketLog;
@@ -331,6 +388,9 @@ class ZstdLdm {
           continue;
         }
         final at = out.size;
+        if (at == capacity) {
+          return end - anchor < 0 ? 0 : end - anchor;
+        }
         out.litLength[at] = split - backward - anchor;
         out.matchLength[at] = forward + backward;
         out.offset[at] = split - bestPos;
@@ -347,6 +407,7 @@ class ZstdLdm {
       }
       ip += hashed;
     }
+    return end - anchor < 0 ? 0 : end - anchor;
   }
 
   /// `ZSTD_ldm_gear_feed`: records where the hash lands on the mask, and stops

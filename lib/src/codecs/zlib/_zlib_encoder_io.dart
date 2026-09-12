@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -19,12 +18,7 @@ class _ZLibEncoder extends ZLibEncoderBase {
 
   void encodeStream(InputStream input, OutputStream output,
       {int? level, int? windowBits, bool raw = false}) {
-    final outSink = ChunkedConversionSink<List<int>>.withCallback((chunks) {
-      for (final chunk in chunks) {
-        output.writeBytes(chunk);
-      }
-      output.flush();
-    });
+    final outSink = ZLibOutputSink(output);
 
     final inSink =
         ZLibCodec(level: level ?? 6, windowBits: windowBits ?? 15, raw: raw)

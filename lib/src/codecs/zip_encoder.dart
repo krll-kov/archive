@@ -31,6 +31,10 @@ class _ZipFileData {
   /// the output rather than into a buffer first
   InputStream? source;
 
+  /// What [source] is deflated at, resolved where the entry is added: the
+  /// buffered path reads the same three places and must not disagree with it
+  int level = 6;
+
   /// General purpose bit 3, which says the check and the sizes follow the
   /// data. The central directory has to carry it too, or a reader that
   /// compares the two headers calls the pair broken
@@ -272,18 +276,24 @@ class ZipEncoder {
         // Otherwise we need to compress it now.
         crc32 = getFileCrc32(file);
 
-        if (streamed &&
+        final chosen = level ?? file.compressionLevel ?? _data.level ?? 6;
+        // An entry with no content at all cannot be deflated: a zero length
+        // deflate stream is two bytes, not none, and a reader handed neither
+        // calls the entry corrupt
+        if (file.rawContent == null) {
+          compressionType = CompressionType.none;
+        } else if (streamed &&
             compressionType == CompressionType.deflate &&
             password == null &&
             entry.size <= 0xFFFFFFFF) {
+          fileData.level = chosen;
           fileData.source = file.rawContent?.getStream(decompress: false);
         } else if (compressionType == CompressionType.deflate) {
           final content = file.rawContent;
           final output = OutputMemoryStream();
           platformZLibEncoder.encodeStream(
               content!.getStream(decompress: false), output,
-              level: level ?? file.compressionLevel ?? _data.level ?? 6,
-              raw: true);
+              level: chosen, raw: true);
           compressedData = InputMemoryStream(output.getBytes());
         } else if (compressionType == CompressionType.bzip2) {
           final content = file.rawContent;
@@ -481,7 +491,7 @@ class ZipEncoder {
       // is there, and it goes into the descriptor behind the data
       final before = output.length;
       platformZLibEncoder.encodeStream(fileData.source!, output,
-          level: _data.level ?? 6, raw: true);
+          level: fileData.level, raw: true);
       fileData.compressedSize = output.length - before;
       output.writeUint32(_dataDescriptorSignature);
       output.writeUint32(fileData.crc32);

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -60,6 +61,13 @@ void main() {
       final src = _archive('good-1-lzma2-1.xz');
       expect(() => _decode(Uint8List.sublistView(src, 0, src.length - 8), 64),
           throwsA(isA<ArchiveException>()));
+    });
+
+    test('a first LZMA2 chunk without a dictionary reset is rejected', () {
+      final encoded = XZEncoder().encodeBytes([1, 2, 3], check: XZCheck.crc32);
+      expect(encoded[24], 1);
+      encoded[24] = 2;
+      expect(() => xzCodec.decode(encoded), throwsA(isA<ArchiveException>()));
     });
 
     test('a damaged block is caught by its check', () {
@@ -176,6 +184,14 @@ void main() {
   });
 
   group('xz stream converter', () {
+    test('the default encoder writes the native CRC64 check on every backend',
+        () {
+      final native = base64Decode(
+          '/Td6WFoAAATm1rRGAgAhARYAAAB0L+WjAQACAQIDAACjq/XzQTeKOwABGwMLL7kQ'
+          'H7bzfQEAAAAABFla');
+      expect(xzCodec.encode([1, 2, 3]), native);
+    });
+
     for (final name in ['cat.jpg.xz', 'concatenated.xz', 'x86.xz', 'pb4.xz']) {
       test('$name decodes from the file the way a reader gets it', () async {
         final want = XZDecoder()

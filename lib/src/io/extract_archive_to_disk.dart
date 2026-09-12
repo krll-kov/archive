@@ -10,9 +10,11 @@ import '../codecs/tar_decoder.dart';
 import '../codecs/xz_decoder.dart';
 import '../codecs/zip_decoder.dart';
 import '../codecs/zstd_decoder.dart';
+import '../util/archive_exception.dart';
 import '../util/input_file_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_file_stream.dart';
+import '../util/output_stream.dart';
 import 'posix.dart' as posix;
 
 // Ensure filePath is contained in the outputDir folder, to make sure archives
@@ -182,42 +184,43 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
     );
   }
 
+  // Each of these returns false where the archive ran out part way through.
+  // Dropping that leaves a truncated tar behind, and the entries that did
+  // arrive are then extracted as if the whole thing had been read
+  Future<void> unwrap(
+      bool Function(InputStream input, OutputStream output) decode,
+      String what) async {
+    final directory = Directory.systemTemp.createTempSync('dart_archive');
+    final target = path.join(directory.path, 'temp.tar');
+    tempDir = directory;
+    archivePath = target;
+    final input = InputFileStream(inputPath);
+    final output = OutputFileStream(target, bufferSize: bufferSize);
+    final bool ok;
+    try {
+      ok = decode(input, output);
+    } finally {
+      await input.close();
+      await output.close();
+    }
+    if (!ok) {
+      throw ArchiveException('Could not read the whole $what archive');
+    }
+    archiveExt = '.tar';
+  }
+
   if (archiveExt == '.tar.gz' || archiveExt == '.tgz') {
-    tempDir = Directory.systemTemp.createTempSync('dart_archive');
-    archivePath = path.join(tempDir.path, 'temp.tar');
-    final input = InputFileStream(inputPath);
-    final output = OutputFileStream(archivePath, bufferSize: bufferSize);
-    GZipDecoder().decodeStream(input, output);
-    await input.close();
-    await output.close();
-    archiveExt = '.tar';
+    await unwrap(
+        (input, output) => GZipDecoder().decodeStream(input, output), 'gzip');
   } else if (archiveExt == '.tar.bz2' || archiveExt == '.tbz') {
-    tempDir = Directory.systemTemp.createTempSync('dart_archive');
-    archivePath = path.join(tempDir.path, 'temp.tar');
-    final input = InputFileStream(inputPath);
-    final output = OutputFileStream(archivePath, bufferSize: bufferSize);
-    BZip2Decoder().decodeStream(input, output);
-    await input.close();
-    await output.close();
-    archiveExt = '.tar';
+    await unwrap(
+        (input, output) => BZip2Decoder().decodeStream(input, output), 'bzip2');
   } else if (archiveExt == '.tar.xz' || archiveExt == '.txz') {
-    tempDir = Directory.systemTemp.createTempSync('dart_archive');
-    archivePath = path.join(tempDir.path, 'temp.tar');
-    final input = InputFileStream(inputPath);
-    final output = OutputFileStream(archivePath, bufferSize: bufferSize);
-    XZDecoder().decodeStream(input, output);
-    await input.close();
-    await output.close();
-    archiveExt = '.tar';
+    await unwrap(
+        (input, output) => XZDecoder().decodeStream(input, output), 'xz');
   } else if (archiveExt == '.tar.zst' || archiveExt == '.tzst') {
-    tempDir = Directory.systemTemp.createTempSync('dart_archive');
-    archivePath = path.join(tempDir.path, 'temp.tar');
-    final input = InputFileStream(inputPath);
-    final output = OutputFileStream(archivePath, bufferSize: bufferSize);
-    ZstdDecoder().decodeStream(input, output);
-    await input.close();
-    await output.close();
-    archiveExt = '.tar';
+    await unwrap(
+        (input, output) => ZstdDecoder().decodeStream(input, output), 'zstd');
   }
 
   InputStream? toClose;
@@ -274,7 +277,8 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
 
   await archive.clear();
 
-  if (tempDir != null) {
-    await tempDir.delete(recursive: true);
+  final created = tempDir;
+  if (created != null) {
+    await created.delete(recursive: true);
   }
 }

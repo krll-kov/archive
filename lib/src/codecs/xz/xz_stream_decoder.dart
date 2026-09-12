@@ -301,7 +301,7 @@ class XZStreamDecoder {
     final checkType = streamFlags & 0xf;
     final needsBlockData = hasX86 ||
         (verify &&
-            (checkType == 0x1 || (checkType == 0x4 && isCrc64Supported())));
+            (checkType == 0x1 || checkType == 0x4));
     Uint8List? blockData;
 
     if (needsBlockData && output is! OutputMemoryStream) {
@@ -388,12 +388,13 @@ class XZStreamDecoder {
         }*/
         break;
       case 0x4: // CRC64
-        final int expectedCrc = input.readUint64();
-        if (verify &&
-            isCrc64Supported() &&
-            getCrc64(blockData ?? output.subset(startDataLength)) !=
-                expectedCrc) {
-          return _fail('CRC64 check failed');
+        final stored = input.readBytes(8).toUint8List();
+        if (verify) {
+          final actual = Crc64()
+            ..update(blockData ?? output.subset(startDataLength));
+          if (!actual.matches(stored, 0)) {
+            return _fail('CRC64 check failed');
+          }
         }
         break;
       case 0x5:
@@ -451,8 +452,21 @@ class XZStreamDecoder {
 
   // Reads LZMA2 data from [input].
   bool _readLZMA2(InputStream input, OutputStream output, int dictionarySize) {
+    // A block decodes on its own, so its first chunk has to start the
+    // dictionary: control 1 for an uncompressed chunk, reset 3 for an LZMA one
+    var needDictionaryReset = true;
     while (!input.isEOS) {
       final control = input.readByte();
+      if (control != 0) {
+        final resets = control < 0x80
+            ? control == 1
+            : ((control >> 5) & 0x3) == 3;
+        if (needDictionaryReset && !resets) {
+          return _fail(
+              'The first LZMA2 chunk does not reset the dictionary');
+        }
+        needDictionaryReset = false;
+      }
       // Control values:
       // 00000000 - end marker
       // 00000001 - reset dictionary and uncompresed data

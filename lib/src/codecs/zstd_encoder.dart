@@ -64,7 +64,7 @@ class ZstdEncoder {
         overlapLog: options.overlapLog,
         workers: options.workers ?? 0,
         memoryBudget: options.memoryBudget ?? zstdDefaultMemoryBudget,
-        dictionary: dictionary);
+        dictionary: _dictionary);
   }
 
   static void _reportAsync<T>(ZstdMultithreadOptions<T> options,
@@ -86,21 +86,12 @@ class ZstdEncoder {
           'Must be given here, since this call has nowhere else to put the '
               'result; only a stream carries its own end');
     }
-    final workers = options.workers;
-    if (workers != null && workers < 1) {
-      throw ArgumentError.value(workers, 'workers', 'Must be at least 1');
-    }
-    final budget = options.memoryBudget;
-    if (budget != null && budget < 1) {
-      throw ArgumentError.value(budget, 'memoryBudget', 'Must be at least 1');
-    }
-    if (options.overlapLog < 0 || options.overlapLog > 9) {
-      throw ArgumentError.value(
-          options.overlapLog, 'overlapLog', 'Must be 0 to 9');
-    }
-    if (options.jobSize < 0) {
-      throw ArgumentError.value(options.jobSize, 'jobSize', 'Must not be negative');
-    }
+    checkZstdMultithreadOptions(options);
+  }
+
+  ZstdDictionary? get _dictionary {
+    final dict = dictionary;
+    return dict != null && dict.usableForEncode ? dict : null;
   }
 
   List<int> encode(List<int> data, {int? level}) =>
@@ -122,14 +113,16 @@ class ZstdEncoder {
       // bytes in instead
       if (input.length <= zstdMtJobSizeMin ||
           region == null ||
-          dictionary != null) {
+          _dictionary != null) {
         final bytes = input.toUint8List();
+        input.skip(input.length);
         _reportAsync(multithread, () async {
           output.writeBytes(await _multithreadBytes(bytes, chosen, multithread));
           return true;
         }, false);
         return;
       }
+      input.skip(input.length);
       _reportAsync(multithread, () async {
         await zstdMtCompressFile(region[0] as String, region[1] as int,
             region[2] as int, chosen, output,

@@ -5,6 +5,8 @@ import 'package:archive/src/codecs/zstd/zstd_constants.dart';
 import 'package:archive/src/codecs/zstd/zstd_dictionary.dart';
 import 'package:archive/src/codecs/zstd_decoder.dart';
 import 'package:archive/src/util/crc32.dart';
+import 'package:archive/src/util/input_memory_stream.dart';
+import 'package:archive/src/util/output_memory_stream.dart';
 import 'package:archive/src/util/xxh64.dart';
 import 'package:test/test.dart';
 
@@ -170,6 +172,22 @@ const _dictionaries = <String>[
 ];
 
 void main() {
+  test('streamed matches survive wrapping a 1 KiB window on every backend', () {
+    final encoded = base64Decode(
+        'KLUv/QQAZAAAKGFiY2RlAQD4URUtTAAAEGVhAQD7K4AFTAAAEGRlAQD7K4AF'
+        'TAAAEGNkAQD7K4AFTAAAEGJjAQD7K4AFTAAAEGFiAQD7K4AFTAAAEGVhAQD7'
+        'K4AFTAAAEGRlAQD7K4AFTAAAEGNkAQD7K4AFTAAAEGJjAQD7K4AFTAAAEGFi'
+        'AQD7K4AFTAAAEGVhAQD7K4AFTAAAEGRlAQD7K4AFTAAAEGNkAQD7K4AFRQAA'
+        'CGIBAJQqIATVo9ya');
+    final source = List<int>.generate(15000, (i) => 97 + i % 5);
+    expect(ZstdDecoder().decodeBytes(encoded, verify: true, throwOnError: true),
+        source);
+    final output = OutputMemoryStream();
+    ZstdDecoder().decodeStream(InputMemoryStream(encoded), output,
+        verify: true, throwOnError: true);
+    expect(output.getBytes(), source);
+  });
+
   test('highest bit handles every exact integer width', () {
     const native = bool.fromEnvironment('dart.library.isolate');
     final maximumBit = native ? 62 : 52;

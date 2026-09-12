@@ -43,11 +43,20 @@ class ZstdBlockEncoder {
   /// decoder before 1.4.4 reads one as the frame ending early
   bool _first = true;
 
+  /// `ZSTD_referenceExternalSequences`: matches found once for a whole job
+  final ZstdLdmSequences? _external;
+
   ZstdBlockEncoder(int blockSizeMax, ZstdLevelParams params)
       : this._(blockSizeMax, params,
-            ZstdLdm.forParams(params.refStrategy, params.windowLog));
+            ZstdLdm.forParams(params.refStrategy, params.windowLog), null);
 
-  ZstdBlockEncoder._(int blockSizeMax, ZstdLevelParams params, this._ldm)
+  /// The matcher is off here, [external] carries what it would have found
+  ZstdBlockEncoder.external(
+      int blockSizeMax, ZstdLevelParams params, ZstdLdmSequences? external)
+      : this._(blockSizeMax, params, null, external);
+
+  ZstdBlockEncoder._(
+      int blockSizeMax, ZstdLevelParams params, this._ldm, this._external)
       : _ldmSeq = _ldm == null
             ? null
             : ZstdLdmSequences(_ldm.capacityFor(blockSizeMax)),
@@ -132,11 +141,16 @@ class ZstdBlockEncoder {
       final held2 = rep[2];
       final ldm = _ldm;
       final ldmSeq = _ldmSeq;
+      final external = _external;
       if (ldm != null && ldmSeq != null) {
         ldm.generate(src, ByteData.sublistView(src), start, end, ldmSeq);
         _finder.ldm = ldmSeq;
+      } else if (external != null) {
+        _finder.ldm = external;
       }
       _finder.parse(src, start, end, lowLimit, _store, rep);
+      // `ZSTD_ldm_blockCompress` leaves the store one block further on
+      external?.skipBytes(size);
       if (_splitting) {
         final splits =
             _splitter.derive(_scratch, _store, _literals, _sequences);

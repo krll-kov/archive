@@ -129,6 +129,13 @@ class ZstdEncoderConverter extends ChunkedConverter {
         dictionary: dictionary);
   }
 
+  /// The dictionary as the reference sees it here, none where it is too short
+  /// for `ZSTD_compress_insertDictionary` to take
+  ZstdDictionary? get _encodeDictionary {
+    final dict = dictionary;
+    return dict != null && dict.usableForEncode ? dict : null;
+  }
+
   @override
   Stream<List<int>> bind(Stream<List<int>> stream) {
     final options = multithread;
@@ -140,23 +147,28 @@ class ZstdEncoderConverter extends ChunkedConverter {
 
   Stream<List<int>> _bindMultithread(
       Stream<List<int>> stream, ZstdMultithreadOptions<Object?> options) async* {
+    checkZstdMultithreadOptions(options);
     final hash = Xxh64()..reset();
-    final header = OutputMemoryStream();
-    writeZstdMtStreamHeader(header, checksum, level, dictionary?.id ?? 0);
-    yield header.getBytes();
-    final counted = checksum
-        ? stream.map((chunk) {
-            final bytes =
-                chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
-            hash.update(bytes, 0, bytes.length);
-            return bytes;
-          })
-        : stream;
+    final counted = stream.map((chunk) {
+      final bytes = chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
+      if (checksum) {
+        hash.update(bytes, 0, bytes.length);
+      }
+      return bytes;
+    });
+    // The header goes out with the first part rather than ahead of the stream:
+    // only by then is whether anything arrived at all settled, and an empty
+    // frame carries its size where a streamed one carries a window
     yield* zstdMtCompressStream(counted, level,
         jobSize: options.jobSize,
         overlapLog: options.overlapLog,
         workers: options.workers ?? 0,
-        dictionary: dictionary);
+        dictionary: _encodeDictionary, header: (empty) {
+      final header = OutputMemoryStream();
+      writeZstdMtStreamHeader(
+          header, checksum, level, _encodeDictionary?.id ?? 0, empty);
+      return header.getBytes();
+    });
     if (checksum) {
       final out = OutputMemoryStream();
       writeZstdMtChecksum(out, hash.digestLow);
@@ -222,6 +234,13 @@ class ZstdChunkedEncoder extends ChunkedSink {
   /// picks and the window it leaves unclamped
   static const _sizeUnknown = 1099511627776;
 
+  /// The dictionary as the reference sees it here, which is none where it is
+  /// too short for `ZSTD_compress_insertDictionary` to take
+  ZstdDictionary? get _encodeDictionary {
+    final dict = dictionary;
+    return dict != null && dict.usableForEncode ? dict : null;
+  }
+
   /// Loads the dictionary before anything arrives: it sits at the front of the
   /// window, and the first block reaches into it
   void _prime() {
@@ -230,10 +249,10 @@ class ZstdChunkedEncoder extends ChunkedSink {
       return;
     }
     _primed = true;
-    final content = dict.content;
-    if (content.isEmpty) {
+    if (!dict.usableForEncode) {
       return;
     }
+    final content = dict.content;
     _buffer.setRange(0, content.length, content);
     _blocks.prime(_buffer, 0, content.length, dict);
     _rep.setAll(0, dict.repeatOffsets);
@@ -248,7 +267,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
     if (slack < _matchWindow) {
       slack = _matchWindow;
     }
-    return Uint8List((dictionary?.content.length ?? 0) +
+    return Uint8List((_encodeDictionary?.content.length ?? 0) +
         _matchWindow +
         slack +
         _blockSizeMax +
@@ -265,7 +284,14 @@ class ZstdChunkedEncoder extends ChunkedSink {
 
   @override
   void finish() {
-    _writeHeader();
+    // `ZSTD_CCtx_init_compressStream2` takes the pledged size from the call
+    // that ends the frame, so a frame that never carried a byte is the single
+    // segment one the reference writes, not a streamed header over nothing
+    if (!_started && _content == 0 && available == 0) {
+      _writeEmptyHeader();
+    } else {
+      _writeHeader();
+    }
     if (available > 0) {
       _gather(available);
     }
@@ -343,7 +369,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
   }
 
   int get _idFlag {
-    final id = dictionary?.id ?? 0;
+    final id = _encodeDictionary?.id ?? 0;
     return id == 0 ? 0 : (id < 256 ? 1 : (id < 65536 ? 2 : 3));
   }
 
@@ -361,7 +387,25 @@ class ZstdChunkedEncoder extends ChunkedSink {
       ..writeByte((zstdMagic >>> 24) & 0xff)
       ..writeByte((checksum ? 4 : 0) | _idFlag)
       ..writeByte((_params.windowLog - 10) << 3);
-    final id = dictionary?.id ?? 0;
+    _writeDictionaryId();
+  }
+
+  /// The header of a frame whose content turned out to be nothing: the single
+  /// segment flag stands in for the window, and the size follows it in one byte
+  void _writeEmptyHeader() {
+    _started = true;
+    _out
+      ..writeByte(zstdMagic & 0xff)
+      ..writeByte((zstdMagic >>> 8) & 0xff)
+      ..writeByte((zstdMagic >>> 16) & 0xff)
+      ..writeByte((zstdMagic >>> 24) & 0xff)
+      ..writeByte(0x20 | (checksum ? 4 : 0) | _idFlag);
+    _writeDictionaryId();
+    _out.writeByte(0);
+  }
+
+  void _writeDictionaryId() {
+    final id = _encodeDictionary?.id ?? 0;
     for (var i = 0; i < const [0, 1, 2, 4][_idFlag]; i++) {
       _out.writeByte((id >>> (i << 3)) & 0xff);
     }
@@ -415,14 +459,18 @@ class ZstdChunkedDecoder extends ChunkedSink {
           skip(4);
           _stage = _Stage.skippableBody;
         case _Stage.skippableBody:
-          if (available == 0) {
-            return;
-          }
-          final take = available < _skipLeft ? available : _skipLeft;
-          skip(take);
-          _skipLeft -= take;
+          // A skippable frame may declare no body at all, and waiting on a
+          // byte for it leaves the stage unfinished at the end of the input
           if (_skipLeft > 0) {
-            return;
+            if (available == 0) {
+              return;
+            }
+            final take = available < _skipLeft ? available : _skipLeft;
+            skip(take);
+            _skipLeft -= take;
+            if (_skipLeft > 0) {
+              return;
+            }
           }
           _stage = _Stage.magic;
         case _Stage.frameHeader:

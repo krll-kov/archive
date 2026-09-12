@@ -172,6 +172,13 @@ void _buildFromWeights(ZstdHuffmanTable table, Uint8List weights,
       rankStart[w] += 1 << (w - 1);
     }
   }
+  // `HUF_readStats_body`: weight one is the longest code, so a complete tree
+  // pairs them off and cannot hold fewer than two. The rank holds one slot per
+  // such symbol, which is the count
+  final ones = rankStart[1];
+  if (ones < 2 || ones & 1 != 0) {
+    _weightOnesDoNotPair(ones);
+  }
   var position = 0;
   for (var w = 1; w <= tableLog; w++) {
     final width = rankStart[w];
@@ -283,6 +290,11 @@ Never _weightCountOutOfRange(int weightCount) =>
 @pragma('vm:never-inline')
 Never _weightTooLarge(int w) =>
     throw ZstdHuffmanException('Weight $w exceeds the longest code allowed');
+
+@pragma('vm:never-inline')
+Never _weightOnesDoNotPair(int ones) => throw ZstdHuffmanException(
+    'A complete tree needs an even count of two or more longest codes, not '
+    '$ones');
 
 @pragma('vm:never-inline')
 Never _tableLogTooLarge(int tableLog) =>

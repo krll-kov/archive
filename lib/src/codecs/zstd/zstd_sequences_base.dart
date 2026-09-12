@@ -146,6 +146,11 @@ abstract class ZstdSequencesBase {
     }
 
     if (count == 0) {
+      // `ZSTD_decodeSeqHeaders`: no sequence means the section ends here, and
+      // anything still in the block is extraneous
+      if (at != end) {
+        _extraneousDataAfterTheCount();
+      }
       _copyLiterals(literals, window, blockSizeMax);
       return;
     }
@@ -248,6 +253,10 @@ Never _sequencesSectionIsEmpty() =>
 @pragma('vm:never-inline')
 Never _sequenceCountIsTruncated() =>
     throw ZstdSequencesException('Sequence count is truncated');
+
+@pragma('vm:never-inline')
+Never _extraneousDataAfterTheCount() => throw ZstdSequencesException(
+    'Extraneous data present in the sequences section');
 
 @pragma('vm:never-inline')
 Never _compressionModesByteIs() =>

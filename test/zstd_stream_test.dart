@@ -83,6 +83,16 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
+    test('a trailing empty skippable frame is accepted', () {
+      final content = [1, 2, 3];
+      final archive = Uint8List.fromList([
+        ...ZstdEncoder().encodeBytes(content),
+        0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0,
+      ]);
+      expect(ZstdDecoder().decodeBytes(archive, throwOnError: true), content);
+      expect(_decode(archive, archive.length), content);
+    });
+
     test('a damaged frame is caught by its checksum', () {
       final src = Uint8List.fromList(_archive('text-1k-l19.zst'));
       src[src.length - 12] ^= 0xff;
@@ -109,6 +119,13 @@ void main() {
   });
 
   group('zstd stream converter', () {
+    test('an empty stream writes the reference frame', () async {
+      final frame = await const Stream<List<int>>.empty()
+          .transform(const ZstdCodec(level: 1, frameChecksum: false).encoder)
+          .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
+      expect(frame, [0x28, 0xb5, 0x2f, 0xfd, 0x20, 0, 1, 0, 0]);
+    });
+
     test('decodes from the file the way a reader gets it', () async {
       final name = 'domains-slice-l19.zst';
       final want = ZstdDecoder()
@@ -193,6 +210,37 @@ void main() {
               source,
               reason: 'level $level checksum $checksum');
         }
+      }
+    });
+
+    test('double-fast matches stop at the window after the input ring wraps', () {
+      const block = 131072;
+      const ring = (1 << 21) + block;
+      final source = Uint8List(ring + block);
+      var state = 937;
+      for (var i = 0; i < source.length; i++) {
+        state = (state * 1664525 + 1013904223) & 0xffffffff;
+        source[i] = state >> 24;
+      }
+      source.setRange(ring + 100, source.length, source, 2 * block - 100);
+
+      for (final level in [3, 4]) {
+        final held = _Held();
+        final encoder = ZstdChunkedEncoder(held, level: level, checksum: false);
+        for (var at = 0; at < source.length; at += 65536) {
+          encoder.addSlice(source, at, at + 65536, false);
+        }
+        encoder.close();
+        final archive = held.bytes;
+        expect(ZstdDecoder().decodeBytes(archive, throwOnError: true), source,
+            reason: 'level $level');
+        // ZSTD_compressStream2 retains 200 literals before this boundary match
+        expect(archive.sublist(ring + 6 + 3 * 17), [
+          0xa4, 0x06, 0x00, 0x84, 0x0c,
+          ...source.sublist(ring, ring + 200),
+          0x01, 0x00, 0xc8, 0x9a, 0xff, 0x65, 0x00, 0xcf, 0x9b, 0x14,
+          0x01, 0x00, 0x00,
+        ], reason: 'level $level');
       }
     });
 

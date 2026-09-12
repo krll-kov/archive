@@ -35,7 +35,7 @@ void main() {
       expect(ZstdLdm.forParams(5, 27), isNull);
       // The deepest search halves the match it will take
       final deep = ZstdLdm.forParams(9, 27)!;
-      final shallow = ZstdLdm.forParams(6, 27)!;
+      final shallow = ZstdLdm.forParams(7, 27)!;
       expect(deep.minMatch, lessThan(shallow.minMatch));
       expect(deep.windowLog, 27);
     });
@@ -44,6 +44,13 @@ void main() {
       final ldm = _matcher();
       expect(ldm.capacityFor(1 << 17), (1 << 17) ~/ ldm.minMatch + 1);
       expect(ldm.capacityFor(0), 1);
+    });
+
+    test('reference strategy numbers keep the long distance thresholds', () {
+      expect(
+          [6, 7, 8, 9]
+              .map((strategy) => ZstdLdm.forParams(strategy, 27)?.minMatch),
+          [null, 64, 32, 32]);
     });
 
     test('a run repeated far back is found again', () {

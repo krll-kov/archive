@@ -176,7 +176,7 @@ class XZEncoder {
         output.writeUint32(getCrc32(data));
         break;
       case 0x04: // CRC64
-        output.writeUint64(getCrc64(data));
+        output.writeBytes(crc64Bytes(data));
         break;
       case 0x0a: // SHA-256
         output.writeBytes(PcSHA256Digest().process(data));

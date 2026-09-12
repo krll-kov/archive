@@ -133,9 +133,8 @@ ZstdFseDistribution readFseDistribution(
   if (remaining != 1) {
     _probabilitiesDoNotAdd();
   }
-  if (symbol < 2) {
-    _aTableNeedsTwo();
-  }
+  // `FSE_readNCount_body` has no lower bound on the symbol count: one symbol
+  // taking the whole table is a description the reference reads
 
   final bytesRead = (bitPos + 7) >> 3;
   if (start + bytesRead > end) {
@@ -243,10 +242,6 @@ Never _probabilitiesOvershootTheTable() =>
 @pragma('vm:never-inline')
 Never _probabilitiesDoNotAdd() =>
     throw ZstdFseException('Probabilities do not add up to the table size');
-
-@pragma('vm:never-inline')
-Never _aTableNeedsTwo() =>
-    throw ZstdFseException('A table needs two or more symbols');
 
 @pragma('vm:never-inline')
 Never _tableDescriptionIsTruncated() =>

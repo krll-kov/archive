@@ -9,8 +9,6 @@ import 'tar/tar_file.dart';
 
 /// Decode a tar formatted buffer into an [Archive] object.
 class TarDecoder {
-  static const _space = 0x20;
-
   final Encoding filenameEncoding;
   List<TarFile> files = [];
 
@@ -53,35 +51,10 @@ class TarDecoder {
       }
 
       if (verify) {
-        // A tar header carries a checksum of its own 512 bytes, taking the
-        // eight bytes of the checksum field itself as spaces. It is the only
-        // thing that tells a tar apart from an unrelated file, since every
-        // other field is free-form enough to read as something.
-        final h = endCheck;
-        if (h.length < 512) {
+        if (endCheck.length < 512) {
           throw ArchiveException('Invalid tar header');
         }
-        var unsigned = 0;
-        var signed = 0;
-        for (var i = 0; i < 512; ++i) {
-          final b = (i >= 148 && i < 156) ? _space : h[i];
-          unsigned += b;
-          // Implementations that predate unsigned char summed these signed.
-          signed += b > 127 ? b - 256 : b;
-        }
-        // The stored value is octal, padded with spaces or nulls on either
-        // side of the digits.
-        var p = 148;
-        while (p < 156 && (h[p] == _space || h[p] == 0)) {
-          p++;
-        }
-        var digits = '';
-        while (p < 156 && h[p] != _space && h[p] != 0) {
-          digits += String.fromCharCode(h[p]);
-          p++;
-        }
-        final stored = int.tryParse(digits, radix: 8);
-        if (stored != unsigned && stored != signed) {
+        if (!tarHeaderChecksumMatches(endCheck)) {
           throw ArchiveException('Invalid tar header checksum');
         }
       }

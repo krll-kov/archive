@@ -91,7 +91,7 @@ class TarFile {
     // character strings. All other fields are zero-filled octal numbers in
     // ASCII. Each numeric field of width w contains w minus 1 digits, and a
     // null.
-    filename = _parseString(header, 100, encoding);
+    filename = _parseString(header, 100, encoding, false);
     mode = _parseInt(header, 8);
     ownerId = _parseInt(header, 8);
     groupId = _parseInt(header, 8);
@@ -99,7 +99,7 @@ class TarFile {
     lastModTime = _parseInt(header, 12);
     checksum = _parseInt(header, 8);
     typeFlag = _parseString(header, 1);
-    nameOfLinkedFile = _parseString(header, 100, encoding);
+    nameOfLinkedFile = _parseString(header, 100, encoding, false);
 
     ustarIndicator = _parseString(header, 6);
     if (ustarIndicator == 'ustar') {
@@ -108,7 +108,7 @@ class TarFile {
       ownerGroupName = _parseString(header, 32);
       deviceMajorNumber = _parseInt(header, 8);
       deviceMinorNumber = _parseInt(header, 8);
-      filenamePrefix = _parseString(header, 155);
+      filenamePrefix = _parseString(header, 155, null, false);
       if (filenamePrefix.isNotEmpty) {
         filename = '$filenamePrefix/$filename';
       }
@@ -182,7 +182,10 @@ class TarFile {
   @override
   String toString() => '[$filename, $mode, $fileSize]';
 
-  void write(OutputStream output, {Encoding? filenameEncoder}) {
+  /// With [headerOnly] the content and its padding are left to the caller, who
+  /// can then stream them out a piece at a time rather than through one call
+  void write(OutputStream output,
+      {Encoding? filenameEncoder, bool headerOnly = false}) {
     fileSize = size;
 
     // The name, linkname, magic, uname, and gname are null-terminated
@@ -204,8 +207,7 @@ class TarFile {
     }
 
     final remainder = 512 - header.length;
-    var nulls = Uint8List(remainder); // typed arrays default to 0.
-    header.writeBytes(nulls);
+    header.writeBytes(Uint8List(remainder)); // typed arrays default to 0
 
     final headerBytes = header.getBytes();
 
@@ -232,23 +234,37 @@ class TarFile {
 
     output.writeBytes(header.getBytes());
 
-    // Through a subset, so that writing never moves the position of the
-    // stream the entry was given: a file output reads it in chunks
-    if (_content != null) {
-      output.writeStream(_content!.getStream().subset());
-    } else if (_rawContent != null) {
-      output.writeStream(_rawContent!.subset());
+    if (headerOnly) {
+      return;
+    }
+    final body = contentStream;
+    if (body != null) {
+      output.writeStream(body);
     }
 
-    if (isFile && fileSize > 0) {
-      // Pad to 512-byte boundary
-      final remainder = fileSize % 512;
-      if (remainder != 0) {
-        final skiplen = 512 - remainder;
-        nulls = Uint8List(skiplen); // typed arrays default to 0.
-        output.writeBytes(nulls);
-      }
+    final pad = padding;
+    if (pad > 0) {
+      output.writeBytes(Uint8List(pad));
     }
+  }
+
+  /// What follows the header, through a subset so that writing never moves the
+  /// position of the stream the entry was given: a file output reads it in
+  /// chunks
+  InputStream? get contentStream {
+    if (_content != null) {
+      return _content!.getStream().subset();
+    }
+    return _rawContent?.subset();
+  }
+
+  /// The zeros that bring the content up to a 512 byte boundary
+  int get padding {
+    if (!isFile || fileSize <= 0) {
+      return 0;
+    }
+    final remainder = fileSize % 512;
+    return remainder == 0 ? 0 : 512 - remainder;
   }
 
   int _parseInt(InputStream input, int numBytes) {
@@ -299,18 +315,22 @@ class TarFile {
     return x;
   }
 
-  String _parseString(InputStream input, int numBytes, [Encoding? encoding]) {
+  /// A field is NUL terminated, or fills its width. [trim] additionally drops
+  /// the spaces the ustar magic and the owner fields are padded with; a name
+  /// keeps them, since a space is a legal character in one and a file called
+  /// `" .codecov.yml"` is not the same file as `".codecov.yml"`
+  String _parseString(InputStream input, int numBytes,
+      [Encoding? encoding, bool trim = true]) {
     final codes = input.readBytes(numBytes).toUint8List();
     final r = codes.indexOf(0);
     final s = codes.sublist(0, r < 0 ? null : r);
+    final String text;
     try {
-      return encoding != null
-          ? encoding.decode(s).trim()
-          : utf8.decode(s).trim();
+      text = encoding != null ? encoding.decode(s) : utf8.decode(s);
     } catch (e) {
-      return String.fromCharCodes(s).trim();
-      //throw ArchiveException('Invalid Archive');
+      return trim ? String.fromCharCodes(s).trim() : String.fromCharCodes(s);
     }
+    return trim ? text.trim() : text;
   }
 
   void _writeString(OutputStream output, String value, int numBytes,
@@ -517,4 +537,36 @@ class TarMetadata {
       }
     }
   }
+}
+
+/// Whether [header]'s own checksum field agrees with its 512 bytes, the eight
+/// bytes of that field taken as spaces. It is the only thing that tells a tar
+/// apart from an unrelated file, since every other field is free-form enough to
+/// read as something
+bool tarHeaderChecksumMatches(Uint8List header) {
+  const space = 0x20;
+  if (header.length < 512) {
+    return false;
+  }
+  var unsigned = 0;
+  var signed = 0;
+  for (var i = 0; i < 512; ++i) {
+    final b = (i >= 148 && i < 156) ? space : header[i];
+    unsigned += b;
+    // Implementations that predate unsigned char summed these signed
+    signed += b > 127 ? b - 256 : b;
+  }
+  // The stored value is octal, padded with spaces or nulls on either side of
+  // the digits
+  var p = 148;
+  while (p < 156 && (header[p] == space || header[p] == 0)) {
+    p++;
+  }
+  var digits = '';
+  while (p < 156 && header[p] != space && header[p] != 0) {
+    digits += String.fromCharCode(header[p]);
+    p++;
+  }
+  final stored = int.tryParse(digits, radix: 8);
+  return stored == unsigned || stored == signed;
 }

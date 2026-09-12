@@ -23,4 +23,9 @@ void main() {
       expect(d2[i], equals(file[i]));
     }
   });
+
+  test('encode rejects a block size outside the format', () {
+    expect(() => BZip2Encoder().encodeBytes([1, 2, 3], blockSize100k: 10),
+        throwsA(isA<ArchiveException>()));
+  });
 }

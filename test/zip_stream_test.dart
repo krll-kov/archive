@@ -87,6 +87,53 @@ void main() {
   });
 
   group('zip with the sizes behind the data, which is the default', () {
+    for (final useAddLevel in [false, true]) {
+      test('the ${useAddLevel ? 'add' : 'entry'} level override is respected',
+          () {
+        Uint8List payload(bool streamed) {
+          final file = ArchiveFile.bytes('a', Uint8List(128 * 1024))
+            ..compressionLevel = useAddLevel ? null : 0;
+          final output = OutputMemoryStream();
+          final encoder = ZipEncoder(streamed: streamed)
+            ..startEncode(output, level: 1);
+          encoder.add(file, level: useAddLevel ? 0 : null);
+          encoder.endEncode();
+          final archive = ZipDecoder().decodeBytes(output.getBytes());
+          return (archive.files.single.rawContent! as ZipFile)
+              .getStream(decompress: false)
+              .toUint8List();
+        }
+
+        final expected = payload(false);
+        final actual = payload(true);
+        expect(actual.length, expected.length);
+        expect(actual, expected);
+      });
+    }
+
+    test('it emits before the compression pass reads an entire entry', () {
+      final bytes = _source(1024 * 1024, 17);
+      final input = _ObservedInput(bytes);
+      final output = _ObservedOutput(input);
+      ZipChunkedEncoder(output)
+        ..add(ArchiveFile.stream('a', input))
+        ..close();
+      expect(output.firstRead, isNotNull);
+      // The CRC pass must read the source once before compression starts
+      expect(output.firstRead!, lessThan(2 * bytes.length));
+    });
+
+    test('an entry without content is a valid empty file', () {
+      final bytes = _zip([ArchiveFile.noData('empty')]);
+      final archive = ZipDecoder().decodeBytes(bytes);
+      final file = archive.files.single.rawContent! as ZipFile;
+      expect(
+          file.compressionMethod != CompressionType.deflate ||
+              file.compressedSize > 0,
+          isTrue);
+      expect(archive.files.single.content, isEmpty);
+    });
+
     test('what it writes reads back', () {
       final want = _source(70000, 3);
       final back = ZipDecoder().decodeBytes(_zip(_entries()), verify: true);
@@ -188,6 +235,32 @@ void main() {
       }
     });
   });
+}
+
+class _ObservedInput extends InputMemoryStream {
+  int read = 0;
+
+  _ObservedInput(super.bytes);
+
+  @override
+  InputStream readBytes(int count) {
+    final piece = super.readBytes(count);
+    read += piece.length;
+    return piece;
+  }
+}
+
+class _ObservedOutput extends _Held {
+  final _ObservedInput input;
+  int? firstRead;
+
+  _ObservedOutput(this.input);
+
+  @override
+  void add(List<int> data) {
+    if (data.isNotEmpty) firstRead ??= input.read;
+    super.add(data);
+  }
 }
 
 class _Held implements Sink<List<int>> {

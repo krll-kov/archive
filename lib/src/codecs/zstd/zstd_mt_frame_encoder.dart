@@ -7,6 +7,7 @@ import 'zstd_block_encoder.dart';
 import 'zstd_block_splitter.dart';
 import 'zstd_constants.dart';
 import 'zstd_dictionary.dart';
+import 'zstd_ldm.dart';
 import 'zstd_level_params.dart';
 import 'zstd_mt_parallel.dart';
 
@@ -18,6 +19,11 @@ const zstdMtChunkSize = 4 * zstdBlockMaximumSize;
 /// `ZSTDMT_JOBSIZE_MIN`: at or below this the reference drops its workers, so
 /// the frame is the one the single threaded encoder writes
 const zstdMtJobSizeMin = 512 * 1024;
+
+/// Whether the long distance matcher is on, which changes how a threaded frame
+/// is cut as well as where its matches come from
+bool zstdMtLongRange(ZstdLevelParams params) =>
+    ZstdLdm.forParams(params.refStrategy, params.windowLog) != null;
 
 /// `ZSTDMT_JOBLOG_MAX`
 const _jobLogMax = 29;
@@ -60,11 +66,12 @@ class ZstdMtFrameEncoder {
     final blockSizeMax =
         windowSize < zstdBlockMaximumSize ? windowSize : zstdBlockMaximumSize;
     final prefixSize = _prefixSize(params, overlapLog);
-    var job = jobSize > 0 ? jobSize : 1 << _targetJobLog(params);
+    var job = _jobSize(jobSize, params);
     if (job < prefixSize) {
       job = prefixSize;
     }
 
+    final pass = ZstdMtLdmPass.forParams(params, job);
     var at = start;
     var first = true;
     while (first || at < end) {
@@ -74,7 +81,8 @@ class ZstdMtFrameEncoder {
       final before = at - start;
       final prefix = before < prefixSize ? before : prefixSize;
       _encodeJob(src, at - prefix, at, jobEnd, out, matchWindow, blockSizeMax,
-          params, at == start, lastJob && jobEnd == end, null);
+          params, at == start, lastJob && jobEnd == end, null,
+          pass?.generate(src, at, jobEnd));
       at = jobEnd;
       if (lastJob) {
         break;
@@ -104,8 +112,12 @@ class ZstdMtFrameEncoder {
       ZstdLevelParams params,
       bool firstJob,
       bool lastJob,
-      ZstdDictionary? dictionary) {
-    final blocks = ZstdBlockEncoder(blockSizeMax, params);
+      ZstdDictionary? dictionary,
+      ZstdLdmSequences? ldmSequences) {
+    // `ZSTDMT_compressionJob` turns the matcher off inside a job, found or not
+    final blocks = zstdMtLongRange(params)
+        ? ZstdBlockEncoder.external(blockSizeMax, params, ldmSequences)
+        : ZstdBlockEncoder(blockSizeMax, params);
     if (dictionary != null) {
       // Only the first job is given one, as `ZSTDMT_compressionJob` asserts,
       // and it takes its repeat offsets from it rather than from the frame's
@@ -164,7 +176,14 @@ class ZstdMtFrameEncoder {
   /// `ZSTDMT_computeTargetJobLog` without the long distance matcher, which
   /// this path does not take yet
   static int _targetJobLog(ZstdLevelParams params) {
-    final log = params.windowLog + 2 > 20 ? params.windowLog + 2 : 20;
+    final int log;
+    if (zstdMtLongRange(params)) {
+      // `ZSTDMT_computeTargetJobLog`: sized from the cycle, the window is wide
+      final cycleLog = params.chainLog - (params.refStrategy >= 6 ? 1 : 0);
+      log = cycleLog + 3 > 21 ? cycleLog + 3 : 21;
+    } else {
+      log = params.windowLog + 2 > 20 ? params.windowLog + 2 : 20;
+    }
     return log > _jobLogMax ? _jobLogMax : log;
   }
 
@@ -172,10 +191,25 @@ class ZstdMtFrameEncoder {
   static int _prefixSize(ZstdLevelParams params, int overlapLog) {
     final log = overlapLog > 0 ? overlapLog : _overlapLogDefault(params);
     final reverse = 9 - log;
+    if (zstdMtLongRange(params)) {
+      // `ZSTDMT_computeOverlapSize`: a fraction of the job, not of the window
+      final jobLog = _targetJobLog(params);
+      final ceiling = params.windowLog < jobLog - 2 ? params.windowLog : jobLog - 2;
+      final ovLog = ceiling - reverse;
+      return ovLog <= 0 ? 0 : 1 << ovLog;
+    }
     if (reverse >= 8) {
       return 0;
     }
     return 1 << (params.windowLog - reverse);
+  }
+
+  /// `ZSTD_CCtxParams_setParameter` raises a given size to `ZSTDMT_JOBSIZE_MIN`
+  static int _jobSize(int given, ZstdLevelParams params) {
+    if (given <= 0) {
+      return 1 << _targetJobLog(params);
+    }
+    return given < zstdMtJobSizeMin ? zstdMtJobSizeMin : given;
   }
 
   /// `ZSTDMT_overlapLog_default`, by the reference's own strategy numbering,
@@ -252,7 +286,7 @@ class ZstdMtFrameEncoder {
       {int jobSize = 0, int overlapLog = 0}) {
     final params = zstdParamsForLevel(level, size);
     final prefix = _prefixSize(params, overlapLog);
-    var job = jobSize > 0 ? jobSize : 1 << _targetJobLog(params);
+    var job = _jobSize(jobSize, params);
     if (job < prefix) {
       job = prefix;
     }
@@ -267,14 +301,103 @@ class ZstdMtFrameEncoder {
       required bool lastJob,
       int jobSize = 0,
       int overlapLog = 0,
-      ZstdDictionary? dictionary}) {
+      ZstdDictionary? dictionary,
+      ZstdLdmSequences? ldmSequences}) {
     final params = zstdParamsForLevel(level, size);
     final matchWindow = 1 << params.windowLog;
     final windowSize = size <= matchWindow ? size : matchWindow;
     final blockSizeMax =
         windowSize < zstdBlockMaximumSize ? windowSize : zstdBlockMaximumSize;
     ZstdMtFrameEncoder()._encodeJob(buffer, 0, prefix, buffer.length, out,
-        matchWindow, blockSizeMax, params, firstJob, lastJob, dictionary);
+        matchWindow, blockSizeMax, params, firstJob, lastJob, dictionary,
+        ldmSequences);
+  }
+}
+
+/// One job's matches as they cross a port, trimmed to what was found
+List<Object>? zstdMtPackLdm(ZstdLdmSequences? found) => found == null
+    ? null
+    : [
+        Uint32List.sublistView(found.litLength, 0, found.size),
+        Uint32List.sublistView(found.matchLength, 0, found.size),
+        Uint32List.sublistView(found.offset, 0, found.size),
+      ];
+
+/// The other side of [zstdMtPackLdm]
+ZstdLdmSequences? zstdMtUnpackLdm(Object? packed) {
+  if (packed == null) {
+    return null;
+  }
+  final parts = packed as List;
+  final litLength = parts[0] as Uint32List;
+  final out = ZstdLdmSequences(litLength.length + 1);
+  out.litLength.setRange(0, litLength.length, litLength);
+  out.matchLength.setRange(0, litLength.length, parts[1] as Uint32List);
+  out.offset.setRange(0, litLength.length, parts[2] as Uint32List);
+  out.size = litLength.length;
+  return out;
+}
+
+/// `ZSTDMT_serialState_genSequences`, since a job sees only its own prefix
+class ZstdMtLdmPass {
+  final ZstdLdm _ldm;
+
+  /// The frame's window, which is what the reference's round buffer holds
+  final int _windowSize;
+  final int _capacity;
+  Uint8List _held = Uint8List(0);
+  var _filled = 0;
+
+  ZstdMtLdmPass._(this._ldm, this._windowSize, this._capacity);
+
+  /// Null where this level's parameters leave the matcher off
+  static ZstdMtLdmPass? forParams(ZstdLevelParams params, int jobSize) {
+    final ldm = ZstdLdm.forParams(params.refStrategy, params.windowLog);
+    if (ldm == null) {
+      return null;
+    }
+    return ZstdMtLdmPass._(ldm, 1 << params.windowLog, jobSize);
+  }
+
+  /// The matches covering `[start, end)`, which must follow what came before
+  ZstdLdmSequences generate(Uint8List src, int start, int end) {
+    _append(src, start, end);
+    // `ZSTD_ldm_getMaxNbSeq` sizes the pool from the job size
+    var capacity = _capacity ~/ _ldm.minMatch;
+    final possible = (end - start) ~/ _ldm.minMatch + 1;
+    if (capacity > possible) {
+      capacity = possible;
+    }
+    if (capacity < 1) {
+      capacity = 1;
+    }
+    final out = ZstdLdmSequences(capacity);
+    final to = _filled;
+    final from = to - (end - start);
+    _ldm.generate(_held, ByteData.sublistView(_held), from, to, out);
+    return out;
+  }
+
+  void _append(Uint8List src, int start, int end) {
+    final size = end - start;
+    final want = _windowSize + _capacity;
+    if (_filled + size > _held.length) {
+      final grown = _filled + size < want ? _filled + size : want;
+      if (grown > _held.length) {
+        final next = Uint8List(grown);
+        next.setRange(0, _filled, _held);
+        _held = next;
+      }
+    }
+    if (_filled + size > _held.length) {
+      // Nothing older than the window matches, so it goes
+      final drop = _filled + size - _held.length;
+      _held.setRange(0, _filled - drop, _held, drop);
+      _filled -= drop;
+      _ldm.slide(drop);
+    }
+    _held.setRange(_filled, _filled + size, src, start);
+    _filled += size;
   }
 }
 
@@ -284,7 +407,8 @@ class ZstdMtFrameEncoder {
 class ZstdMtRing {
   final int jobSize;
   final int prefixSize;
-  final _held = BytesBuilder(copy: false);
+  /// Copying: what arrives may be filled again the moment the call returns
+  final _held = BytesBuilder(copy: true);
   Uint8List _prefix = Uint8List(0);
   var _jobs = 0;
 
@@ -373,9 +497,11 @@ int _cap(int memoryBudget, int level, int size, List<int> geometry) {
 }
 
 /// The header a streamed frame opens with: no content size, because it is not
-/// known when the header is written, and the level's window unclamped
+/// known when the header is written, and the level's window unclamped. With
+/// [empty] it is nothing, the one case `ZSTD_CCtx_init_compressStream2` knows
+/// the size in: the call that ends the frame is also the first
 void writeZstdMtStreamHeader(OutputStream out, bool checksum, int level,
-    [int dictionaryId = 0]) {
+    [int dictionaryId = 0, bool empty = false]) {
   final params = zstdParamsForLevel(level, zstdMtSizeUnknown);
   final idFlag = dictionaryId == 0
       ? 0
@@ -384,10 +510,15 @@ void writeZstdMtStreamHeader(OutputStream out, bool checksum, int level,
   out.writeByte((zstdMagic >>> 8) & 0xff);
   out.writeByte((zstdMagic >>> 16) & 0xff);
   out.writeByte((zstdMagic >>> 24) & 0xff);
-  out.writeByte((checksum ? 4 : 0) | idFlag);
-  out.writeByte((params.windowLog - 10) << 3);
+  out.writeByte((empty ? 0x20 : 0) | (checksum ? 4 : 0) | idFlag);
+  if (!empty) {
+    out.writeByte((params.windowLog - 10) << 3);
+  }
   for (var i = 0; i < const [0, 1, 2, 4][idFlag]; i++) {
     out.writeByte((dictionaryId >>> (i << 3)) & 0xff);
+  }
+  if (empty) {
+    out.writeByte(0);
   }
 }
 

@@ -115,6 +115,9 @@ class ZstdSequences extends ZstdSequencesBase {
     final baseline = this.baseline;
 
     final dstView = ByteData.sublistView(window.buffer);
+    // Non zero once the buffer has been written through once, when a match may
+    // reach back past its head into the pass before
+    final lap = window.lap;
     final litLength = literals.length;
     final dstEnd = window.position + blockSizeMax;
     // The gap is what lets a copy overrun the output without reaching the
@@ -204,11 +207,19 @@ class ZstdSequences extends ZstdSequencesBase {
       litAt += literalsLength;
       out += literalsLength;
 
-      if (offset > out) {
-        throw ZstdSequencesException('Match offset $offset reaches before the '
-            'start of the output');
-      }
       var from = out - offset;
+      if (from < 0) {
+        // The buffer has been written through once and this match reaches into
+        // the pass before, which sits where it was left rather than having been
+        // moved down
+        from += lap;
+        if (lap == 0 || from <= out) {
+          throw ZstdSequencesException('Match offset $offset reaches before the '
+              'start of the output');
+        }
+        out = _wrapped(window.buffer, out, from, matchLength, lap);
+        continue;
+      }
       if (offset >= 8) {
         _copy(dstView, out, from, matchLength);
         out += matchLength;
@@ -238,6 +249,28 @@ class ZstdSequences extends ZstdSequencesBase {
     rep[1] = rep1;
     rep[2] = rep2;
     return out;
+  }
+
+  /// A match that reaches across the head of the ring, taken a run at a time so
+  /// the two pieces are copied where they are rather than moved together first
+  static int _wrapped(
+      Uint8List dst, int out, int from, int length, int lap) {
+    var left = length;
+    var read = from;
+    var at = out;
+    while (left > 0) {
+      final run = lap - read < left ? lap - read : left;
+      for (var i = 0; i < run; i++) {
+        dst[at + i] = dst[read + i];
+      }
+      at += run;
+      read += run;
+      left -= run;
+      if (read == lap) {
+        read = 0;
+      }
+    }
+    return at;
   }
 
   /// Writes at least eight bytes and rounds up, which the slack after the

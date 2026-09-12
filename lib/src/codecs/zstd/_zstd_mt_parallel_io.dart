@@ -12,6 +12,7 @@ import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
 import '../../util/xxh64.dart';
 import 'zstd_dictionary.dart';
+import 'zstd_level_params.dart';
 import 'zstd_mt_frame_encoder.dart';
 
 const bool zstdIsolatesSupported = true;
@@ -37,13 +38,18 @@ Future<List<Uint8List>> zstdMtCompressJobs(
   Object source(int start, int end, int prefix) =>
       TransferableTypedData.fromList(
           [Uint8List.fromList(Uint8List.sublistView(src, start - prefix, end))]);
-  return _compress(starts, prefixSize, size > 0 ? size : src.length, level,
-      source,
+  final whole = size > 0 ? size : src.length;
+  final pass = ZstdMtLdmPass.forParams(
+      zstdParamsForLevel(level, whole), jobSize > 0 ? jobSize : src.length);
+  return _compress(starts, prefixSize, whole, level, source,
       jobSize: jobSize,
       overlapLog: overlapLog,
       workers: workers,
       cap: cap,
-      firstIsFirstJob: firstIsFirstJob);
+      firstIsFirstJob: firstIsFirstJob,
+      ldmFor: pass == null
+          ? null
+          : (start, end) => zstdMtPackLdm(pass.generate(src, start, end)));
 }
 
 /// As [zstdMtCompressJobs], with each job read from the file itself, so the
@@ -54,15 +60,31 @@ Future<List<Uint8List>> zstdMtCompressFileJobs(String path, int offset,
     required int overlapLog,
     required int workers,
     int cap = 0,
-    void Function(Uint8List part)? onPart}) {
+    void Function(Uint8List part)? onPart}) async {
   Object source(int start, int end, int prefix) =>
       [path, offset + start - prefix, prefix + (end - start)];
-  return _compress(starts, prefixSize, size, level, source,
-      jobSize: jobSize,
-      overlapLog: overlapLog,
-      workers: workers,
-      cap: cap,
-      onPart: onPart);
+  final pass = ZstdMtLdmPass.forParams(
+      zstdParamsForLevel(level, size), jobSize > 0 ? jobSize : size);
+  // The workers read their own slices, so the one serial pass reads the file
+  // here rather than sharing their buffers
+  final handle = pass == null ? null : File(path).openSync();
+  List<Object>? ldmFor(int start, int end) {
+    final reader = handle!;
+    reader.setPositionSync(offset + start);
+    return zstdMtPackLdm(pass!.generate(reader.readSync(end - start), 0, end - start));
+  }
+
+  try {
+    return await _compress(starts, prefixSize, size, level, source,
+        jobSize: jobSize,
+        overlapLog: overlapLog,
+        workers: workers,
+        cap: cap,
+        ldmFor: pass == null ? null : ldmFor,
+        onPart: onPart);
+  } finally {
+    handle?.closeSync();
+  }
 }
 
 /// The frame's checksum, taken over the file in one pass rather than over a
@@ -109,6 +131,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
     required int workers,
     required int cap,
     bool firstIsFirstJob = true,
+    List<Object>? Function(int start, int end)? ldmFor,
     void Function(Uint8List part)? onPart}) async {
   final parts = List<Uint8List?>.filled(starts.length, null);
   final cores = Platform.numberOfProcessors;
@@ -153,6 +176,9 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
       index == starts.length - 1,
       jobSize,
       overlapLog,
+      // In job order, which is what the one long distance pass over the frame
+      // needs: `give` hands the jobs out in that order whatever finishes first
+      ldmFor?.call(start, end),
     ]);
   }
 
@@ -177,9 +203,17 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
         // Only the parts that ran ahead of their turn are held, the rest go
         // straight out, so a frame of any size costs the pool and not itself
         held[index] = part;
-        while (held.containsKey(written)) {
-          onPart(held.remove(written)!);
-          written++;
+        // The output belongs to the caller, and a write of theirs that throws
+        // is their failure to hear about. Uncaught here it would leave through
+        // this port's zone instead, where the call has nothing listening
+        try {
+          while (failure == null && held.containsKey(written)) {
+            onPart(held.remove(written)!);
+            written++;
+          }
+        } catch (thrown, stack) {
+          failure ??= thrown;
+          failureStack ??= stack;
         }
       }
     }
@@ -223,11 +257,17 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
     required int overlapLog,
     required int workers,
     int cap = 0,
-    ZstdDictionary? dictionary}) async* {
+    ZstdDictionary? dictionary,
+    Uint8List Function(bool empty)? header}) async* {
   final geometry =
       ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
           jobSize: jobSize, overlapLog: overlapLog);
   final ring = ZstdMtRing(geometry[0], geometry[1]);
+  // One long distance pass over the whole frame, run here in job order, with
+  // its matches handed to each job. A job sees only its own prefix and cannot
+  // find them itself
+  final ldmPass = ZstdMtLdmPass.forParams(
+      zstdParamsForLevel(level, zstdMtSizeUnknown), geometry[0]);
   final cores = Platform.numberOfProcessors;
   var pool = workers > 0 ? workers : cores - 1;
   if (cap > 0 && pool > cap) {
@@ -242,14 +282,21 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
   final receive = ReceivePort();
   final isolates = <Isolate>[];
   final idle = <SendPort>[];
-  final queued = <List<Object>>[];
+  final queued = <List<Object?>>[];
   final held = <int, Uint8List>{};
-  final parts = StreamController<Uint8List>();
+
+  /// Parts whose turn has come, waiting for the consumer to take them. The
+  /// generator below is the only thing that empties it, which is what makes the
+  /// reading follow the consumer's pace
+  final ready = <Uint8List>[];
   var written = 0;
   var sent = 0;
   var back = 0;
-  var ended = false;
-  Completer<void>? room;
+  // The frame header waits for the first part, since only by then is whether
+  // anything arrived at all settled
+  var content = 0;
+  var headerSent = false;
+  Completer<void>? waiting;
   Object? failure;
   StackTrace? failureStack;
 
@@ -261,12 +308,25 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
     worker.send(queued.removeAt(0));
   }
 
-  void finishIfDone() {
-    if (ended && back == sent && !parts.isClosed) {
-      if (failure != null) {
-        parts.addError(failure!, failureStack);
+  void wake() {
+    final waiter = waiting;
+    if (waiter != null && !waiter.isCompleted) {
+      waiting = null;
+      waiter.complete();
+    }
+  }
+
+  void release() {
+    while (held.containsKey(written)) {
+      if (!headerSent) {
+        headerSent = true;
+        final head = header?.call(content == 0);
+        if (head != null) {
+          ready.add(head);
+        }
       }
-      unawaited(parts.close());
+      ready.add(held.remove(written)!);
+      written++;
     }
   }
 
@@ -285,17 +345,11 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
     } else {
       held[index] =
           (reply[2] as TransferableTypedData).materialize().asUint8List();
-      while (held.containsKey(written)) {
-        parts.add(held.remove(written)!);
-        written++;
-      }
+      release();
     }
     back++;
-    if (room != null && !room!.isCompleted && sent - back < pool) {
-      room!.complete();
-    }
     hand(worker);
-    finishIfDone();
+    wake();
   });
 
   for (var i = 0; i < pool; i++) {
@@ -319,18 +373,15 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
           lastJob: last,
           jobSize: jobSize,
           overlapLog: overlapLog,
-          dictionary: dictionary);
+          dictionary: dictionary,
+          ldmSequences: ldmPass?.generate(job, prefix, job.length));
       held[sent] = out.getBytes();
       sent++;
       back++;
-      while (held.containsKey(written)) {
-        parts.add(held.remove(written)!);
-        written++;
-      }
-      finishIfDone();
+      release();
       return;
     }
-    final message = <Object>[
+    final message = <Object?>[
       sent,
       TransferableTypedData.fromList([job]),
       prefix,
@@ -340,6 +391,7 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
       last,
       jobSize,
       overlapLog,
+      zstdMtPackLdm(ldmPass?.generate(job, prefix, job.length)),
     ];
     sent++;
     if (idle.isEmpty) {
@@ -350,31 +402,51 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
   }
 
   try {
-    // The reader runs beside the yielding, so parts leave as they finish
-    // rather than piling up behind a source that never pauses
-    unawaited(() async {
-      try {
-        await for (final chunk in input) {
-          for (final job in ring.add(chunk)) {
-            submit(job, sent == 0 ? 0 : geometry[1], sent == 0, false);
-            // No more jobs in flight than workers: each one holds its own
-            // buffer, so a looser gate is paid for in memory
-            while (sent - back >= pool) {
-              room = Completer<void>();
-              await room!.future;
-            }
+    // The reading happens here rather than beside it, so a consumer that pauses
+    // pauses the input with it and a consumer that cancels cancels the input:
+    // a generator suspended at a yield is not asking its source for anything
+    await for (final chunk in input) {
+      content += chunk.length;
+      for (final job in ring.add(chunk)) {
+        submit(job, sent == 0 ? 0 : geometry[1], sent == 0, false);
+        while (ready.isNotEmpty) {
+          yield ready.removeAt(0);
+        }
+        // No more jobs in flight than workers: each one holds its own buffer,
+        // so a looser gate is paid for in memory
+        while (failure == null && sent - back >= pool) {
+          waiting = Completer<void>();
+          await waiting!.future;
+          while (ready.isNotEmpty) {
+            yield ready.removeAt(0);
           }
         }
-        final tail = ring.close();
-        submit(tail, sent == 0 ? 0 : geometry[1], sent == 0, true);
-      } catch (error, stack) {
-        failure ??= error;
-        failureStack ??= stack;
+        if (failure != null) {
+          break;
+        }
       }
-      ended = true;
-      finishIfDone();
-    }());
-    yield* parts.stream;
+      if (failure != null) {
+        break;
+      }
+    }
+    if (failure == null) {
+      submit(ring.close(), sent == 0 ? 0 : geometry[1], sent == 0, true);
+    }
+    while (back < sent) {
+      while (ready.isNotEmpty) {
+        yield ready.removeAt(0);
+      }
+      if (back < sent) {
+        waiting = Completer<void>();
+        await waiting!.future;
+      }
+    }
+    while (ready.isNotEmpty) {
+      yield ready.removeAt(0);
+    }
+    if (failure != null) {
+      Error.throwWithStackTrace(failure!, failureStack ?? StackTrace.current);
+    }
   } finally {
     for (final isolate in isolates) {
       isolate.kill(priority: Isolate.immediate);
@@ -415,7 +487,9 @@ void _zstdMtWorker(SendPort toMain) {
           firstJob: job[5] as bool,
           lastJob: job[6] as bool,
           jobSize: job[7] as int,
-          overlapLog: job[8] as int);
+          overlapLog: job[8] as int,
+          ldmSequences:
+              job.length > 9 ? zstdMtUnpackLdm(job[9]) : null);
       toMain.send([
         port.sendPort,
         index,

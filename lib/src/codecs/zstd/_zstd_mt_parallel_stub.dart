@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
 import 'zstd_dictionary.dart';
+import 'zstd_level_params.dart';
 import 'zstd_mt_frame_encoder.dart';
 
 const bool zstdIsolatesSupported = false;
@@ -18,6 +19,9 @@ Future<List<Uint8List>> zstdMtCompressJobs(
     bool firstIsFirstJob = true,
     int size = 0}) {
   final parts = <Uint8List>[];
+  final whole = size > 0 ? size : src.length;
+  final pass = ZstdMtLdmPass.forParams(
+      zstdParamsForLevel(level, whole), jobSize > 0 ? jobSize : src.length);
   for (var i = 0; i < starts.length; i++) {
     final start = starts[i];
     final end = i + 1 < starts.length ? starts[i + 1] : src.length;
@@ -29,7 +33,8 @@ Future<List<Uint8List>> zstdMtCompressJobs(
         firstJob: i == 0 && firstIsFirstJob,
         lastJob: i == starts.length - 1,
         jobSize: jobSize,
-        overlapLog: overlapLog);
+        overlapLog: overlapLog,
+        ldmSequences: pass?.generate(src, start, end));
     parts.add(out.getBytes());
   }
   return Future.value(parts);
@@ -42,15 +47,19 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
     required int overlapLog,
     required int workers,
     int cap = 0,
-    ZstdDictionary? dictionary}) async* {
+    ZstdDictionary? dictionary,
+    Uint8List Function(bool empty)? header}) async* {
   final geometry = ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
       jobSize: jobSize, overlapLog: overlapLog);
   final ring = ZstdMtRing(geometry[0], geometry[1]);
+  final ldmPass = ZstdMtLdmPass.forParams(
+      zstdParamsForLevel(level, zstdMtSizeUnknown), geometry[0]);
   var index = 0;
   Uint8List run(Uint8List job, bool first, bool last) {
     final out = OutputMemoryStream();
     var buffer = job;
     var prefix = first ? 0 : geometry[1];
+    final found = ldmPass?.generate(job, first ? 0 : geometry[1], job.length);
     final dict = dictionary;
     if (first && dict != null) {
       final content = dict.content;
@@ -65,17 +74,38 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
         lastJob: last,
         jobSize: jobSize,
         overlapLog: overlapLog,
-        dictionary: first ? dict : null);
+        dictionary: first ? dict : null,
+        ldmSequences: found);
     return out.getBytes();
   }
 
+  // The frame header waits for the first part, since only by then is whether
+  // anything arrived at all settled
+  var content = 0;
+  var headerSent = false;
   await for (final chunk in input) {
+    content += chunk.length;
     for (final job in ring.add(chunk)) {
-      yield run(job, index == 0, false);
+      final part = run(job, index == 0, false);
+      if (!headerSent) {
+        headerSent = true;
+        final head = header?.call(content == 0);
+        if (head != null) {
+          yield head;
+        }
+      }
+      yield part;
       index++;
     }
   }
-  yield run(ring.close(), index == 0, true);
+  final tail = run(ring.close(), index == 0, true);
+  if (!headerSent) {
+    final head = header?.call(content == 0);
+    if (head != null) {
+      yield head;
+    }
+  }
+  yield tail;
 }
 
 /// There are no files to read from where this file is chosen

@@ -1,7 +1,10 @@
 # 4.4.0
 
 * Added zstd (Zstandard) support, both decode and encode (lvl 1-22, with custom dictionaries)
-* Added Dart async StreamTransformers/ByteConversionSink/Converter support
+* Added .tar.zst and .tzst to extractArchiveToDisk. Also, extractArchiveToDisk now checks for errors during
+  unpack/decompress
+* Fixed CRC64 XZEncoder created files created on dart-js failed to decode on native platforms
+* Added Dart async* StreamTransformers/ByteConversionSink/Converter support
   (xzCodec, zstdCodec, bzip2Codec, tarCodec and zipCodec) for decode and encode (decoders for all formats except for zip)
 * Added CodecsRecognizer with ArchiveFormat to recognize compressed file types by with their header bytes
 * Fixed XZEncoder (without compression) for large files

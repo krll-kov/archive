@@ -176,6 +176,14 @@ void main() {
           throwsA(anything), reason: reason);
     }
 
+    test('bytes after a zero sequence count', () {
+      const valid = [40, 181, 47, 253, 0, 0, 29, 0, 0, 8, 97, 0];
+      final trailing =
+          Uint8List.fromList([40, 181, 47, 253, 0, 0, 37, 0, 0, 8, 97, 0, 153]);
+      expect(ZstdDecoder().decodeBytes(valid, throwOnError: true), [97]);
+      reject(trailing, 'the zero sequence count must end the block');
+    });
+
     test('a frame cut at any length', () {
       for (var cut = 1; cut < frame.length; cut++) {
         expect(

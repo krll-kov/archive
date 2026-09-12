@@ -671,6 +671,33 @@ void main() {
     expect(files.length, 4);
   });
 
+  test('extractFileToDisk rejects a truncated tar.zst frame', () async {
+    final directory = Directory.systemTemp.createTempSync('archive-extract-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final archive = Archive()
+      ..add(ArchiveFile('first.bin', 3, [1, 2, 3]))
+      ..add(ArchiveFile('second.bin', 3, [4, 5, 6]));
+    final tar = TarEncoder().encodeBytes(archive);
+    final first = ZstdEncoder().encodeBytes(Uint8List.sublistView(tar, 0, 1024));
+    final last = ZstdEncoder().encodeBytes(Uint8List.sublistView(tar, 1024));
+    final input = File('${directory.path}/input.tar.zst')
+      ..writeAsBytesSync([...first, ...last]);
+    final validOutput = '${directory.path}/valid';
+    await extractFileToDisk(input.path, validOutput);
+    expect(File('$validOutput/first.bin').readAsBytesSync(), [1, 2, 3]);
+    expect(File('$validOutput/second.bin').readAsBytesSync(), [4, 5, 6]);
+
+    final truncated = [...first, ...last.sublist(0, last.length - 1)];
+    final partial = OutputMemoryStream();
+    expect(ZstdDecoder().decodeStream(InputMemoryStream(truncated), partial),
+        isFalse);
+    expect(TarDecoder().decodeBytes(partial.getBytes()).length, 1);
+    input.writeAsBytesSync(truncated);
+    await expectLater(
+        extractFileToDisk(input.path, '${directory.path}/truncated'),
+        throwsA(isA<ArchiveException>()));
+  });
+
   test('extractFileToDisk zip', () async {
     final inPath = 'test/_data/test.zip';
     final outPath = '$testOutputPath/extractFileToDisk_zip';

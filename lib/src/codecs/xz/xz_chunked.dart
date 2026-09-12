@@ -91,6 +91,10 @@ class XzChunkedDecoder extends ChunkedSink {
   /// The block being decoded
   var _blockStart = 0;
   var _blockDataStart = 0;
+
+  /// Whether the block is still waiting for the chunk that starts its
+  /// dictionary, which the format puts first
+  var _needDictionaryReset = true;
   var _blockPadding = 0;
   var _paddingCount = 0;
   int? _declaredCompressedLength;
@@ -107,15 +111,15 @@ class XzChunkedDecoder extends ChunkedSink {
 
   /// The block's check, folded in as the bytes go past rather than held
   var _blockCrc32 = 0;
-  var _blockCrc64 = 0;
+  final _blockCrc64 = Crc64();
   var _blockLength = 0;
 
   void _foldCheck(Uint8List piece) {
     final checkType = _streamFlags & 0xf;
     if (checkType == 0x1) {
       _blockCrc32 = getCrc32(piece, _blockCrc32);
-    } else if (checkType == 0x4 && isCrc64Supported()) {
-      _blockCrc64 = getCrc64(piece, _blockCrc64);
+    } else if (checkType == 0x4) {
+      _blockCrc64.update(piece);
     }
   }
 
@@ -378,9 +382,10 @@ class XzChunkedDecoder extends ChunkedSink {
       ..reset()
       ..divert = _blockBuffer;
     _blockCrc32 = 0;
-    _blockCrc64 = 0;
+    _blockCrc64.reset();
     _sink.watch = verify && !_x86Filter ? _foldCheck : null;
     _blockDataStart = _streamPosition;
+    _needDictionaryReset = true;
     _stage = _Stage.chunkControl;
   }
 
@@ -394,6 +399,16 @@ class XzChunkedDecoder extends ChunkedSink {
     if (_chunkControl > 2 && _chunkControl < 0x80) {
       throw ArchiveException('xz: unknown LZMA2 control code $_chunkControl');
     }
+    // A block decodes on its own, so its first chunk has to start the
+    // dictionary: control 1 for an uncompressed chunk, reset 3 for an LZMA one
+    final resets = _chunkControl < 0x80
+        ? _chunkControl == 1
+        : ((_chunkControl >> 5) & 0x3) == 3;
+    if (_needDictionaryReset && !resets) {
+      throw ArchiveException(
+          'xz: the first LZMA2 chunk does not reset the dictionary');
+    }
+    _needDictionaryReset = false;
     _stage = _Stage.chunkHeader;
   }
 
@@ -506,13 +521,10 @@ class XzChunkedDecoder extends ChunkedSink {
       if (actual != expected) {
         throw ArchiveException('xz: CRC32 check failed');
       }
-    } else if (verify && checkType == 0x4 && isCrc64Supported()) {
-      var expected = 0;
-      for (var i = 7; i >= 0; i--) {
-        expected = (expected << 8) | field[i];
-      }
-      final actual = filtered != null ? getCrc64(filtered) : _blockCrc64;
-      if (actual != expected) {
+    } else if (verify && checkType == 0x4) {
+      final actual =
+          filtered != null ? (Crc64()..update(filtered)) : _blockCrc64;
+      if (!actual.matches(field, 0)) {
         throw ArchiveException('xz: CRC64 check failed');
       }
     }
@@ -742,7 +754,7 @@ class XzChunkedEncoder extends ChunkedSink {
   var _dataLength = 0;
   var _uncompressed = 0;
   var _crc32 = 0;
-  var _crc64 = 0;
+  final _crc64 = Crc64();
 
   int get _flags => switch (check) {
         XZCheck.none => 0,
@@ -794,9 +806,7 @@ class XzChunkedEncoder extends ChunkedSink {
       case XZCheck.crc32:
         _crc32 = getCrc32(piece, _crc32);
       case XZCheck.crc64:
-        if (isCrc64Supported()) {
-          _crc64 = getCrc64(piece, _crc64);
-        }
+        _crc64.update(piece);
       case XZCheck.none:
       case XZCheck.sha256:
         break;
@@ -858,7 +868,7 @@ class XzChunkedEncoder extends ChunkedSink {
         _out.writeUint32(_crc32);
         checkLength = 4;
       case XZCheck.crc64:
-        _out.writeUint64(_crc64);
+        _out.writeBytes(_crc64.bytes);
         checkLength = 8;
       case XZCheck.sha256:
         throw ArchiveException(

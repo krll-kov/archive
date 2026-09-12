@@ -164,6 +164,13 @@ class ZstdMatchFinder {
     return at - lowLimit > maxDistance ? at - maxDistance : lowLimit;
   }
 
+  /// `ZSTD_getLowestMatchIndex` at the position a repeat is tried from. The
+  /// extDict loops weigh every repeat against the window as it stands there,
+  /// where the plain ones hold the far offsets aside once at the block's start
+  @pragma('vm:prefer-inline')
+  int _repFloor(int at, int lowLimit) =>
+      _ext ? _lowestFrom(at, lowLimit, 1 << params.windowLog) : lowLimit;
+
   /// `prefixStartIndex == dictStartIndex`: the two fastest loops drop back to
   /// their plain variant when the window, measured from the end of the block,
   /// has caught up with the segment boundary and left nothing outside it. The
@@ -835,7 +842,11 @@ class ZstdMatchFinder {
       } else if (longHit > floor && _same8(view, longHit, ip)) {
         length = 8 + _extend(src, view, ip + 8, longHit + 8, end);
         var match = longHit;
-        final low = match < prefix ? lowLimit : prefix;
+        // `dictStart` is `ZSTD_getLowestMatchIndex` taken at the end of the
+        // block, which is `floor`. The lazy loops catch up to `window.lowLimit`
+        // instead, and that one is not the same number once the window has
+        // moved past a segment boundary
+        final low = match < prefix ? floor : prefix;
         while (ip > anchor && match > low && src[ip - 1] == src[match - 1]) {
           ip--;
           match--;
@@ -859,7 +870,7 @@ class ZstdMatchFinder {
         } else {
           length = 4 + _extend(src, view, ip + 4, match + 4, end);
         }
-        final low = match < prefix ? lowLimit : prefix;
+        final low = match < prefix ? floor : prefix;
         while (ip > anchor && match > low && src[ip - 1] == src[match - 1]) {
           ip--;
           match--;
@@ -1121,7 +1132,7 @@ class ZstdMatchFinder {
 
       final repeat = ip + 1 - rep0;
       final haveRep = rep0 > 0 &&
-          repeat >= lowLimit &&
+          repeat >= _repFloor(ip + 1, lowLimit) &&
           !_spansDictionary(repeat) &&
           view.getUint32(repeat, Endian.little) ==
               view.getUint32(ip + 1, Endian.little);
@@ -1154,7 +1165,7 @@ class ZstdMatchFinder {
           ip++;
           final ahead = ip - rep0;
           if (rep0 > 0 &&
-              ahead >= lowLimit &&
+              ahead >= _repFloor(ip, lowLimit) &&
               !_spansDictionary(ahead) &&
               view.getUint32(ahead, Endian.little) ==
                   view.getUint32(ip, Endian.little)) {
@@ -1180,7 +1191,7 @@ class ZstdMatchFinder {
             ip++;
             final second = ip - rep0;
             if (rep0 > 0 &&
-                second >= lowLimit &&
+                second >= _repFloor(ip, lowLimit) &&
                 !_spansDictionary(second) &&
                 view.getUint32(second, Endian.little) ==
                     view.getUint32(ip, Endian.little)) {
@@ -1242,7 +1253,7 @@ class ZstdMatchFinder {
       final held = rep[1];
       final at = ip - held;
       if (held == 0 ||
-          at < lowLimit ||
+          at < _repFloor(ip, lowLimit) ||
           _spansDictionary(at) ||
           view.getUint32(at, Endian.little) !=
               view.getUint32(ip, Endian.little)) {
@@ -1737,6 +1748,11 @@ class ZstdMatchFinder {
     var count = 0;
     final minMatch = _minMatch;
     var best = minMatch - 1;
+    // `ZSTD_insertBtAndGetAllMatches` takes this at the position it is called
+    // for, and weighs both the repeats and the candidates against it. Where a
+    // dictionary has expired it is tighter than the bound the block began with
+    final reach = 1 << params.windowLog;
+    final windowLow = _lowestFrom(ip, lowLimit, reach);
 
     final last = noLiterals ? 4 : 3;
     for (var code = noLiterals ? 1 : 0; code < last; code++) {
@@ -1745,7 +1761,7 @@ class ZstdMatchFinder {
       // A repeat that stays inside the data is bounded by the window alone; one
       // reaching into a dictionary may not straddle the two
       if (offset <= 0 ||
-          at < lowLimit ||
+          at < windowLow ||
           (at < prefixStart && _spansDictionary(at))) {
         continue;
       }
@@ -1780,7 +1796,7 @@ class ZstdMatchFinder {
       final held = _short[_shortKey(view, ip)];
       final match = held - 1;
       // A three byte match further back than this is never worth its offset
-      if (held != 0 && match >= lowLimit && ip - match < 1 << 18) {
+      if (held != 0 && match >= windowLow && ip - match < 1 << 18) {
         final length = _extend(src, view, ip, match, end);
         if (length >= 3) {
           best = length;
@@ -1805,8 +1821,6 @@ class ZstdMatchFinder {
     var smallerLength = 0;
     var largerLength = 0;
     var matchEnd = ip + 9;
-    final reach = 1 << params.windowLog;
-    final windowLow = _lowestFrom(ip, lowLimit, reach);
     final btLow = ip > _btMask ? ip - _btMask : 0;
     final floor = btLow > lowLimit ? btLow : lowLimit;
     var tries = _tries;

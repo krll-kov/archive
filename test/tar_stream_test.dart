@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -172,6 +173,26 @@ void main() {
   });
 
   group('tar codec', () {
+    test('the configured filename encoding is used both ways', () async {
+      const codec = TarCodec(filenameEncoding: latin1);
+      final entries =
+          await Stream.value(ArchiveFile.string('caf\u00e9.txt', 'x'))
+              .transform(codec.encoder)
+              .transform(codec.decoder)
+              .toList();
+      expect(entries.single.name, 'caf\u00e9.txt');
+    });
+
+    test('it emits before reading an entire entry', () async {
+      final bytes = Uint8List(1024 * 1024);
+      var read = 0;
+      final input = _ObservedInput(bytes, (count) => read += count);
+      final file = ArchiveFile.stream('a', input);
+      final first = await Stream.value(file).transform(tarCodec.encoder).first;
+      expect(first, isNotEmpty);
+      expect(read, lessThan(bytes.length));
+    });
+
     test('entries transform into an archive', () async {
       final entries = _entries();
       final bytes = await Stream.fromIterable(entries)
@@ -237,6 +258,14 @@ void main() {
   });
 
   group('tar stream reader', () {
+    test('a corrupted size is rejected instead of losing content', () async {
+      final archive = Archive()..add(ArchiveFile.string('a', 'abcdef'));
+      final bytes = TarEncoder().encodeBytes(archive)..[134] = 0x31;
+      expect(() => TarDecoder().decodeBytes(bytes, verify: true),
+          throwsA(isA<ArchiveException>()));
+      await expectLater(_stream(bytes, 512), throwsA(isA<ArchiveException>()));
+    });
+
     for (final name in archives) {
       test('$name reads as the whole-archive decoder does', () async {
         final archive = File('${directory.path}/$name').readAsBytesSync();
@@ -388,6 +417,27 @@ void main() {
       expect(read, ['big.bin']);
     });
   });
+}
+
+class _ObservedInput extends InputMemoryStream {
+  final void Function(int) onRead;
+
+  _ObservedInput(super.bytes, this.onRead);
+
+  @override
+  InputStream subset({int? position, int? length, int? bufferSize}) {
+    final start = position ?? this.position;
+    return _ObservedInput(
+        Uint8List.sublistView(buffer!, start, start + (length ?? this.length)),
+        onRead);
+  }
+
+  @override
+  int readInto(Uint8List into, int at, int count) {
+    final got = super.readInto(into, at, count);
+    onRead(got);
+    return got;
+  }
 }
 
 class _Held implements Sink<List<int>> {

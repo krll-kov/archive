@@ -11,3 +11,17 @@ abstract class ZLibEncoderBase {
   void encodeStream(InputStream input, OutputStream output,
       {int? level, int? windowBits, bool raw = false});
 }
+
+/// Hands every piece the codec produces straight to [output], where
+/// `ChunkedConversionSink.withCallback` would hold the whole of it to the end
+class ZLibOutputSink implements Sink<List<int>> {
+  final OutputStream _output;
+
+  ZLibOutputSink(this._output);
+
+  @override
+  void add(List<int> data) => _output.writeBytes(data);
+
+  @override
+  void close() => _output.flush();
+}

@@ -15,11 +15,16 @@ import 'tar_file.dart';
 class TarChunkedEncoder {
   final Sink<List<int>> output;
 
-  TarChunkedEncoder(this.output) {
+  /// What a name is written as, the same field [TarStreamDecoder] reads it back
+  /// through
+  final Encoding filenameEncoding;
+
+  TarChunkedEncoder(this.output,
+      {this.filenameEncoding = const Utf8Codec()}) {
     _encoder.start(_out);
   }
 
-  final _encoder = TarEncoder();
+  late final _encoder = TarEncoder(filenameEncoding: filenameEncoding);
   late final _out = SinkOutputStream(output);
   var _closed = false;
 
@@ -29,6 +34,19 @@ class TarChunkedEncoder {
     }
     _encoder.add(entry);
   }
+
+  /// Writes an entry's header and returns what is left of it, for a caller that
+  /// hands the content out itself rather than in one call
+  TarFile? addHeader(ArchiveFile entry) {
+    if (_closed) {
+      throw StateError('Cannot add to a closed encoder');
+    }
+    return _encoder.addHeader(entry);
+  }
+
+  /// Pushes what the header left in the buffer out to the sink, so a caller
+  /// that writes the content itself writes it behind the header
+  void flush() => _out.flush();
 
   void close() {
     if (_closed) {
@@ -50,7 +68,8 @@ class TarCodec {
   TarStreamDecoder get decoder =>
       TarStreamDecoder(filenameEncoding: filenameEncoding);
 
-  TarStreamEncoder get encoder => const TarStreamEncoder();
+  TarStreamEncoder get encoder =>
+      TarStreamEncoder(filenameEncoding: filenameEncoding);
 }
 
 /// The codec with its defaults, for `stream.transform(tarCodec.decoder)`
@@ -58,16 +77,41 @@ const tarCodec = TarCodec();
 
 /// [TarChunkedEncoder] behind the shape the other codecs use
 class TarStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
-  const TarStreamEncoder();
+  final Encoding filenameEncoding;
+
+  const TarStreamEncoder({this.filenameEncoding = const Utf8Codec()});
+
+  /// What an entry's content is handed out in. An entry is not held whole, so
+  /// this is all the encoder owes beyond the header it has already written
+  static const _piece = 64 * 1024;
 
   @override
   Stream<List<int>> bind(Stream<ArchiveFile> stream) async* {
     final held = <List<int>>[];
-    final encoder = TarChunkedEncoder(_Pieces(held));
+    final encoder = TarChunkedEncoder(_Pieces(held),
+        filenameEncoding: filenameEncoding);
     await for (final entry in stream) {
-      encoder.add(entry);
+      // The header goes through the encoder, the content does not: a yield in
+      // between is what lets a reader have the first bytes before the last of
+      // the entry has been read
+      final file = encoder.addHeader(entry);
+      encoder.flush();
       while (held.isNotEmpty) {
         yield held.removeAt(0);
+      }
+      if (file == null) {
+        continue;
+      }
+      final body = file.contentStream;
+      if (body != null) {
+        while (!body.isEOS) {
+          final take = body.length < _piece ? body.length : _piece;
+          yield body.readBytes(take).toUint8List();
+        }
+      }
+      final pad = file.padding;
+      if (pad > 0) {
+        yield Uint8List(pad);
       }
     }
     encoder.close();
@@ -205,6 +249,11 @@ Stream<TarEntry> _read(Stream<List<int>> source, Encoding encoding) async* {
       // A block of zeros ends the archive; padding or another archive follows
       if (header == null || _allZero(header)) {
         break;
+      }
+      // Nothing here can seek back, so a header read from junk is content
+      // already lost. The sum is what says this block is a header at all
+      if (!tarHeaderChecksumMatches(header)) {
+        throw ArchiveException('tar: invalid header checksum');
       }
       // A header describing the next entry is read again with its content
       // behind it, which is where `TarMetadata` looks for it

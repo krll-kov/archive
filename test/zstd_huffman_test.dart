@@ -189,6 +189,10 @@ void main() {
       rejects(_direct([0, 0]), 'no symbol carries anything');
     });
 
+    test('weights with no weight-one symbols', () {
+      rejects(_direct([2]), 'the completed tree has no weight-one symbols');
+    });
+
     test('a weight above the longest code allowed', () {
       rejects(_direct([12, 12]), 'twelve is above the eleven allowed');
     });

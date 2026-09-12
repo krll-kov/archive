@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -54,6 +55,27 @@ void main() {
     final small = Uint8List.sublistView(input, 0, 300000);
     expect(await _encode(small),
         ZstdEncoder(checksum: false, level: 6).encodeBytes(small));
+  });
+
+  test('encoding a stream advances its read position', () async {
+    final small = Uint8List.sublistView(input, 0, 1024);
+    final ordinary = InputMemoryStream(small)..skip(17);
+    const ZstdEncoder(level: 1).encodeStream(ordinary, OutputMemoryStream());
+    expect(ordinary.isEOS, isTrue);
+
+    final parallel = InputMemoryStream(small)..skip(17);
+    final output = OutputMemoryStream();
+    final done = Completer<bool>();
+    const ZstdEncoder(level: 1).encodeStream(parallel, output,
+        multithread: ZstdMultithreadOptions(
+          workers: 1,
+          onDone: done.complete,
+          onError: done.completeError,
+        ));
+    expect(await done.future, isTrue);
+    expect(ZstdDecoder().decodeBytes(output.getBytes(), throwOnError: true),
+        Uint8List.sublistView(small, 17));
+    expect(parallel.position, ordinary.position);
   });
 
   test('a checksum still covers the whole input', () async {
@@ -114,6 +136,151 @@ void main() {
     expect(await transform(8), one);
   });
 
+  test('level 22 streaming jobs write the reference frame', () async {
+    final source = Uint8List.sublistView(input, 0, 1048577);
+    Stream<List<int>> pieces() async* {
+      for (var at = 0; at < source.length; at += 131071) {
+        final end = at + 131071 < source.length ? at + 131071 : source.length;
+        yield Uint8List.sublistView(source, at, end);
+      }
+    }
+
+    final frame = await pieces().transform(const ZstdCodec(
+      level: 22,
+      frameChecksum: false,
+      multithread:
+          ZstdMultithreadOptions(workers: 1, jobSize: 524288, overlapLog: 1),
+    ).encoder).fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
+    // ZSTD_compressStream2 enables LDM when the content size is unknown at level 22
+    expect([frame.length, getCrc32(frame)], [211267, 4043156817]);
+  });
+
+  test('an empty stream writes the reference frame', () async {
+    final frame = await const Stream<List<int>>.empty()
+        .transform(const ZstdCodec(
+          level: 1,
+          frameChecksum: false,
+          multithread: ZstdMultithreadOptions(workers: 1),
+        ).encoder)
+        .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
+    expect(frame, [0x28, 0xb5, 0x2f, 0xfd, 0x20, 0, 1, 0, 0]);
+  });
+
+  test('cancelling the output cancels the input subscription', () async {
+    final input = StreamController<List<int>>();
+    final firstBody = Completer<void>();
+    final output = input.stream.transform(const ZstdCodec(
+      level: 1,
+      multithread: ZstdMultithreadOptions(workers: 1, jobSize: 524288),
+    ).encoder);
+    var events = 0;
+    final subscription = output.listen((_) {
+      if (++events == 2) firstBody.complete();
+    });
+    input.add(Uint8List(524288));
+    await firstBody.future.timeout(const Duration(seconds: 10));
+    await subscription.cancel();
+    final stillListening = input.hasListener;
+    await input.close();
+    expect(stillListening, isFalse);
+    // A generator suspended in `await for` over a controller never completes
+    // its cancel on either web backend, whatever the stream under it does: the
+    // same twelve lines with a passthrough generator hang there too
+  }, testOn: 'vm');
+
+  test('pausing the output stops reading the input', () async {
+    final inputEnded = Completer<void>();
+    final firstBody = Completer<void>();
+    Stream<List<int>> source() async* {
+      for (var i = 0; i < 8; i++) {
+        yield Uint8List(524288);
+      }
+      inputEnded.complete();
+    }
+
+    var events = 0;
+    late StreamSubscription<List<int>> subscription;
+    subscription = source().transform(const ZstdCodec(
+      level: 1,
+      multithread: ZstdMultithreadOptions(workers: 1, jobSize: 524288),
+    ).encoder).listen((_) {
+      if (++events == 2) {
+        subscription.pause();
+        firstBody.complete();
+      }
+    });
+    await firstBody.future.timeout(const Duration(seconds: 10));
+    final consumedAll = await inputEnded.future
+        .then((_) => true)
+        .timeout(const Duration(seconds: 1), onTimeout: () => false);
+    await subscription.cancel();
+    expect(consumedAll, isFalse);
+  });
+
+  test('a transform rejects an invalid memory budget', () async {
+    final output = Stream<List<int>>.value([1, 2, 3]).transform(
+      const ZstdCodec(
+        level: 1,
+        multithread: ZstdMultithreadOptions(workers: 1, memoryBudget: 0),
+      ).encoder,
+    );
+    await expectLater(output.toList(), throwsArgumentError);
+  });
+
+  test('a transform consumes each chunk before requesting another', () async {
+    Stream<List<int>> source() async* {
+      final buffer = Uint8List(1000)..fillRange(0, 1000, 1);
+      yield buffer;
+      buffer.fillRange(0, 1000, 2);
+      yield buffer;
+    }
+
+    Future<List<int>> encode(ZstdCodec codec) => source()
+        .transform(codec.encoder)
+        .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
+    final expected = [...List<int>.filled(1000, 1), ...List<int>.filled(1000, 2)];
+    final ordinary = await encode(const ZstdCodec(level: 1));
+    expect(ZstdDecoder().decodeBytes(ordinary, verify: true, throwOnError: true),
+        expected);
+    final parallel = await encode(const ZstdCodec(
+      level: 1,
+      multithread: ZstdMultithreadOptions(workers: 1),
+    ));
+    expect(ZstdDecoder().decodeBytes(parallel, verify: true, throwOnError: true),
+        expected);
+  });
+
+  test('small jobs are clamped to the reference minimum', () async {
+    final src = Uint8List.fromList(
+      List<int>.generate(600000, (i) => (i * 13 + (i >> 9)) & 255),
+    );
+    final minimum = await _encode(src, level: 1, workers: 1, jobSize: 524288);
+    final smaller = await _encode(src, level: 1, workers: 1, jobSize: 262144);
+    expect(smaller, minimum);
+  });
+
+  test('file output failures reach onError', () async {
+    final directory = Directory.systemTemp.createTempSync('zstd-multithread-');
+    final file = File('${directory.path}/input')
+      ..writeAsBytesSync(Uint8List(600000));
+    final input = InputFileStream(file.path);
+    final result = Completer<String>();
+    runZonedGuarded(() {
+      const ZstdEncoder(level: 1).encodeStream(input, _FailingOutput(),
+          multithread: ZstdMultithreadOptions(
+            workers: 1,
+            onDone: (_) => result.complete('onDone'),
+            onError: (_, __) => result.complete('onError'),
+          ));
+    }, (_, __) => result.complete('uncaught zone error'));
+    try {
+      expect(await result.future.timeout(const Duration(seconds: 10)), 'onError');
+    } finally {
+      input.closeSync();
+      directory.deleteSync(recursive: true);
+    }
+  }, testOn: 'vm');
+
   test('a sink refuses the options, since it cannot wait for a worker', () {
     expect(
         () => ZstdCodec(
@@ -160,4 +327,10 @@ class _Held implements Sink<List<int>> {
   void add(List<int> data) {}
   @override
   void close() {}
+}
+
+class _FailingOutput extends OutputMemoryStream {
+  @override
+  void writeBytes(List<int> bytes, {int? length}) =>
+      throw StateError('output failed');
 }

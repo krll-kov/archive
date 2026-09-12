@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-//import '../util/archive_exception.dart';
+import '../util/archive_exception.dart';
 import '../util/byte_order.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
@@ -45,6 +45,13 @@ class BZip2Encoder {
   /// itself rather than pulling from an [InputStream], so what a stream writes
   /// is what [encodeStream] writes for the same bytes
   void beginStream(OutputStream output, {int blockSize100k = 9}) {
+    // The header carries the size as a single digit, so anything outside one
+    // to nine writes a signature no reader accepts
+    if (blockSize100k < 1 || blockSize100k > 9) {
+      throw ArchiveException(
+          'bzip2: block size $blockSize100k is outside the one to nine the '
+          'format has');
+    }
     bw = Bz2BitWriter(output);
 
     bw.writeBytes(BZip2.bzhSignature);

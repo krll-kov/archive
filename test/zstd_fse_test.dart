@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:archive/src/codecs/zstd/_zstd_sequences_html.dart' as html;
 import 'package:archive/src/codecs/zstd/_zstd_sequences_io.dart' as io;
 import 'package:archive/src/codecs/zstd/zstd_constants.dart';
+import 'package:archive/src/codecs/zstd_decoder.dart';
 import 'package:test/test.dart';
 
 // Rows taken from Appendix A of the zstd format specification, packed as
@@ -202,6 +203,14 @@ void expectTable(Uint64List rows, int base, Uint32List expected,
 }
 
 void main() {
+  test('a compressed FSE table containing only symbol zero', () {
+    const encoded = [
+      40, 181, 47, 253, 0, 0, 77, 0, 0, 8, 97, 1, 100, 1, 240, 3, 0, 32
+    ];
+    expect(ZstdDecoder().decodeBytes(encoded, verify: true, throwOnError: true),
+        [97, 97, 97, 97]);
+  });
+
   final rows = io.ZstdSequences().rows;
   final web = html.ZstdSequences();
 
