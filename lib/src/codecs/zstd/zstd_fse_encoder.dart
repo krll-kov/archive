@@ -305,6 +305,8 @@ class ZstdFseCTable {
   /// whatever an older build left there
   int maxSymbol = -1;
 
+  /// The cast keeps the SDK 3.0 floor: before 3.13 a conditional between two
+  /// typed lists infers `List<int>` and the field will not take it
   ZstdFseCTable(int maxLog, int maxSymbolCount)
       : nextState = Uint16List(1 << maxLog),
         symbolTT = (zstdUse64Bit ? Int64List(maxSymbolCount) : Int32List(maxSymbolCount * 2)) as TypedData;
@@ -390,7 +392,8 @@ class ZstdFseCTable {
 
   int get badCost => (accuracyLog + 1) << 8;
 
-  /// Writes the bits [state] owes and returns the state [symbol] leads to
+  /// Writes the bits [state] owes and returns the state [symbol] leads to.
+  /// The counts are masked so the shifts carry no range guard
   @pragma('vm:prefer-inline')
   int encode(ZstdBitWriter out, int state, int symbol) {
     if (!zstdUse64Bit) {

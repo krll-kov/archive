@@ -197,6 +197,8 @@ abstract class ZstdSequencesBase {
       _blockOutputIsLarger();
     }
     final at = window.position;
+    // Where a block has no sequence to place them, so the literals are moved
+    // down from the room reserved above the output rather than decoded again
     window.buffer.setRange(
         at, at + size, window.buffer, at + blockSizeMax + zstdCopySlack);
     window.position = at + size;

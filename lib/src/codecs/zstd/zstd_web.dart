@@ -1,7 +1,11 @@
 import 'dart:typed_data';
 
+// Compile time, so each build keeps one arm of every 64 bit branch and drops
+// the other. A runtime flag would leave both in every hot loop
 const zstdUse64Bit = bool.fromEnvironment('dart.library.isolate');
 
+// dart2js truncates a shift to 32 bits, so a left shift is a multiply and the
+// mask keeps the product exact
 int zstdWebShift(int value, int count) => count == 0
     ? value
     : (value & (_powers[32 - count] - 1)) * _powers[count];

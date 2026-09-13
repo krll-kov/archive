@@ -1,7 +1,7 @@
-// Everything chosen by dart.library.isolate here, this file, the two hot loops
-// and XXH64, is chosen on integer width: it holds on the VM and on wasm, whose
-// int is a real 64 bit integer, and not on dart2js, where a shift truncates to
-// 32. dart:io would be wrong, since wasm does not have it.
+// dart.library.isolate stands for integer width here, in the two hot loops and
+// in XXH64: it holds on the VM and on wasm, whose int is a real 64 bit integer,
+// and not on dart2js, where a shift truncates to 32. dart:io would be wrong,
+// since wasm does not have it.
 import 'dart:typed_data';
 
 /// Reads backwards from the last byte towards the first, most significant bit

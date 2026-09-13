@@ -168,9 +168,9 @@ class LzmaDecoder {
     }
   }
 
-  // Expands the dictionary so that [uncompressedLength] more bytes fit after
-  // the current write position, and returns the write position from before the
-  // expansion, which is where the new data starts.
+  // Makes room for [uncompressedLength] more bytes and returns where they start.
+  // The dictionary doubles as the output buffer, so a block ends on a buffer the
+  // size of that block; a circular one is the fix and is deliberately not done
   int _reserve(int uncompressedLength) {
     final initialSize = _writePosition;
     final finalSize = initialSize + uncompressedLength;

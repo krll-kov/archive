@@ -32,6 +32,7 @@ void decodeHuffmanStream(ZstdHuffmanTable table, Uint8List src, int start,
   var consumed = 8 - zstdHighestBit(last);
   var out = dstStart;
 
+  // Two fixed shifts: a variable `>>>` is a compare and a branch
   for (var i = 0; i < count; i++) {
     final row = rows[(container << consumed) >>> 1 >>> shift];
     dst[out++] = row;
@@ -104,6 +105,9 @@ void decodeHuffman4Streams(
   var o2 = dstStart + 2 * segment;
   var o3 = dstStart + 3 * segment;
 
+  // Four symbols a step, written out rather than nested in a loop: AOT leaves a
+  // `for (var u = 0; u < 4; u++)` rolled, and `>>> 1 >>> shift` is two fixed
+  // shifts where `>>> (63 - x)` would be a compare and a branch
   final grouped = tail - (tail & 3);
   for (var i = 0; i < grouped; i += 4) {
     {

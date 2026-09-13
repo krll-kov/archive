@@ -246,6 +246,7 @@ class ZstdOptPrices {
     final mlCode = zstdMatchLengthCode(mlBase);
     price += (zstdMatchLengthExtraBits[mlCode] << zstdPriceBits) +
         (_matchLengthBase - _matchLengthWeight[mlCode]);
+    // Nudges the parse towards fewer, longer sequences
     return price + zstdPriceOne ~/ 5;
   }
 
