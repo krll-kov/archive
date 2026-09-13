@@ -416,6 +416,23 @@ void main() {
       }
       expect(read, ['big.bin']);
     });
+
+    test('content listened to after the reader moved on fails', () async {
+      // The skip past an entry empties it, so a late listener used to read
+      // nothing and no error
+      final tar = TarEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('a.txt', _source(1000, 3)))
+        ..add(ArchiveFile.bytes('b.txt', _source(10, 5))));
+      final contents = <Stream<List<int>>>[];
+      await for (final entry
+          in Stream<List<int>>.value(tar).transform(tarCodec.decoder)) {
+        contents.add(entry.content);
+      }
+      expect(contents, hasLength(2));
+      for (final content in contents) {
+        await expectLater(content.drain<void>(), throwsStateError);
+      }
+    });
   });
 }
 

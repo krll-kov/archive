@@ -150,6 +150,8 @@ await for (final piece
 A `.tar.zst` downloaded and unpacked as it arrives, without holding the body:
 
 ```dart
+import 'package:path/path.dart' as p;
+
 final request =
     await HttpClient().getUrl(Uri.parse('https://example.com/data.tar.zst'));
 final HttpClientResponse response = await request.close();
@@ -157,11 +159,18 @@ final HttpClientResponse response = await request.close();
 await for (final TarEntry entry in response
     .transform(zstdCodec.decoder)
     .transform(tarCodec.decoder)) {
+  final target = p.join('out', entry.name);
+  if (!p.isWithin('out', target)) continue; // `../` would escape out/
   if (entry.type == TarEntryType.file) {
-    await entry.content.pipe(File('out/${entry.name}').openWrite());
+    await File(target).create(recursive: true);
+    await entry.content.pipe(File(target).openWrite());
   }
 }
 ```
+
+An entry's `content` reads the bytes that follow its header in the same stream,
+so read it inside the loop body, before the next entry. A skipped entry is
+passed over for you. Kept for later, its `content` throws `StateError`.
 
 Encoding the other way, so that a source and a destination that are themselves
 streams need no buffer between them:

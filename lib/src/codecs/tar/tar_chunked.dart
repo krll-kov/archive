@@ -208,6 +208,9 @@ class TarEntry {
   var _taken = false;
   var _done = false;
 
+  /// Set once the reader skipped bytes this entry still owed its content
+  var _gone = false;
+
   /// A plain file, and only that: a link or a device is not one
   bool get isFile => type == TarEntryType.file;
 
@@ -229,6 +232,10 @@ class TarEntry {
   }
 
   Stream<List<int>> _pieces() async* {
+    if (_gone) {
+      throw StateError(
+          'tar: the archive has moved past $name, its content is gone');
+    }
     while (_left > 0) {
       final piece = await _reader.some(_left);
       if (piece.isEmpty) {
@@ -277,6 +284,7 @@ Stream<TarEntry> _read(Stream<List<int>> source, Encoding encoding) async* {
       final entry = TarEntry._(file, reader);
       yield entry;
       entry._done = true;
+      entry._gone = entry._left > 0;
       await reader.skip(entry._left + _padding(entry.size));
       entry._left = 0;
     }

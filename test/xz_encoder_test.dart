@@ -95,6 +95,17 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
+    test('a SHA-256 check is refused before any byte reaches the sink', () {
+      // Refused at close, the header and every block had already gone out
+      final held = _Held();
+      expect(
+          () => const XzCodec(check: XZCheck.sha256)
+              .encoder
+              .startChunkedConversion(held),
+          throwsA(isA<ArchiveException>()));
+      expect(held.bytes, isEmpty);
+    });
+
     test('any sizes and any cuts give an archive that reads back', () {
       final random = Random(20260911);
       for (var round = 0; round < 60; round++) {

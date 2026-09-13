@@ -752,7 +752,13 @@ class XzEncoderConverter extends ChunkedConverter {
 class XzChunkedEncoder extends ChunkedSink {
   final XZCheck check;
 
-  XzChunkedEncoder(super.output, {this.check = XZCheck.crc64});
+  XzChunkedEncoder(super.output, {this.check = XZCheck.crc64}) {
+    // Refused here rather than at close, after the whole input went through
+    if (check == XZCheck.sha256) {
+      throw ArchiveException(
+          'xz: a streamed archive cannot carry a SHA-256 check yet');
+    }
+  }
 
   late final _out = SinkOutputStream(output);
 
