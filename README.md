@@ -114,6 +114,49 @@ void main() {
 }
 ```
 
+#### Showing progress while extracting:
+`ProgressOutputStream` wraps any `OutputStream` and calls back with the number of bytes written
+through it so far, at most once per 64 KiB.
+
+Extracting a zip, with progress over the whole archive:
+```dart
+import 'package:archive/archive.dart';
+
+void main() async {
+  final archive = ZipDecoder().decodeStream(InputFileStream('test.zip'));
+  // The zip directory records every file's unpacked size
+  final total = archive.fold<int>(0, (sum, f) => sum + (f.isFile ? f.size : 0));
+  var done = 0;
+  for (final file in archive) {
+    if (!file.isFile) continue;
+    final out = ProgressOutputStream(OutputFileStream('out/${file.name}'),
+        (written) => print('${(done + written) * 100 ~/ total}%'));
+    file.writeContent(out);
+    await out.close();
+    done += file.size;
+  }
+}
+```
+
+Unpacking a `.tar.gz` into a `.tar`. A gzip stream does not say how big it unpacks, so the
+progress is how much of the compressed file has been read:
+```dart
+import 'package:archive/archive.dart';
+
+void main() async {
+  final input = InputFileStream('data.tar.gz');
+  final total = input.length;
+  final out = ProgressOutputStream(OutputFileStream('data.tar'),
+      (_) => print('${input.position * 100 ~/ total}%'));
+  const GZipDecoder().decodeStream(input, out);
+  await out.close();
+  await input.close();
+}
+```
+
+Decoding is synchronous, so in Flutter run it in `Isolate.run` and send the progress through a
+`SendPort`, otherwise the UI will not repaint until it finishes.
+
 ### Dart async* StreamTransformers/ByteConversionSink/Converter support
 
 Codecs that take data as it arrives expose a `Codec` with a converter for each

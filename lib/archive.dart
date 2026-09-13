@@ -60,5 +60,6 @@ export 'src/util/input_stream.dart';
 export 'src/util/output_file_stream.dart';
 export 'src/util/output_memory_stream.dart';
 export 'src/util/output_stream.dart';
+export 'src/util/progress_output_stream.dart';
 export 'src/util/ram_file_handle.dart';
 export 'src/util/xxh64.dart';

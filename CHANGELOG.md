@@ -10,7 +10,8 @@
 * Added CodecsRecognizer with ArchiveFormat to recognize compressed file types by with their header bytes
 * Fixed XZEncoder (without compression) for large files
 * Made CRC32 faster on IO (non-js-web platforms)
-* Slightly reduces amount of RAM for lzma decoder 
+* Slightly reduces amount of RAM for lzma decoder and zlib encoder
+* Added ProgressOutputStream to monitor progress during unpack
 
 # 4.3.0
 
