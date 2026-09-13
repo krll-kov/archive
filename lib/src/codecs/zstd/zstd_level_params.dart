@@ -181,6 +181,20 @@ const _tables = <List<int>>[_large, _upTo256k, _upTo128k, _upTo16k];
 const zstdDefaultLevel = 3;
 const zstdMaxLevel = 22;
 
+/// `ZSTD_c_compressionLevel`: zero is the reference's own default and a level
+/// above the table is clamped. Below zero selects the `--fast` parse, a match
+/// finder this does not carry, so it is refused rather than read as level one
+int zstdEffectiveLevel(int level) {
+  if (level < 0) {
+    throw ArgumentError.value(level, 'level',
+        'Negative levels select the fast parse, which is not supported');
+  }
+  if (level == 0) {
+    return zstdDefaultLevel;
+  }
+  return level > zstdMaxLevel ? zstdMaxLevel : level;
+}
+
 /// `ZSTD_minGain`'s shift. What a block or a literals section has to save
 /// before it is worth sending coded rather than as it stands, a sixty fourth
 /// of it and two bytes, less as the level searches harder
@@ -203,12 +217,7 @@ int zstdMinLiteralsToCompress(ZstdLevelParams params) {
 /// gets its own row, not the large one cut down: it keys the table on fewer
 /// bytes, which finds the short matches a wider key would have hashed apart
 ZstdLevelParams zstdParamsForLevel(int level, int size) {
-  var pick = level;
-  if (pick < 1) {
-    pick = 1;
-  } else if (pick > zstdMaxLevel) {
-    pick = zstdMaxLevel;
-  }
+  final pick = zstdEffectiveLevel(level);
   final table = _tables[(size <= 262144 ? 1 : 0) +
       (size <= 131072 ? 1 : 0) +
       (size <= 16384 ? 1 : 0)];

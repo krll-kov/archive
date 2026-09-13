@@ -134,12 +134,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
     List<Object>? Function(int start, int end)? ldmFor,
     void Function(Uint8List part)? onPart}) async {
   final parts = List<Uint8List?>.filled(starts.length, null);
-  final cores = Platform.numberOfProcessors;
-  // Zero means "as many as the machine has", one core left for the caller
-  var pool = workers > 0 ? workers : cores - 1;
-  if (cap > 0 && pool > cap) {
-    pool = cap;
-  }
+  var pool = zstdMtPoolSize(workers, Platform.numberOfProcessors, cap);
   if (pool > starts.length) {
     pool = starts.length;
   }
@@ -295,14 +290,7 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
   // find them itself
   final ldmPass = ZstdMtLdmPass.forParams(
       zstdParamsForLevel(level, zstdMtSizeUnknown), geometry[0]);
-  final cores = Platform.numberOfProcessors;
-  var pool = workers > 0 ? workers : cores - 1;
-  if (cap > 0 && pool > cap) {
-    pool = cap;
-  }
-  if (pool < 1) {
-    pool = 1;
-  }
+  final pool = zstdMtPoolSize(workers, Platform.numberOfProcessors, cap);
 
   // The workers are spawned once and fed job after job, as everywhere else
   // here: an isolate per job pays for a heap and a table set each time

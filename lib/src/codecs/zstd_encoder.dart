@@ -44,7 +44,7 @@ class ZstdEncoder {
       return output.getBytes();
     }
     final bytes = data is Uint8List ? data : Uint8List.fromList(data);
-    _checkMultithread(multithread, bytes.length);
+    _checkMultithread(multithread);
     final chosen = level ?? this.level;
     _reportAsync(multithread, () => _multithreadBytes(bytes, chosen, multithread),
         Uint8List(0));
@@ -80,7 +80,7 @@ class ZstdEncoder {
     }));
   }
 
-  void _checkMultithread<T>(ZstdMultithreadOptions<T> options, int size) {
+  void _checkMultithread<T>(ZstdMultithreadOptions<T> options) {
     if (options.onDone == null) {
       throw ArgumentError.value(null, 'onDone',
           'Must be given here, since this call has nowhere else to put the '
@@ -105,25 +105,25 @@ class ZstdEncoder {
   void encodeStream(InputStream input, OutputStream output,
       {int? level, ZstdMultithreadOptions<bool>? multithread}) {
     if (multithread != null) {
-      _checkMultithread(multithread, input.length);
+      _checkMultithread(multithread);
       final chosen = level ?? this.level;
-      final region = zstdMtFileRegion(input);
-      // A dictionary belongs to the first job, and a worker reading its own
-      // slice of a file has no way to be given one, so that path reads the
-      // bytes in instead
-      if (input.length <= zstdMtJobSizeMin ||
-          region == null ||
-          _dictionary != null) {
-        final bytes = input.toUint8List();
-        input.skip(input.length);
-        _reportAsync(multithread, () async {
+      // Reading the input is part of the work and reports through onError. The
+      // body up to the first await still runs here, so the input is consumed
+      // before the call returns, as it was when the reads stood outside
+      _reportAsync(multithread, () async {
+        final region = zstdMtFileRegion(input);
+        // A dictionary belongs to the first job, and a worker reading its own
+        // slice of a file has no way to be given one, so that path reads the
+        // bytes in instead
+        if (input.length <= zstdMtJobSizeMin ||
+            region == null ||
+            _dictionary != null) {
+          final bytes = input.toUint8List();
+          input.skip(input.length);
           output.writeBytes(await _multithreadBytes(bytes, chosen, multithread));
           return true;
-        }, false);
-        return;
-      }
-      input.skip(input.length);
-      _reportAsync(multithread, () async {
+        }
+        input.skip(input.length);
         await zstdMtCompressFile(region[0] as String, region[1] as int,
             region[2] as int, chosen, output,
             checksum: checksum,

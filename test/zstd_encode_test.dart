@@ -212,12 +212,13 @@ void main() {
       expect(last, lessThan(first * 3 ~/ 5));
     });
 
-    test('a level out of range is clamped', () {
+    test('a level above the range is clamped, below it refused', () {
       final source = cases['text with long repeats']!;
       expect(ZstdEncoder(level: 99).encodeBytes(source).length,
           ZstdEncoder(level: zstdMaxLevel).encodeBytes(source).length);
-      expect(ZstdEncoder(level: -5).encodeBytes(source).length,
-          ZstdEncoder(level: 1).encodeBytes(source).length);
+      // A negative level is the reference's fast parse, not level one
+      expect(() => ZstdEncoder(level: -5).encodeBytes(source),
+          throwsA(isA<ArgumentError>()));
     });
 
     test('a higher level is not larger on real text', () {

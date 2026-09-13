@@ -698,6 +698,23 @@ void main() {
         throwsA(isA<ArchiveException>()));
   });
 
+  test('extractFileToDisk removes temporary tar files after rejection', () async {
+    final directory = Directory.systemTemp.createTempSync('archive-cleanup-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final scratch = Directory('${directory.path}/scratch')..createSync();
+    final first = ZstdEncoder().encodeBytes(Uint8List(1024));
+    final last = ZstdEncoder().encodeBytes(Uint8List(512));
+    final input = File('${directory.path}/input.tar.zst')
+      ..writeAsBytesSync([...first, ...last.sublist(0, last.length - 1)]);
+
+    await IOOverrides.runZoned(() async {
+      await expectLater(
+          extractFileToDisk(input.path, '${directory.path}/output'),
+          throwsA(isA<ArchiveException>()));
+      expect(scratch.listSync(), isEmpty);
+    }, getSystemTempDirectory: () => scratch);
+  });
+
   test('extractFileToDisk zip', () async {
     final inPath = 'test/_data/test.zip';
     final outPath = '$testOutputPath/extractFileToDisk_zip';

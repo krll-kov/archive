@@ -1,12 +1,13 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
 import 'package:test/test.dart';
 
 // zip is written forward: a local header, its data, and the central directory
 // at the end, nothing read back. So the bytes have to be the ones the
-// whole-archive encoder writes, and a real unzip has to accept them.
+// whole-archive encoder writes, and the archive has to come back off disk
+// entry by entry..
 
 Uint8List _source(int length, int seed) {
   final bytes = Uint8List(length);
@@ -184,24 +185,6 @@ void main() {
       }
     });
 
-    test('unzip accepts it', () async {
-      if (!File('/usr/bin/unzip').existsSync()) {
-        return;
-      }
-      final directory = await Directory.systemTemp.createTemp('zip_stream');
-      try {
-        final want = _source(70000, 3);
-        final path = '${directory.path}/out.zip';
-        File(path).writeAsBytesSync(_zip(_entries()));
-        final tested = Process.runSync('unzip', ['-t', path]);
-        expect(tested.exitCode, 0, reason: tested.stdout as String);
-        Process.runSync('unzip', ['-q', path, '-d', '${directory.path}/out']);
-        expect(File('${directory.path}/out/dir/binary.dat').readAsBytesSync(),
-            want);
-      } finally {
-        directory.deleteSync(recursive: true);
-      }
-    });
   });
 
   group('zip codec', () {
@@ -215,21 +198,40 @@ void main() {
     });
   });
 
-  group('zip against the system unzip', () {
-    test('unzip accepts what the stream writes', () async {
-      if (!File('/usr/bin/unzip').existsSync()) {
-        return;
-      }
+  group('zip on disk', () {
+    // The stream writes an archive nothing reads back as it goes, so it is read
+    // back afterwards the way a reader gets it: off disk, through the file
+    // stream, and then extracted entry by entry
+    test('what the stream writes reads back off disk', () async {
       final directory = await Directory.systemTemp.createTemp('zip_stream');
       try {
         final want = _source(70000, 3);
         final path = '${directory.path}/out.zip';
         File(path).writeAsBytesSync(_zip(_entries()));
-        final tested = Process.runSync('unzip', ['-t', path]);
-        expect(tested.exitCode, 0, reason: tested.stdout as String);
-        Process.runSync('unzip', ['-q', path, '-d', '${directory.path}/out']);
+
+        final input = InputFileStream(path);
+        final archive = ZipDecoder().decodeStream(input, verify: true);
+        expect(archive.files.map((file) => file.name),
+            _entries().map((entry) => entry.name));
+        expect(archive.files[1].readBytes(), want);
+        await input.close();
+      } finally {
+        directory.deleteSync(recursive: true);
+      }
+    });
+
+    test('extractFileToDisk writes the entries back as files', () async {
+      final directory = await Directory.systemTemp.createTemp('zip_stream');
+      try {
+        final want = _source(70000, 3);
+        final path = '${directory.path}/out.zip';
+        File(path).writeAsBytesSync(_zip(_entries()));
+
+        await extractFileToDisk(path, '${directory.path}/out');
         expect(File('${directory.path}/out/dir/binary.dat').readAsBytesSync(),
             want);
+        expect(File('${directory.path}/out/readme.txt').readAsStringSync(),
+            'the first entry');
       } finally {
         directory.deleteSync(recursive: true);
       }

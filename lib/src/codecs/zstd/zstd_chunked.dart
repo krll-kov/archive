@@ -163,6 +163,12 @@ class ZstdEncoderConverter extends ChunkedConverter {
         jobSize: options.jobSize,
         overlapLog: options.overlapLog,
         workers: options.workers ?? 0,
+        cap: zstdMtWorkerCap(
+            options.memoryBudget ?? zstdDefaultMemoryBudget,
+            level,
+            zstdMtSizeUnknown,
+            ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
+                jobSize: options.jobSize, overlapLog: options.overlapLog)),
         dictionary: _encodeDictionary, header: (empty) {
       final header = OutputMemoryStream();
       writeZstdMtStreamHeader(
@@ -194,10 +200,11 @@ class ZstdChunkedEncoder extends ChunkedSink {
   /// differently
   final ZstdDictionary? dictionary;
 
+  /// A level is resolved here rather than at the first block, so a level this
+  /// cannot work at is a mistake at the call, like every other setting
   ZstdChunkedEncoder(super.output,
-      {this.level = zstdDefaultLevel,
-      this.checksum = true,
-      this.dictionary});
+      {int level = zstdDefaultLevel, this.checksum = true, this.dictionary})
+      : level = zstdEffectiveLevel(level);
 
   late final _out = SinkOutputStream(output);
   late final ZstdLevelParams _params = zstdParamsForLevel(level, _sizeUnknown);
@@ -436,6 +443,7 @@ class ZstdChunkedDecoder extends ChunkedSink {
   ZstdFrameHeader? _header;
   ZstdWindow? _window;
   var _frames = 0;
+  var _skipped = 0;
   var _checked = false;
   var _produced = 0;
   var _skipLeft = 0;
@@ -506,7 +514,9 @@ class ZstdChunkedDecoder extends ChunkedSink {
     if (_stage != _Stage.magic || available != 0) {
       throw ArchiveException('zstd: the archive ended part way through');
     }
-    if (_frames == 0) {
+    // Skippable frames on their own decode to nothing rather than failing,
+    // which is what the reference does with them
+    if (_frames == 0 && _skipped == 0) {
       throw ArchiveException('zstd: no frame, the input is empty');
     }
     _sink.flush();
@@ -520,6 +530,7 @@ class ZstdChunkedDecoder extends ChunkedSink {
     skip(4);
     if (magic >= zstdSkippableMagicMin && magic <= zstdSkippableMagicMax) {
       _stage = _Stage.skippableSize;
+      _skipped++;
       return;
     }
     if (magic != zstdMagic) {

@@ -294,7 +294,9 @@ class XzChunkedDecoder extends ChunkedSink {
     }
     skip(6);
     final flags = view(2);
-    if (flags[0] != 0) {
+    // The check id is the low nibble of the second byte and the rest is
+    // reserved, so a stream that sets any of it asks for something else
+    if (flags[0] != 0 || flags[1] & 0xf0 != 0) {
       throw ArchiveException('xz: invalid stream flags');
     }
     _streamFlags = flags[1];
@@ -312,6 +314,9 @@ class XzChunkedDecoder extends ChunkedSink {
     final crc = getCrc32(header);
     final reader = _ByteReader(header, 1);
     final flags = reader.byte();
+    if (flags & 0x3c != 0) {
+      throw ArchiveException('xz: reserved bit is set in the block flags');
+    }
     final filterCount = (flags & 0x3) + 1;
     _declaredCompressedLength =
         flags & 0x40 != 0 ? reader.multibyte() : null;
@@ -327,7 +332,7 @@ class XzChunkedDecoder extends ChunkedSink {
       final length = reader.multibyte();
       final properties = reader.bytes(length);
       if (id == 0x21) {
-        if (properties.isEmpty) {
+        if (length != 1) {
           throw ArchiveException('xz: invalid LZMA dictionary size');
         }
         final v = properties[0];
@@ -340,6 +345,9 @@ class XzChunkedDecoder extends ChunkedSink {
         }
         lzma2 = i == filterCount - 1;
       } else if (id == 0x04 && i == 0 && filterCount == 2) {
+        if (length != 0 && length != 4) {
+          throw ArchiveException('xz: invalid x86 filter start offset');
+        }
         _x86Filter = true;
         if (properties.length == 4) {
           _x86StartOffset = properties[0] |

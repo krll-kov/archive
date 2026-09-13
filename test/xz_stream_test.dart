@@ -70,6 +70,38 @@ void main() {
       expect(() => xzCodec.decode(encoded), throwsA(isA<ArchiveException>()));
     });
 
+    for (final field in ['stream flags', 'block flags', 'LZMA2 property size']) {
+      test('unsupported $field with valid checksums is rejected', () {
+        final encoded = XZEncoder().encodeBytes([65, 66, 67], check: XZCheck.none);
+        final view = ByteData.sublistView(encoded);
+        // Recompute the checks so only the unsupported field can reject this
+        if (field == 'stream flags') {
+          encoded[7] |= 0x10;
+          encoded[encoded.length - 3] |= 0x10;
+          view.setUint32(8, getCrc32(encoded.sublist(6, 8)), Endian.little);
+          view.setUint32(
+              encoded.length - 12,
+              getCrc32(encoded.sublist(encoded.length - 8, encoded.length - 2)),
+              Endian.little);
+        } else {
+          if (field == 'block flags') {
+            encoded[13] |= 4;
+          } else {
+            expect(encoded[14], 0x21);
+            expect(encoded[15], 1);
+            encoded[15] = 2;
+          }
+          final headerLength = (encoded[12] + 1) * 4;
+          view.setUint32(12 + headerLength - 4,
+              getCrc32(encoded.sublist(12, 12 + headerLength - 4)), Endian.little);
+        }
+        for (final piece in [1, encoded.length]) {
+          expect(() => _decode(encoded, piece), throwsA(isA<ArchiveException>()),
+              reason: 'piece size $piece');
+        }
+      });
+    }
+
     test('a damaged block is caught by its check', () {
       final src = Uint8List.fromList(_archive('crc32.xz'));
       src[src.length - 20] ^= 0xff;

@@ -165,6 +165,11 @@ class ZstdLiterals {
     if (streamsSize < 10) {
       _fourStreamsNeedAt();
     }
+    // `HUF_decompress4X*_usingDTable_internal_body`: below six the split into
+    // four segments has no shape, whatever the streams hold
+    if (regenerated < 6) {
+      _fourStreamsNeedSix();
+    }
     final l0 = src[at] | (src[at + 1] << 8);
     final l1 = src[at + 2] | (src[at + 3] << 8);
     final l2 = src[at + 4] | (src[at + 5] << 8);
@@ -228,6 +233,10 @@ Never _literalStreamsAreMissing() =>
 @pragma('vm:never-inline')
 Never _fourStreamsNeedAt() =>
     throw ZstdLiteralsException('Four streams need at least ten bytes');
+
+@pragma('vm:never-inline')
+Never _fourStreamsNeedSix() =>
+    throw ZstdLiteralsException('Four streams need at least six literals');
 
 @pragma('vm:never-inline')
 Never _jumpTableDeclaresAn() =>

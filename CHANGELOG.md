@@ -2,8 +2,9 @@
 
 * Added zstd (Zstandard) support, both decode and encode (lvl 1-22, with custom dictionaries)
 * Added .tar.zst and .tzst to extractArchiveToDisk. Also, extractArchiveToDisk now checks for errors during
-  unpack/decompress
+  unpack/decompress and does not leak temporary TAR files on fail
 * Fixed CRC64 XZEncoder created files created on dart-js failed to decode on native platforms
+* Fixed zlib encoder on web
 * Added Dart async* StreamTransformers/ByteConversionSink/Converter support
   (xzCodec, zstdCodec, bzip2Codec, tarCodec and zipCodec) for decode and encode (decoders for all formats except for zip)
 * Added CodecsRecognizer with ArchiveFormat to recognize compressed file types by with their header bytes

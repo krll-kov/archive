@@ -209,76 +209,80 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
     archiveExt = '.tar';
   }
 
-  if (archiveExt == '.tar.gz' || archiveExt == '.tgz') {
-    await unwrap(
-        (input, output) => GZipDecoder().decodeStream(input, output), 'gzip');
-  } else if (archiveExt == '.tar.bz2' || archiveExt == '.tbz') {
-    await unwrap(
-        (input, output) => BZip2Decoder().decodeStream(input, output), 'bzip2');
-  } else if (archiveExt == '.tar.xz' || archiveExt == '.txz') {
-    await unwrap(
-        (input, output) => XZDecoder().decodeStream(input, output), 'xz');
-  } else if (archiveExt == '.tar.zst' || archiveExt == '.tzst') {
-    await unwrap(
-        (input, output) => ZstdDecoder().decodeStream(input, output), 'zstd');
-  }
-
   InputStream? toClose;
-
-  Archive archive;
-  if (archiveExt == '.tar') {
-    final input = InputFileStream(archivePath);
-    archive = TarDecoder().decodeStream(input, callback: callback);
-    toClose = input;
-  } else if (archiveExt == '.zip') {
-    final input = InputFileStream(archivePath);
-    archive = ZipDecoder()
-        .decodeStream(input, password: password, callback: callback);
-    toClose = input;
-  } else {
-    throw ArgumentError.value(inputPath, 'inputPath', 'Must end $extensionMsg');
-  }
-
-  for (final file in archive) {
-    final filePath = path.join(outputPath, path.normalize(file.name));
-    if (!_isWithinOutputPath(outputPath, filePath)) {
-      continue;
+  try {
+    if (archiveExt == '.tar.gz' || archiveExt == '.tgz') {
+      await unwrap(
+          (input, output) => GZipDecoder().decodeStream(input, output), 'gzip');
+    } else if (archiveExt == '.tar.bz2' || archiveExt == '.tbz') {
+      await unwrap((input, output) => BZip2Decoder().decodeStream(input, output),
+          'bzip2');
+    } else if (archiveExt == '.tar.xz' || archiveExt == '.txz') {
+      await unwrap(
+          (input, output) => XZDecoder().decodeStream(input, output), 'xz');
+    } else if (archiveExt == '.tar.zst' || archiveExt == '.tzst') {
+      await unwrap(
+          (input, output) => ZstdDecoder().decodeStream(input, output), 'zstd');
     }
 
-    if (file.isSymbolicLink) {
-      if (!_isValidSymLink(outputPath, file)) {
+    Archive archive;
+    if (archiveExt == '.tar') {
+      final input = InputFileStream(archivePath);
+      archive = TarDecoder().decodeStream(input, callback: callback);
+      toClose = input;
+    } else if (archiveExt == '.zip') {
+      final input = InputFileStream(archivePath);
+      archive = ZipDecoder()
+          .decodeStream(input, password: password, callback: callback);
+      toClose = input;
+    } else {
+      throw ArgumentError.value(
+          inputPath, 'inputPath', 'Must end $extensionMsg');
+    }
+
+    for (final file in archive) {
+      final filePath = path.join(outputPath, path.normalize(file.name));
+      if (!_isWithinOutputPath(outputPath, filePath)) {
         continue;
       }
-    }
 
-    if (file.isDirectory && !file.isSymbolicLink) {
-      Directory(filePath).createSync(recursive: true);
-      continue;
-    }
-
-    if (file.isSymbolicLink) {
-      final link = Link(filePath);
-      final p = path.normalize(file.symbolicLink ?? "");
-      link.createSync(p, recursive: true);
-    } else if (file.isFile) {
-      final output = OutputFileStream(filePath, bufferSize: bufferSize);
-      try {
-        file.writeContent(output);
-      } catch (_) {}
-      if (posixSupported) {
-        posix.chmod(filePath, file.unixPermissions.toRadixString(8));
+      if (file.isSymbolicLink) {
+        if (!_isValidSymLink(outputPath, file)) {
+          continue;
+        }
       }
 
-      await output.close();
+      if (file.isDirectory && !file.isSymbolicLink) {
+        Directory(filePath).createSync(recursive: true);
+        continue;
+      }
+
+      if (file.isSymbolicLink) {
+        final link = Link(filePath);
+        final p = path.normalize(file.symbolicLink ?? "");
+        link.createSync(p, recursive: true);
+      } else if (file.isFile) {
+        final output = OutputFileStream(filePath, bufferSize: bufferSize);
+        try {
+          file.writeContent(output);
+        } catch (_) {}
+        if (posixSupported) {
+          posix.chmod(filePath, file.unixPermissions.toRadixString(8));
+        }
+
+        await output.close();
+      }
     }
-  }
 
-  await toClose.close();
-
-  await archive.clear();
-
-  final created = tempDir;
-  if (created != null) {
-    await created.delete(recursive: true);
+    await archive.clear();
+  } finally {
+    // The temporary tar and the handle on it are this call's, so a failure part
+    // way through takes them with it rather than leaving them in the system
+    // temporary directory
+    await toClose?.close();
+    final created = tempDir;
+    if (created != null) {
+      await created.delete(recursive: true);
+    }
   }
 }

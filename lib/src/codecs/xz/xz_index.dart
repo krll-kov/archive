@@ -146,6 +146,11 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         return null;
       }
       final streamFlags = footer[9];
+      // Everything above the check id is reserved, and a stream that sets it is
+      // one the block decoder refuses, so the layout is no use here either
+      if (streamFlags & 0xf0 != 0) {
+        return null;
+      }
 
       // Backward size holds the size of the index in four byte units, minus one.
       final backwardSize =

@@ -43,7 +43,7 @@ class ZstdDecoder {
       final sink = OutputMemoryStream();
       final total = uncompressedSize(bytes);
       if (total != null && total > 0) {
-        sink.reserve(total);
+        sink.reserve(_affordable(total, bytes.length, zstdBlockMaximumSize));
       }
       try {
         _decode(bytes, verify, sink, null);
@@ -115,6 +115,7 @@ class ZstdDecoder {
   void _stream(InputStream input, OutputStream output, bool verify) {
     Uint8List? scratch;
     var frames = 0;
+    var skipped = 0;
     while (!input.isEOS) {
       if (input.length < 4) {
         throw ZstdFrameException('Trailing bytes are not a frame');
@@ -129,6 +130,7 @@ class ZstdDecoder {
           throw ZstdFrameException('Skippable frame is truncated');
         }
         input.skip(8 + size);
+        skipped++;
         continue;
       }
       if (magic != zstdMagic) {
@@ -163,7 +165,9 @@ class ZstdDecoder {
       window.finish();
       frames++;
     }
-    if (frames == 0) {
+    // An archive of nothing but skippable frames decodes to nothing, which is
+    // what the reference does with one, so only an empty input is a failure
+    if (frames == 0 && skipped == 0) {
       throw ZstdFrameException('No frame: the input is empty');
     }
   }
@@ -241,7 +245,9 @@ class ZstdDecoder {
       if (output == null && size != null && size > 0) {
         // The scratch a block needs above its own output has to be part of the
         // one allocation, or the last blocks grow the buffer and copy it all
-        window.reserve(prefix + size + header.blockReserve);
+        window.reserve(prefix +
+            _affordable(size, end - at - 4 - header.size, header.blockSizeMax) +
+            header.blockReserve);
       }
       if (prefix > 0) {
         window.prime(dictionary!.content);
@@ -284,6 +290,15 @@ class ZstdDecoder {
       }
     }
     return at + (header.hasChecksum ? 4 : 0);
+  }
+
+  /// A declared content size is the writer's word and buys no memory on its
+  /// own. A block costs three bytes of header and yields at most [blockSizeMax],
+  /// so [remaining] bytes of input cannot produce more than this however the
+  /// header reads. Anything above it is left to the buffer's own growth
+  static int _affordable(int declared, int remaining, int blockSizeMax) {
+    final ceiling = ((remaining + 2) ~/ 3) * blockSizeMax;
+    return declared < ceiling ? declared : ceiling;
   }
 
   static int _uint32At(Uint8List bytes, int at) =>

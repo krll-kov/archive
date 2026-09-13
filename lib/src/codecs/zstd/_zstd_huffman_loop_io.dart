@@ -11,6 +11,7 @@ const _reloadAt = 48;
 void decodeHuffmanStream(ZstdHuffmanTable table, Uint8List src, int start,
     int length, Uint8List dst, int dstStart, int count) {
   if (count == 0) {
+    checkEmptyHuffmanStream(src, start, length);
     return;
   }
   if (length < 8) {

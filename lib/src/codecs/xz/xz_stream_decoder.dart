@@ -174,6 +174,11 @@ class XZStreamDecoder {
       return _fail('Invalid stream flags');
     }
     streamFlags = header.readByte();
+    // The check id is the low nibble and the rest is reserved, so a stream that
+    // sets any of it asks for something this decoder cannot promise
+    if (streamFlags & 0xf0 != 0) {
+      return _fail('Invalid stream flags');
+    }
     header.reset();
 
     final crc = input.readUint32();
@@ -191,6 +196,9 @@ class XZStreamDecoder {
 
     header.skip(1); // Skip length field
     final blockFlags = header.readByte();
+    if (blockFlags & 0x3c != 0) {
+      return _fail('Reserved bit is set in the block flags');
+    }
     final nFilters = (blockFlags & 0x3) + 1;
     final hasCompressedLength = blockFlags & 0x40 != 0;
     final hasUncompressedLength = blockFlags & 0x80 != 0;
@@ -225,7 +233,7 @@ class XZStreamDecoder {
       }
       if (id == 0x03) {
         // delta filter
-        if (properties.isEmpty) {
+        if (propertiesLength != 1) {
           return _fail('Invalid delta filter distance');
         }
         final distance = properties[0];
@@ -233,6 +241,9 @@ class XZStreamDecoder {
         filters.add(distance);
       } else if (id == 0x04) {
         // x86 BCJ filter
+        if (propertiesLength != 0 && propertiesLength != 4) {
+          return _fail('Invalid x86 filter start offset');
+        }
         var startOffset = 0;
         if (propertiesLength == 4) {
           startOffset = properties[0] |
@@ -244,7 +255,7 @@ class XZStreamDecoder {
         filters.add(startOffset);
       } else if (id == 0x21) {
         // lzma2 filter
-        if (properties.isEmpty) {
+        if (propertiesLength != 1) {
           return _fail('Invalid LZMA dictionary size');
         }
         final v = properties[0];

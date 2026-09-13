@@ -473,7 +473,7 @@ Future<void> zstdMtCompressFile(
       jobSize: jobSize,
       overlapLog: overlapLog,
       workers: workers,
-      cap: _cap(memoryBudget, level, size, geometry),
+      cap: zstdMtWorkerCap(memoryBudget, level, size, geometry),
       onPart: out.writeBytes);
   if (checksum) {
     _writeChecksum(out, zstdMtFileDigest(path, offset, size));
@@ -488,7 +488,18 @@ List<int> _jobStarts(int size, int job) {
   return starts;
 }
 
-int _cap(int memoryBudget, int level, int size, List<int> geometry) {
+/// The pool a run gets: what was asked for, or one worker a core with one left
+/// for the caller, lowered to what the budget affords and never below one
+int zstdMtPoolSize(int workers, int cores, int cap) {
+  var pool = workers > 0 ? workers : cores - 1;
+  if (cap > 0 && pool > cap) {
+    pool = cap;
+  }
+  return pool < 1 ? 1 : pool;
+}
+
+/// How many workers a budget pays for, zero for no bound and never below one
+int zstdMtWorkerCap(int memoryBudget, int level, int size, List<int> geometry) {
   if (memoryBudget <= 0) {
     return 0;
   }
@@ -549,13 +560,7 @@ Future<Uint8List> zstdMtCompress(Uint8List src, int level,
   for (var at = geometry[0]; at < src.length; at += geometry[0]) {
     starts.add(at);
   }
-  var cap = 0;
-  if (memoryBudget > 0) {
-    cap = memoryBudget ~/ zstdMtWorkerCost(level, src.length, geometry);
-    if (cap < 1) {
-      cap = 1;
-    }
-  }
+  final cap = zstdMtWorkerCap(memoryBudget, level, src.length, geometry);
   // The reference gives the dictionary to job zero only, so that one is done
   // here rather than plumbed through the port, and the rest go to the pool
   Uint8List? firstPart;

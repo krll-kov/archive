@@ -172,6 +172,50 @@ const _dictionaries = <String>[
 ];
 
 void main() {
+  for (final count in [0, 3, 4, 6, 8]) {
+    test('four Huffman streams validate a literal count of $count', () {
+      final segment = (count + 3) >> 2;
+      final tail = count - 3 * segment;
+      // Each zero literal consumes one bit from a two-symbol Huffman table
+      final frame = Uint8List.fromList([
+        40, 181, 47, 253, 0, 0, 133, 0, 0,
+        6 | (count << 4), 0, 3, 128, 16,
+        1, 0, 1, 0, 1, 0,
+        1 << segment, 1 << segment, 1 << segment, 1 << tail, 0,
+      ]);
+      if (count < 6) {
+        expect(
+            () => ZstdDecoder().decodeBytes(frame,
+                verify: true, throwOnError: true),
+            throwsFormatException);
+      } else {
+        expect(
+            ZstdDecoder().decodeBytes(frame, verify: true, throwOnError: true),
+            List<int>.filled(count, 0));
+      }
+    });
+  }
+
+  for (final marker in [0, 1, 2, 4, 128, 255]) {
+    test('four Huffman streams validate an empty tail marker $marker', () {
+      // The first three streams emit two literals each, leaving the fourth empty
+      final frame = Uint8List.fromList([
+        40, 181, 47, 253, 0, 0, 133, 0, 0, 102, 0, 3,
+        128, 16, 1, 0, 1, 0, 1, 0, 4, 4, 4, marker, 0,
+      ]);
+      if (marker == 1) {
+        expect(
+            ZstdDecoder().decodeBytes(frame, verify: true, throwOnError: true),
+            List<int>.filled(6, 0));
+      } else {
+        expect(
+            () => ZstdDecoder().decodeBytes(frame,
+                verify: true, throwOnError: true),
+            throwsFormatException);
+      }
+    });
+  }
+
   test('streamed matches survive wrapping a 1 KiB window on every backend', () {
     final encoded = base64Decode(
         'KLUv/QQAZAAAKGFiY2RlAQD4URUtTAAAEGVhAQD7K4AFTAAAEGRlAQD7K4AF'

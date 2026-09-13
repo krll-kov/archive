@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:archive/src/codecs/zstd/zstd_mt_frame_encoder.dart';
 import 'package:test/test.dart';
 
 Future<Uint8List> _encode(Uint8List src,
@@ -227,6 +228,61 @@ void main() {
     await expectLater(output.toList(), throwsArgumentError);
   });
 
+  group('the worker pool the settings ask for', () {
+    // The geometry of the streamed frame, which is what the transform runs on
+    List<int> geometry(int level) => ZstdMtFrameEncoder.geometry(
+        level, zstdMtSizeUnknown,
+        jobSize: 0, overlapLog: 0);
+
+    test('a budget under one worker still affords one', () {
+      for (final level in [1, 6, 12, 19]) {
+        expect(zstdMtWorkerCap(1, level, zstdMtSizeUnknown, geometry(level)), 1,
+            reason: 'level $level');
+      }
+    });
+
+    test('a budget buys a worker for what a worker holds', () {
+      const level = 6;
+      final cost = zstdMtWorkerCost(level, zstdMtSizeUnknown, geometry(level));
+      for (final workers in [1, 3, 7]) {
+        expect(
+            zstdMtWorkerCap(
+                cost * workers, level, zstdMtSizeUnknown, geometry(level)),
+            workers);
+      }
+      expect(zstdMtWorkerCap(0, level, zstdMtSizeUnknown, geometry(level)), 0,
+          reason: 'no budget is no bound');
+    });
+
+    test('the pool is what was asked for, lowered to what is afforded', () {
+      expect(zstdMtPoolSize(4, 16, 0), 4, reason: 'no cap, no change');
+      expect(zstdMtPoolSize(4, 16, 1), 1, reason: 'the cap lowers it');
+      expect(zstdMtPoolSize(4, 16, 9), 4, reason: 'a cap above it does not');
+      expect(zstdMtPoolSize(0, 16, 0), 15, reason: 'a core left for the caller');
+      expect(zstdMtPoolSize(0, 16, 2), 2);
+      expect(zstdMtPoolSize(0, 1, 0), 1, reason: 'never below one');
+    });
+
+    test('a transform under a budget of one byte writes the same frame',
+        () async {
+      Future<List<int>> run(int budget) async {
+        final parts = <int>[];
+        await for (final part
+            in Stream<List<int>>.value(input).transform(ZstdCodec(
+          level: 1,
+          frameChecksum: false,
+          multithread: ZstdMultithreadOptions(
+              workers: 4, memoryBudget: budget, jobSize: 524288),
+        ).encoder)) {
+          parts.addAll(part);
+        }
+        return parts;
+      }
+
+      expect(await run(1), await run(1 << 30));
+    });
+  }, testOn: 'vm');
+
   test('a transform consumes each chunk before requesting another', () async {
     Stream<List<int>> source() async* {
       final buffer = Uint8List(1000)..fillRange(0, 1000, 1);
@@ -257,6 +313,21 @@ void main() {
     final minimum = await _encode(src, level: 1, workers: 1, jobSize: 524288);
     final smaller = await _encode(src, level: 1, workers: 1, jobSize: 262144);
     expect(smaller, minimum);
+  });
+
+  test('input read failures reach onError', () async {
+    final error = Completer<Object>();
+    var completed = false;
+    expect(
+        () => ZstdEncoder().encodeStream(_UnreadableInput(), OutputMemoryStream(),
+            multithread: ZstdMultithreadOptions<bool>(
+                workers: 1,
+                onDone: (_) => completed = true,
+                onError: (failure, _) => error.complete(failure))),
+        returnsNormally);
+    expect(await error.future.timeout(const Duration(seconds: 5)),
+        isA<ArchiveException>());
+    expect(completed, isFalse);
   });
 
   test('file output failures reach onError', () async {
@@ -329,8 +400,16 @@ class _Held implements Sink<List<int>> {
   void close() {}
 }
 
+class _UnreadableInput extends InputMemoryStream {
+  _UnreadableInput() : super([1, 2, 3]);
+
+  @override
+  Uint8List toUint8List() => throw FileSystemException('input failed');
+}
+
 class _FailingOutput extends OutputMemoryStream {
   @override
   void writeBytes(List<int> bytes, {int? length}) =>
       throw StateError('output failed');
 }
+

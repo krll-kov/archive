@@ -2,13 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
 import 'package:test/test.dart';
 
 // A codec has three ways in: the whole buffer, the older InputStream pair, and
 // the chunked converter. They have to agree with each other where the format
-// says they should, every one of them has to read back as the original, and
-// the system tool has to accept what they wrote.
+// says they should, and every one of them has to read back as the original.
+// Nothing here runs another program: the suite has to pass wherever it is.
 
 Uint8List _source(int length, int seed) {
   final bytes = Uint8List(length);
@@ -40,31 +40,6 @@ Uint8List _old(
   return output.getBytes();
 }
 
-/// What the system tool makes of it, or null where that tool is not here
-bool? _throughTool(String tool, List<String> args, Uint8List archive,
-    Uint8List want, Directory directory) {
-  if (!File('/usr/bin/$tool').existsSync() &&
-      !File('/opt/homebrew/bin/$tool').existsSync()) {
-    return null;
-  }
-  final path = '${directory.path}/probe';
-  File(path).writeAsBytesSync(archive);
-  final run = Process.runSync(tool, [...args, path], stdoutEncoding: null);
-  if (run.exitCode != 0) {
-    return false;
-  }
-  final got = run.stdout as List<int>;
-  if (got.length != want.length) {
-    return false;
-  }
-  for (var i = 0; i < want.length; i++) {
-    if (got[i] != want[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
 void main() {
   final source = _source(400000, 7);
 
@@ -75,8 +50,7 @@ void main() {
       converter: zstdCodec.encoder,
       decoder: zstdCodec.decoder,
       back: (a) => ZstdDecoder().decodeBytes(a, verify: true, throwOnError: true),
-      tool: 'zstd',
-      toolArgs: ['-dc'],
+      toFile: (i, o) => ZstdDecoder().decodeStream(i, o, verify: true),
       // The chunked encoder writes what ZSTD_compressStream2 writes, which is
       // a different archive from the one shot ZSTD_compress2
       chunkedMatchesWhole: false,
@@ -87,8 +61,7 @@ void main() {
       converter: bzip2Codec.encoder,
       decoder: bzip2Codec.decoder,
       back: (a) => BZip2Decoder().decodeBytes(a, verify: true),
-      tool: 'bzip2',
-      toolArgs: ['-dc'],
+      toFile: (i, o) => BZip2Decoder().decodeStream(i, o, verify: true),
       chunkedMatchesWhole: true,
     ),
     'xz': _Paths(
@@ -97,8 +70,7 @@ void main() {
       converter: xzCodec.encoder,
       decoder: xzCodec.decoder,
       back: (a) => XZDecoder().decodeBytes(a, verify: true),
-      tool: 'xz',
-      toolArgs: ['-dc'],
+      toFile: (i, o) => XZDecoder().decodeStream(i, o, verify: true),
       chunkedMatchesWhole: true,
     ),
   };
@@ -132,7 +104,9 @@ void main() {
         }
       });
 
-      test('the system tool reads all three back as the original', () {
+      test('all three read back off disk as the original', () {
+        // The way a reader gets an archive: a file, decoded a piece at a time
+        // into another file, neither side ever held whole
         final directory = Directory.systemTemp.createTempSync('codec_paths');
         try {
           for (final archive in [
@@ -140,17 +114,21 @@ void main() {
             paths.old(),
             _chunked(paths.converter, source, 8192)
           ]) {
-            final result = _throughTool(
-                paths.tool, paths.toolArgs, archive, source, directory);
-            if (result == null) {
-              return; // that tool is not installed here
-            }
-            expect(result, isTrue);
+            final archivePath = '${directory.path}/probe.$name';
+            final outputPath = '${directory.path}/probe.bin';
+            File(archivePath).writeAsBytesSync(archive);
+            final input = InputFileStream(archivePath);
+            final output = OutputFileStream(outputPath);
+            paths.toFile(input, output);
+            output.closeSync();
+            input.closeSync();
+            expect(File(outputPath).readAsBytesSync(), source);
           }
         } finally {
           directory.deleteSync(recursive: true);
         }
       });
+
     });
   }
 }
@@ -161,8 +139,9 @@ class _Paths {
   final Converter<List<int>, List<int>> converter;
   final Converter<List<int>, List<int>> decoder;
   final Uint8List Function(Uint8List) back;
-  final String tool;
-  final List<String> toolArgs;
+
+  /// The same decode over a file, which is the path a reader takes
+  final void Function(InputStream, OutputStream) toFile;
   final bool chunkedMatchesWhole;
 
   const _Paths({
@@ -171,8 +150,7 @@ class _Paths {
     required this.converter,
     required this.decoder,
     required this.back,
-    required this.tool,
-    required this.toolArgs,
+    required this.toFile,
     required this.chunkedMatchesWhole,
   });
 }

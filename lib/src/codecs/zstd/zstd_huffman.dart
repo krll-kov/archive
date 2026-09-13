@@ -206,11 +206,22 @@ void _buildFromWeights(ZstdHuffmanTable table, Uint8List weights,
   }
 }
 
+/// A stream that owes no symbol is still read: `BIT_initDStream` and
+/// `BIT_endOfDStream` run over it either way, so its bytes have to carry the
+/// end marker and nothing above it
+void checkEmptyHuffmanStream(Uint8List src, int start, int length) {
+  final reader = ZstdBitReader();
+  if (!reader.setStream(src, start, length) || !reader.isAtEnd) {
+    _emptyStreamCarriesBits();
+  }
+}
+
 /// One symbol at a time through the shared reader, for streams too short
 /// for the eight byte container and for targets without one
 void decodeHuffmanStreamSlow(ZstdHuffmanTable table, Uint8List src, int start,
     int length, Uint8List dst, int dstStart, int count) {
   if (count == 0) {
+    checkEmptyHuffmanStream(src, start, length);
     return;
   }
   final reader = ZstdBitReader();
@@ -274,6 +285,10 @@ Never _weightsDoNotFill() =>
 @pragma('vm:never-inline')
 Never _streamIsEmptyOr() =>
     throw ZstdHuffmanException('Stream is empty or unterminated');
+
+@pragma('vm:never-inline')
+Never _emptyStreamCarriesBits() =>
+    throw ZstdHuffmanException('Stream owes no symbol but carries bits');
 
 @pragma('vm:never-inline')
 Never _streamIsShorterThan() =>

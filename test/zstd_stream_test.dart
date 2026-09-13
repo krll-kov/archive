@@ -93,6 +93,32 @@ void main() {
       expect(_decode(archive, archive.length), content);
     });
 
+    final skippableOnly = <String, List<int>>{
+      'empty': [0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0],
+      'payload': [0x5f, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 1, 2, 3],
+      'multiple': [
+        0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0,
+        0x5f, 0x2a, 0x4d, 0x18, 1, 0, 0, 0, 7,
+      ],
+    };
+    for (final entry in skippableOnly.entries) {
+      test('${entry.key} skippable-only archives decode to no bytes', () {
+        final archive = Uint8List.fromList(entry.value);
+        expect(ZstdDecoder().decodeBytes(archive, throwOnError: true), isEmpty);
+        for (final piece in [1, 3, archive.length]) {
+          expect(_decode(archive, piece), isEmpty);
+        }
+      });
+      test('${entry.key} skippable-only archives decode through InputStream', () {
+        final output = OutputMemoryStream();
+        expect(
+            ZstdDecoder().decodeStream(InputMemoryStream(entry.value), output,
+                verify: true, throwOnError: true),
+            isTrue);
+        expect(output.getBytes(), isEmpty);
+      });
+    }
+
     test('a damaged frame is caught by its checksum', () {
       final src = Uint8List.fromList(_archive('text-1k-l19.zst'));
       src[src.length - 12] ^= 0xff;

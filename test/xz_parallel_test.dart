@@ -1,29 +1,28 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:archive/src/codecs/xz/xz_index.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
-// Compresses [input] by shelling out to xz, so that the archives under test
-// are made by the reference implementation rather than by this package.
-Uint8List xzCompress(Uint8List input, List<String> args) {
-  final dir = Directory.systemTemp.createTempSync('archive_xz_parallel');
-  try {
-    final file = File(p.join(dir.path, 'input.bin'))..writeAsBytesSync(input);
-    final result = Process.runSync('xz', [...args, '-z', '-c', file.path],
-        stdoutEncoding: null);
-    if (result.exitCode != 0) {
-      throw StateError('xz exited with ${result.exitCode}: ${result.stderr}');
-    }
-    return Uint8List.fromList(result.stdout as List<int>);
-  } finally {
-    dir.deleteSync(recursive: true);
-  }
-}
+// The archives under test are made by the reference tool, not by this package,
+// so they are kept as fixtures rather than written here: a test suite runs
+// where no xz binary does. Each one is `sampleData(1200000)` through
+// `xz -z -c` with these options, and `huge` is 48 blocks of 64 MiB of zeros
+// through `xz -0 -T4 --block-size=64MiB`:
+//   blocks       --block-size=65536 --lzma2=preset=1
+//   whole        --lzma2=preset=1
+//   crc64        --check=crc64 --lzma2=preset=1
+//   crc32        --block-size=65536 --check=crc32 --lzma2=preset=1
+//   crc64-blocks --block-size=65536 --check=crc64 --lzma2=preset=1
+//   x86          --block-size=65536 --x86 --lzma2=preset=1
+Uint8List fixture(String name) =>
+    File('test/_data/xz/parallel/$name.xz').readAsBytesSync();
 
-/// Where one block sits in an archive, as reported by xz itself.
+/// Where one block sits in an archive, read from the index the archive carries
 class BlockInfo {
   final int compOffset;
   final int uncompOffset;
@@ -41,53 +40,26 @@ class BlockInfo {
   int checkOffset(int checkSize) => compOffset + totalSize - checkSize;
 }
 
-/// Asks xz where the blocks of [archivePath] are, so that a test can corrupt
-/// one block on purpose rather than a byte somewhere in the middle.
-List<BlockInfo> blocksOf(String archivePath) {
-  final result = Process.runSync('xz', ['--robot', '-l', '-vv', archivePath]);
-  final blocks = <BlockInfo>[];
-  for (final line in (result.stdout as String).split('\n')) {
-    final fields = line.split('\t');
-    if (fields.isEmpty || fields[0] != 'block') {
-      continue;
-    }
-    blocks.add(BlockInfo(
-      int.parse(fields[4]),
-      int.parse(fields[5]),
-      int.parse(fields[6]),
-      int.parse(fields[7]),
-      int.parse(fields[11]),
-    ));
-  }
-  return blocks;
+/// The blocks of [bytes], so that a test can damage one block on purpose
+/// rather than a byte somewhere in the middle
+List<BlockInfo> blocksOf(Uint8List bytes) {
+  final layout = parseXZLayout(XZMemorySource(bytes))!;
+  return [
+    for (final block in layout.blocks)
+      BlockInfo(
+        block.compressedOffset,
+        block.outputOffset,
+        block.compressedLength,
+        block.uncompressedLength,
+        (bytes[block.compressedOffset] + 1) * 4,
+      ),
+  ];
 }
 
-/// Compresses [input] and reports where its blocks ended up.
-({Uint8List bytes, List<BlockInfo> blocks}) buildArchive(
-    Uint8List input, List<String> args) {
-  final dir = Directory.systemTemp.createTempSync('archive_xz_blocks');
-  try {
-    final source = File(p.join(dir.path, 'input.bin'))..writeAsBytesSync(input);
-    final result = Process.runSync('xz', [...args, '-z', '-f', source.path]);
-    if (result.exitCode != 0) {
-      throw StateError('xz exited with ${result.exitCode}: ${result.stderr}');
-    }
-    final archivePath = '${source.path}.xz';
-    return (
-      bytes: File(archivePath).readAsBytesSync(),
-      blocks: blocksOf(archivePath),
-    );
-  } finally {
-    dir.deleteSync(recursive: true);
-  }
-}
-
-bool get hasXz {
-  try {
-    return Process.runSync('xz', ['--version']).exitCode == 0;
-  } catch (_) {
-    return false;
-  }
+/// A fixture and where its blocks are
+({Uint8List bytes, List<BlockInfo> blocks}) buildArchive(String name) {
+  final bytes = fixture(name);
+  return (bytes: bytes, blocks: blocksOf(bytes));
 }
 
 /// Something that compresses well enough to be worth several blocks, with
@@ -140,16 +112,9 @@ void main() {
   group('xz multithreaded', () {
     final expected = sampleData(1200000);
 
-    setUpAll(() {
-      if (!hasXz) {
-        throw StateError(
-            'the xz command line tool is required for these tests');
-      }
-    });
-
     test('multi block archive matches the single threaded decode', () async {
       final compressed =
-          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+          fixture('blocks');
       // A single block would make the whole exercise pointless.
       expect(XZDecoder().uncompressedSize(compressed), expected.length);
 
@@ -161,24 +126,21 @@ void main() {
     });
 
     test('applies the BCJ x86 filter across blocks', () async {
-      final compressed = xzCompress(
-          expected, ['--block-size=65536', '--x86', '--lzma2=preset=1']);
+      final compressed = fixture('x86');
       final parallel = await decodeBytesOnIsolates(compressed, workers: 4);
       expect(parallel, equals(expected));
       expect(XZDecoder().decodeBytes(compressed), equals(expected));
     });
 
     test('verifies CRC32 while streaming the output back', () async {
-      final compressed = xzCompress(expected,
-          ['--block-size=65536', '--check=crc32', '--lzma2=preset=1']);
+      final compressed = fixture('crc32');
       final parallel =
           await decodeBytesOnIsolates(compressed, verify: true, workers: 4);
       expect(parallel, equals(expected));
     });
 
     test('verifies CRC64 while streaming the output back', () async {
-      final compressed = xzCompress(expected,
-          ['--block-size=65536', '--check=crc64', '--lzma2=preset=1']);
+      final compressed = fixture('crc64-blocks');
       final parallel =
           await decodeBytesOnIsolates(compressed, verify: true, workers: 4);
       expect(parallel, equals(expected));
@@ -190,7 +152,7 @@ void main() {
 
       setUp(() {
         final built =
-            buildArchive(expected, ['--block-size=65536', '--lzma2=preset=1']);
+            buildArchive('blocks');
         pristine = built.bytes;
         blocks = built.blocks;
         // Several blocks, so that a corrupt one has intact neighbours.
@@ -382,7 +344,7 @@ void main() {
 
     test('one worker still decodes the whole archive', () async {
       final compressed =
-          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+          fixture('blocks');
       expect(await decodeBytesOnIsolates(compressed, workers: 1),
           equals(expected));
     });
@@ -390,14 +352,14 @@ void main() {
     test('a worker count above the core count is clamped, not rejected',
         () async {
       final compressed =
-          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+          fixture('blocks');
       expect(await decodeBytesOnIsolates(compressed, workers: 999),
           equals(expected));
     });
 
     test('a memory budget too small for two workers still decodes', () async {
       final compressed =
-          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+          fixture('blocks');
       expect(
           await decodeBytesOnIsolates(compressed, workers: 8, memoryBudget: 1),
           equals(expected));
@@ -409,7 +371,7 @@ void main() {
       // the per worker cost come out negative, which skips the memory budget
       // and hands out more workers than the budget allows.
       final compressed =
-          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+          fixture('blocks');
       final cases = <String, XZMultithreadOptions<Uint8List>>{
         'workers: 0': XZMultithreadOptions(onDone: (_) {}, workers: 0),
         'workers: -1': XZMultithreadOptions(onDone: (_) {}, workers: -1),
@@ -431,7 +393,7 @@ void main() {
 
     test('accepts the smallest settings that make sense', () async {
       final compressed =
-          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+          fixture('blocks');
       final completer = Completer<Uint8List>();
       XZDecoder().decodeBytes(compressed,
           multithread: XZMultithreadOptions(
@@ -445,7 +407,7 @@ void main() {
     });
 
     test('a single block archive still reports through onDone', () async {
-      final compressed = xzCompress(expected, ['--lzma2=preset=1']);
+      final compressed = fixture('whole');
       expect(await decodeBytesOnIsolates(compressed), equals(expected));
     });
 
@@ -494,7 +456,7 @@ void main() {
 
     test('streams a file straight from disk into a file', () async {
       final compressed =
-          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+          fixture('blocks');
       final dir = Directory.systemTemp.createTempSync('archive_xz_files');
       try {
         final archivePath = p.join(dir.path, 'data.xz');
@@ -516,30 +478,23 @@ void main() {
 
     test('repeated file decodes do not leak file handles', () async {
       // A killed isolate does not release its file descriptors, so a worker
-      // that kept the archive open between blocks would leak one per decode.
-      final compressed =
-          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+      // that kept the archive open between blocks would leak four a round.
+      // Enough rounds and that runs the process out of descriptors, and the
+      // round that cannot open the archive fails here: no tool has to be asked
+      // how many are open, the limit answers.
       final dir = Directory.systemTemp.createTempSync('archive_xz_handles');
       try {
         final archivePath = p.join(dir.path, 'data.xz');
-        File(archivePath).writeAsBytesSync(compressed);
+        File(archivePath).writeAsBytesSync(fixture('blocks'));
         final outputPath = p.join(dir.path, 'data.bin');
 
-        for (var round = 0; round < 8; round++) {
+        for (var round = 0; round < 256; round++) {
           final input = InputFileStream(archivePath);
           final output = OutputFileStream(outputPath);
           final ok = await decodeStreamOnIsolates(input, output, workers: 4);
           await input.close();
           await output.close();
-          expect(ok, isTrue);
-        }
-
-        if (Platform.isMacOS || Platform.isLinux) {
-          final lsof = Process.runSync('sh', [
-            '-c',
-            'lsof -p $pid 2>/dev/null | grep -c "${p.basename(archivePath)}"'
-          ]);
-          expect(int.tryParse((lsof.stdout as String).trim()), 0);
+          expect(ok, isTrue, reason: 'round $round');
         }
       } finally {
         dir.deleteSync(recursive: true);
@@ -555,34 +510,15 @@ void main() {
       // cost about ninefold on a three gigabyte archive.
       //
       // Off by default because it allocates over three gigabytes.
-      final dir = Directory.systemTemp.createTempSync('archive_xz_huge');
-      try {
-        // Zeros reach ratios in the thousands, so the archive stays small.
-        final archivePath = p.join(dir.path, 'huge.xz');
-        final source = File(p.join(dir.path, 'zeros.bin'));
-        final chunk = Uint8List(64 * 1024 * 1024);
-        final sink = source.openSync(mode: FileMode.write);
-        for (var i = 0; i < 48; i++) {
-          sink.writeFromSync(chunk);
-        }
-        sink.closeSync();
-        final result = Process.runSync(
-            'xz', ['-0', '-T4', '--block-size=64MiB', '-c', source.path],
-            stdoutEncoding: null);
-        File(archivePath).writeAsBytesSync(result.stdout as List<int>);
-        source.deleteSync();
+      // Zeros reach ratios in the thousands, so the fixture stays small.
+      final compressed = fixture('huge');
+      // Beyond the ceiling the size is not reported at all.
+      expect(XZDecoder().uncompressedSize(compressed), isNull);
 
-        final compressed = File(archivePath).readAsBytesSync();
-        // Beyond the ceiling the size is not reported at all.
-        expect(XZDecoder().uncompressedSize(compressed), isNull);
-
-        final decoded = await decodeBytesOnIsolates(compressed, workers: 4);
-        expect(decoded.length, equals(48 * 64 * 1024 * 1024));
-        expect(decoded[0], 0);
-        expect(decoded[decoded.length - 1], 0);
-      } finally {
-        dir.deleteSync(recursive: true);
-      }
+      final decoded = await decodeBytesOnIsolates(compressed, workers: 4);
+      expect(decoded.length, equals(48 * 64 * 1024 * 1024));
+      expect(decoded[0], 0);
+      expect(decoded[decoded.length - 1], 0);
     },
         skip: Platform.environment['ARCHIVE_SLOW_TESTS'] == null
             ? 'set ARCHIVE_SLOW_TESTS=1 to run; needs over 3 GB of memory'
@@ -590,7 +526,7 @@ void main() {
 
     test('exposes the file region a stream reads from', () {
       final compressed =
-          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+          fixture('blocks');
       final dir = Directory.systemTemp.createTempSync('archive_xz_region');
       try {
         final path = p.join(dir.path, 'data.xz');
@@ -619,7 +555,7 @@ void main() {
       // documented to decode on the calling isolate, still reporting through
       // onDone.
       final compressed =
-          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+          fixture('blocks');
       final input = await InputFileStream.asRamFile(
           Stream.value(compressed), compressed.length);
       final output = OutputMemoryStream();
@@ -639,7 +575,7 @@ void main() {
       // what had been decoded. Workers always write to a port, so a corrupt
       // archive gave nothing on isolates and a partial result without them.
       final source =
-          xzCompress(expected, ['--check=crc64', '--lzma2=preset=1']);
+          fixture('crc64');
       final full = XZDecoder().decodeBytes(source).length;
 
       // Cutting the archive in half leaves a block that decodes for a while
@@ -684,8 +620,7 @@ void main() {
       late Uint8List pristine;
 
       setUp(() {
-        pristine = xzCompress(expected,
-            ['--block-size=65536', '--check=crc64', '--lzma2=preset=1']);
+        pristine = fixture('crc64-blocks');
         expect(XZDecoder().uncompressedSize(pristine), equals(expected.length));
       });
 
@@ -755,7 +690,7 @@ void main() {
 
       setUpAll(() {
         whole =
-            xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+            fixture('blocks');
         broken = Uint8List.sublistView(whole, 0, whole.length ~/ 2);
       });
 
@@ -844,7 +779,7 @@ void main() {
       test('reaches onError on a single block archive as well', () async {
         // One block is decoded whole on one isolate rather than being split,
         // which is a separate path through the worker.
-        final single = xzCompress(expected, ['--lzma2=preset=1']);
+        final single = fixture('whole');
         final r = await bytes(
             Uint8List.sublistView(single, 0, single.length ~/ 2),
             throwOnError: true);
@@ -890,8 +825,7 @@ void main() {
         // And a failure that is about the data rather than the wrapper. The
         // check of a block sits at its end, so breaking that alone leaves the
         // data itself decodable and only a verifying decode objects.
-        final built = buildArchive(expected,
-            ['--block-size=65536', '--check=crc64', '--lzma2=preset=1']);
+        final built = buildArchive('crc64-blocks');
         final badCheck = Uint8List.fromList(built.bytes);
         badCheck[built.blocks[0].checkOffset(8)] ^= 0xff;
         expect(
@@ -1020,13 +954,103 @@ void main() {
 
     test('streams memory into a memory stream in block order', () async {
       final compressed =
-          xzCompress(expected, ['--block-size=65536', '--lzma2=preset=1']);
+          fixture('blocks');
       final output = OutputMemoryStream();
       final ok = await decodeStreamOnIsolates(
           InputMemoryStream(compressed), output,
           workers: 4);
       expect(ok, isTrue);
       expect(output.getBytes(), equals(expected));
+    });
+
+    // The pull decoder, the converter and the isolate pool are three readers of
+    // the same header bytes, and a check that lives in one of them shows up
+    // here as a disagreement. The block header carries the fields the wrapper
+    // sweep above never reaches: the block flags and the filter properties
+    group('a damaged archive reaches the same verdict on every path', () {
+      late Uint8List pristine;
+      late List<int> offsets;
+
+      setUpAll(() {
+        pristine =
+            fixture('blocks');
+        final blockHeader = (pristine[12] + 1) * 4;
+        offsets = <int>[
+          for (var i = 0; i < 12; i++) i,
+          for (var i = 12; i < 12 + blockHeader; i++) i,
+          for (var i = 12 + blockHeader; i < pristine.length - 64; i += 4093) i,
+          for (var i = pristine.length - 64; i < pristine.length; i++) i,
+        ];
+      });
+
+      bool pull(Uint8List data, OutputStream output) =>
+          XZDecoder().decodeStream(InputMemoryStream(data), output,
+              verify: true);
+
+      bool push(Uint8List data, BytesBuilder output) {
+        try {
+          final sink = xzCodec.decoder.startChunkedConversion(
+              ByteConversionSink.withCallback(output.add));
+          for (var at = 0; at < data.length; at += 4096) {
+            final end = at + 4096 < data.length ? at + 4096 : data.length;
+            sink.add(Uint8List.sublistView(data, at, end));
+          }
+          sink.close();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      test('every wrapper, block header and sampled payload byte', () async {
+        for (final at in offsets) {
+          final data = Uint8List.fromList(pristine)..[at] ^= 0xff;
+
+          final sequential = OutputMemoryStream();
+          final sequentialOk = pull(data, sequential);
+          final chunked = BytesBuilder();
+          final chunkedOk = push(data, chunked);
+          final parallelOut = OutputMemoryStream();
+          final parallelOk = await decodeStreamOnIsolates(
+              InputMemoryStream(data), parallelOut,
+              verify: true, workers: 4);
+
+          expect(chunkedOk, equals(sequentialOk), reason: 'byte $at, converter');
+          expect(parallelOk, equals(sequentialOk), reason: 'byte $at, workers');
+          if (sequentialOk) {
+            expect(sequential.getBytes(), equals(expected), reason: 'byte $at');
+            expect(chunked.toBytes(), equals(expected), reason: 'byte $at');
+            expect(parallelOut.getBytes(), equals(expected), reason: 'byte $at');
+          }
+        }
+      });
+
+      test('a reserved bit in the flags is refused on every path', () async {
+        final blockHeader = (pristine[12] + 1) * 4;
+        final cases = <String, Uint8List>{
+          'stream flags': Uint8List.fromList(pristine)..[7] |= 0x10,
+          'block flags': Uint8List.fromList(pristine)..[13] |= 0x04,
+        };
+        for (final entry in cases.entries) {
+          final data = entry.value;
+          // The CRC would catch these first, so it is recomputed
+          final view = ByteData.sublistView(data);
+          if (entry.key == 'stream flags') {
+            view.setUint32(8, getCrc32(data.sublist(6, 8)), Endian.little);
+          } else {
+            view.setUint32(12 + blockHeader - 4,
+                getCrc32(data.sublist(12, 12 + blockHeader - 4)), Endian.little);
+          }
+          expect(pull(data, OutputMemoryStream()), isFalse, reason: entry.key);
+          expect(push(data, BytesBuilder()), isFalse, reason: entry.key);
+          expect(
+              await decodeStreamOnIsolates(
+                  InputMemoryStream(data), OutputMemoryStream(),
+                  verify: true, workers: 4),
+              isFalse,
+              reason: entry.key);
+        }
+      });
     });
   });
 }
