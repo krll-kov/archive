@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:typed_data';
 
+import '../../util/cancellable_stream.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
 import 'zstd_dictionary.dart';
@@ -43,10 +45,24 @@ Future<List<Uint8List>> zstdMtCompressJobs(
 /// The same jobs, cut out of the arriving bytes and compressed in the calling
 /// isolate, which is what a target without [Isolate] can do
 Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
+        {required int jobSize,
+        required int overlapLog,
+        required int workers,
+        int cap = 0,
+        ZstdDictionary? dictionary,
+        Uint8List Function(bool empty)? header}) =>
+    cancellableStream<List<int>, Uint8List>(
+        input,
+        (input, signal) => _compressStream(input, signal, level,
+            jobSize: jobSize,
+            overlapLog: overlapLog,
+            dictionary: dictionary,
+            header: header));
+
+Stream<Uint8List> _compressStream(
+    StreamIterator<List<int>> input, CancelSignal signal, int level,
     {required int jobSize,
     required int overlapLog,
-    required int workers,
-    int cap = 0,
     ZstdDictionary? dictionary,
     Uint8List Function(bool empty)? header}) async* {
   final geometry = ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
@@ -83,7 +99,8 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
   // anything arrived at all settled
   var content = 0;
   var headerSent = false;
-  await for (final chunk in input) {
+  while (await input.moveNext()) {
+    final chunk = input.current;
     content += chunk.length;
     for (final job in ring.add(chunk)) {
       final part = run(job, index == 0, false);
@@ -97,6 +114,9 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
       yield part;
       index++;
     }
+  }
+  if (signal.cancelled) {
+    return;
   }
   final tail = run(ring.close(), index == 0, true);
   if (!headerSent) {

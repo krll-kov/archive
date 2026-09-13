@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -432,6 +433,78 @@ void main() {
       for (final content in contents) {
         await expectLater(content.drain<void>(), throwsStateError);
       }
+    });
+
+    // An input may go silent without closing, a stalled download being the
+    // usual one. Neither a cancel nor a timeout may then wait on it for good
+    test('a silent input can be cancelled while a header is awaited', () async {
+      for (final start in [<int>[], [1, 2, 3]]) {
+        final source = StreamController<List<int>>();
+        final subscription =
+            source.stream.transform(tarCodec.decoder).listen((_) {});
+        if (start.isNotEmpty) {
+          source.add(start);
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await subscription.cancel().timeout(const Duration(seconds: 5));
+        expect(source.hasListener, isFalse, reason: '${start.length} bytes');
+        await source.close();
+      }
+    });
+
+    test('a timeout on content over a silent input gets the caller out',
+        () async {
+      final tar = TarEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.bytes('a.bin', _source(3000, 3))));
+      final source = StreamController<List<int>>();
+      source.add(Uint8List.sublistView(tar, 0, 1000));
+      Object? error;
+      try {
+        await for (final entry in source.stream.transform(tarCodec.decoder)) {
+          await entry.content
+              .timeout(const Duration(milliseconds: 200))
+              .drain<void>();
+        }
+      } catch (e) {
+        error = e;
+      }
+      expect(error, isA<TimeoutException>());
+      expect(source.hasListener, isFalse);
+      await source.close();
+    }, timeout: const Timeout(Duration(seconds: 10)));
+
+    test('content cancelled part way leaves the next entry whole', () async {
+      final first = _source(200000, 7);
+      final second = _source(5000, 9);
+      final tar = TarEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('first.bin', first))
+        ..add(ArchiveFile.bytes('second.bin', second)));
+      final got = <String, List<int>>{};
+      await for (final entry in _pieces(tar, 4096).transform(tarCodec.decoder)) {
+        if (entry.name == 'first.bin') {
+          await entry.content.first;
+          continue;
+        }
+        got[entry.name] = await entry.content
+            .fold<List<int>>(<int>[], (all, piece) => all..addAll(piece));
+      }
+      expect(got['second.bin'], second);
+    });
+  });
+
+  group('tar stream writer', () {
+    test('a source that goes silent can be cancelled and is let go', () async {
+      final source = StreamController<ArchiveFile>();
+      final written = Completer<void>();
+      final subscription = source.stream.transform(tarCodec.encoder).listen(
+          (_) => written.isCompleted ? null : written.complete());
+      source.add(ArchiveFile.bytes('a.bin', _source(3000, 5)));
+      await written.future.timeout(const Duration(seconds: 5));
+      // Past the last piece of the entry, so it waits on the source
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await subscription.cancel().timeout(const Duration(seconds: 5));
+      expect(source.hasListener, isFalse);
+      await source.close();
     });
   });
 }

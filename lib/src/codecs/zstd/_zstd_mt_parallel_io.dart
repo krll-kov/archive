@@ -7,6 +7,7 @@ import 'dart:typed_data';
 // file_handle.dart, whose conditional export resolves to the web class when
 // the analyser has no platform in mind, and that one has no path
 import '../../util/_file_handle_io.dart';
+import '../../util/cancellable_stream.dart';
 import '../../util/input_file_stream.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
@@ -275,6 +276,24 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
 /// bytes as they arrive and handed to a pool of at most [workers]. The header
 /// and the checksum are the caller's, as everywhere else here
 Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
+        {required int jobSize,
+        required int overlapLog,
+        required int workers,
+        int cap = 0,
+        ZstdDictionary? dictionary,
+        Uint8List Function(bool empty)? header}) =>
+    cancellableStream<List<int>, Uint8List>(
+        input,
+        (input, signal) => _zstdMtCompressStream(input, signal, level,
+            jobSize: jobSize,
+            overlapLog: overlapLog,
+            workers: workers,
+            cap: cap,
+            dictionary: dictionary,
+            header: header));
+
+Stream<Uint8List> _zstdMtCompressStream(
+    StreamIterator<List<int>> input, CancelSignal signal, int level,
     {required int jobSize,
     required int overlapLog,
     required int workers,
@@ -330,6 +349,8 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
       waiter.complete();
     }
   }
+
+  signal.onCancel = wake;
 
   void release() {
     while (held.containsKey(written)) {
@@ -444,7 +465,26 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
     // The reading happens here rather than beside it, so a consumer that pauses
     // pauses the input with it and a consumer that cancels cancels the input:
     // a generator suspended at a yield is not asking its source for anything
-    await for (final chunk in input) {
+    final ahead = InputAhead<List<int>>(input, wake);
+    while (true) {
+      ahead.ask();
+      while (!ahead.arrived && failure == null && !signal.cancelled) {
+        while (ready.isNotEmpty) {
+          yield ready.removeAt(0);
+        }
+        if (ahead.arrived || failure != null || signal.cancelled) {
+          break;
+        }
+        waiting = Completer<void>();
+        await waiting!.future;
+      }
+      if (failure != null || signal.cancelled) {
+        break;
+      }
+      final chunk = ahead.take();
+      if (chunk == null) {
+        break;
+      }
       content += chunk.length;
       for (final job in ring.add(chunk)) {
         submit(job, sent == 0 ? 0 : geometry[1], sent == 0, false);
@@ -453,25 +493,28 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
         }
         // No more jobs in flight than workers: each one holds its own buffer,
         // so a looser gate is paid for in memory
-        while (failure == null && sent - back >= pool) {
+        while (failure == null && !signal.cancelled && sent - back >= pool) {
           waiting = Completer<void>();
           await waiting!.future;
           while (ready.isNotEmpty) {
             yield ready.removeAt(0);
           }
         }
-        if (failure != null) {
+        if (failure != null || signal.cancelled) {
           break;
         }
       }
-      if (failure != null) {
+      if (failure != null || signal.cancelled) {
         break;
       }
+    }
+    if (signal.cancelled) {
+      return;
     }
     if (failure == null) {
       submit(ring.close(), sent == 0 ? 0 : geometry[1], sent == 0, true);
     }
-    while (failure == null && back < sent) {
+    while (failure == null && !signal.cancelled && back < sent) {
       while (ready.isNotEmpty) {
         yield ready.removeAt(0);
       }
@@ -492,6 +535,8 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
     }
     receive.close();
     errors.close();
+    // Leaving early, on a failure or a cancel, still lets go of the input
+    await input.cancel();
   }
 }
 

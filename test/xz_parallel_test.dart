@@ -1053,4 +1053,284 @@ void main() {
       });
     });
   });
+
+  // The converter on isolates has to write what the converter on one thread
+  // writes, and on a failure no more than the whole blocks before it
+  group('xz stream decoder on isolates', () {
+    final expected = sampleData(1200000);
+    const options = XZMultithreadOptions<Object?>(workers: 4);
+
+    Stream<List<int>> pieces(Uint8List bytes, int size) async* {
+      for (var at = 0; at < bytes.length; at += size) {
+        final end = at + size < bytes.length ? at + size : bytes.length;
+        yield Uint8List.sublistView(bytes, at, end);
+      }
+    }
+
+    Future<({Uint8List bytes, Object? error})> collect(
+        Stream<List<int>> stream) async {
+      final out = BytesBuilder(copy: false);
+      try {
+        await for (final piece in stream) {
+          out.add(piece);
+        }
+        return (bytes: out.toBytes(), error: null);
+      } catch (error) {
+        return (bytes: out.toBytes(), error: error);
+      }
+    }
+
+    Future<({Uint8List bytes, Object? error})> threaded(Stream<List<int>> s,
+            [XZMultithreadOptions<Object?> with_ = options]) =>
+        collect(s.transform(XzCodec(multithread: with_).decoder))
+            .timeout(const Duration(seconds: 60));
+
+    Future<({Uint8List bytes, Object? error})> single(Stream<List<int>> s) =>
+        collect(s.transform(xzCodec.decoder));
+
+    bool isPrefix(List<int> part, List<int> whole) {
+      if (part.length > whole.length) {
+        return false;
+      }
+      for (var i = 0; i < part.length; i++) {
+        if (part[i] != whole[i]) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // Two failed decodes each stop somewhere in the true output, so they agree
+    // as far as the shorter one goes. Neither has to be the longer one: the
+    // single threaded sink loses what it gathered when it fails
+    bool agreeSoFar(List<int> a, List<int> b) =>
+        a.length <= b.length ? isPrefix(a, b) : isPrefix(b, a);
+
+    test('every archive decodes as it does on one thread', () async {
+      final files = [
+        ...Directory('test/_data/xz/parallel').listSync(),
+        ...Directory('test/_data/xz').listSync(),
+      ].whereType<File>().where(
+          (f) => f.path.endsWith('.xz') && !f.path.endsWith('huge.xz'));
+      for (final file in files) {
+        final bytes = file.readAsBytesSync();
+        for (final size in [4096, 1 << 16, bytes.length + 1]) {
+          final one = await single(pieces(bytes, size));
+          final many = await threaded(pieces(bytes, size));
+          final label = '${file.path} in pieces of $size';
+          expect(many.error == null, one.error == null, reason: label);
+          if (one.error == null) {
+            expect(many.bytes, one.bytes, reason: label);
+          } else {
+            expect(agreeSoFar(many.bytes, one.bytes), isTrue, reason: label);
+          }
+        }
+      }
+    });
+
+    test('one byte at a time', () async {
+      for (final name in ['x86.xz', 'concatenated.xz', 'stream_padding.xz']) {
+        final bytes = File('test/_data/xz/$name').readAsBytesSync();
+        expect((await threaded(pieces(bytes, 1))).bytes,
+            (await single(pieces(bytes, 1))).bytes,
+            reason: name);
+      }
+    });
+
+    test('blocks without lengths come out in order between the others',
+        () async {
+      // A stream whose blocks declare their lengths, one whose blocks do not,
+      // and another that does, back to back
+      final bytes = Uint8List.fromList([
+        ...fixture('blocks'),
+        ...File('test/_data/xz/crc32.xz').readAsBytesSync(),
+        ...fixture('x86'),
+      ]);
+      final one = await single(pieces(bytes, 1 << 16));
+      expect(one.error, isNull);
+      final many = await threaded(pieces(bytes, 1 << 16));
+      expect(many.error, isNull);
+      expect(many.bytes, one.bytes);
+    });
+
+    test('a budget that affords one worker writes the same bytes', () async {
+      final bytes = fixture('blocks');
+      final many = await threaded(pieces(bytes, 1 << 16),
+          const XZMultithreadOptions(workers: 4, memoryBudget: 10 << 20));
+      expect(many.error, isNull);
+      expect(many.bytes, expected);
+    });
+
+    test('an input that stops part way is refused with whole blocks out',
+        () async {
+      final built = buildArchive('blocks');
+      final bytes = built.bytes;
+      final blocks = built.blocks;
+      final ends = {
+        for (final block in blocks) block.uncompOffset,
+        expected.length,
+      };
+      final indexStart = blocks.last.compOffset + blocks.last.totalSize;
+      final cuts = <String, int>{
+        'inside the first block': blocks[0].dataOffset + 100,
+        'inside the third block': blocks[2].dataOffset + 100,
+        'on the boundary of the fourth block': blocks[3].compOffset,
+        'after the last block': indexStart,
+        'inside the index': indexStart + 2,
+        'inside the footer': bytes.length - 3,
+      };
+      for (final cut in cuts.entries) {
+        final part = Uint8List.sublistView(bytes, 0, cut.value);
+        final many = await threaded(pieces(part, 4096));
+        expect(many.error, isA<ArchiveException>(), reason: cut.key);
+        expect(isPrefix(many.bytes, expected), isTrue, reason: cut.key);
+        expect(ends.contains(many.bytes.length), isTrue,
+            reason: '${cut.key}: ${many.bytes.length} is not a block boundary');
+      }
+    });
+
+    test('a source that fails part way ends with that error', () async {
+      final bytes = fixture('blocks');
+      for (final at in [100, bytes.length ~/ 2, bytes.length - 20]) {
+        final source = StreamController<List<int>>();
+        final result = threaded(source.stream);
+        source.add(Uint8List.sublistView(bytes, 0, at));
+        source.addError(StateError('source failed'));
+        final outcome = await result;
+        expect(outcome.error, isA<StateError>(), reason: 'at $at');
+        expect(isPrefix(outcome.bytes, expected), isTrue, reason: 'at $at');
+        expect(source.hasListener, isFalse, reason: 'at $at');
+        await source.close();
+      }
+    });
+
+    test('a silent input can be cancelled and is let go', () async {
+      // Nothing sent, and a header followed by part of a block: in both the
+      // decoder is parked waiting on an input that neither sends nor closes
+      for (final start in [<int>[], fixture('blocks').sublist(0, 1000)]) {
+        final source = StreamController<List<int>>();
+        final subscription = source.stream
+            .transform(const XzCodec(multithread: options).decoder)
+            .listen((_) {});
+        if (start.isNotEmpty) {
+          source.add(start);
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await subscription.cancel().timeout(const Duration(seconds: 10));
+        expect(source.hasListener, isFalse, reason: '${start.length} bytes');
+        await source.close();
+      }
+    });
+
+    test('whole archives come out before the input closes', () async {
+      for (final archive in [
+        fixture('x86'),
+        XZEncoder().encodeBytes(Uint8List.sublistView(expected, 0, 3000)),
+        // One block whose header declares both lengths, so it goes to a worker
+        // and no second block ever comes to start the pool
+        fixture('whole'),
+      ]) {
+        final want = XZDecoder().decodeBytes(archive);
+        final source = StreamController<List<int>>();
+        var got = 0;
+        final arrived = Completer<void>();
+        final subscription = source.stream
+            .transform(const XzCodec(multithread: options).decoder)
+            .listen((piece) {
+          got += piece.length;
+          if (got >= want.length && !arrived.isCompleted) {
+            arrived.complete();
+          }
+        });
+        source.add(archive);
+        await arrived.future.timeout(const Duration(seconds: 30));
+        expect(got, want.length);
+        await subscription.cancel().timeout(const Duration(seconds: 10));
+        expect(source.hasListener, isFalse);
+        await source.close();
+      }
+    });
+
+    test('cancelling the output cancels the input', () async {
+      final source = StreamController<List<int>>();
+      final bytes = fixture('blocks');
+      final first = Completer<void>();
+      final subscription = source.stream
+          .transform(const XzCodec(multithread: options).decoder)
+          .listen((_) {
+        if (!first.isCompleted) {
+          first.complete();
+        }
+      });
+      source.add(bytes);
+      await first.future.timeout(const Duration(seconds: 30));
+      await subscription.cancel();
+      expect(source.hasListener, isFalse);
+      await source.close();
+    });
+
+    test('a damaged archive reaches the same verdict', () async {
+      final built = buildArchive('blocks');
+      final pristine = built.bytes;
+      final ends = {
+        for (final block in built.blocks) block.uncompOffset,
+        expected.length,
+      };
+      final blockHeader = (pristine[12] + 1) * 4;
+      final offsets = [
+        for (var i = 0; i < 12 + blockHeader; i++) i,
+        for (var i = 12 + blockHeader; i < pristine.length; i += 4093) i,
+        for (var i = pristine.length - 64; i < pristine.length; i++) i,
+      ];
+      for (final at in offsets) {
+        final data = Uint8List.fromList(pristine)..[at] ^= 0xff;
+        final one = await single(pieces(data, 1 << 16));
+        final many = await threaded(pieces(data, 1 << 16));
+        expect(many.error == null, one.error == null, reason: 'byte $at');
+        if (one.error == null) {
+          expect(many.bytes, one.bytes, reason: 'byte $at');
+        } else {
+          // Blocks off a worker come out whole and checked, so a failure
+          // leaves true output ending where a block does
+          expect(isPrefix(many.bytes, expected), isTrue, reason: 'byte $at');
+          expect(ends.contains(many.bytes.length), isTrue,
+              reason: 'byte $at: ${many.bytes.length} is not a block boundary');
+        }
+      }
+    });
+
+    test('a sink refuses the options, since it cannot wait for a worker', () {
+      const codec = XzCodec(multithread: options);
+      expect(() => codec.decoder.startChunkedConversion(BytesBuilderSink()),
+          throwsArgumentError);
+      expect(() => codec.decoder.convert(fixture('whole')), throwsArgumentError);
+    });
+
+    test('settings that cannot be honoured are refused', () async {
+      for (final bad in [
+        const XZMultithreadOptions<Object?>(workers: 0),
+        const XZMultithreadOptions<Object?>(memoryBudget: 0),
+      ]) {
+        final outcome = await threaded(pieces(fixture('whole'), 4096), bad);
+        expect(outcome.error, isA<ArgumentError>());
+      }
+    });
+
+    test('decodeBytes still needs onDone', () {
+      expect(
+          () => XZDecoder().decodeBytes(fixture('whole'),
+              multithread: const XZMultithreadOptions<Uint8List>(workers: 2)),
+          throwsArgumentError);
+    });
+  });
+}
+
+class BytesBuilderSink implements Sink<List<int>> {
+  final builder = BytesBuilder();
+
+  @override
+  void add(List<int> data) => builder.add(data);
+
+  @override
+  void close() {}
 }

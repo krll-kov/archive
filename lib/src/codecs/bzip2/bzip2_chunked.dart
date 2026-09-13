@@ -165,6 +165,13 @@ class BZip2ChunkedDecoder extends ChunkedSink {
       switch (_stage) {
         case _Stage.signature:
           if (available < 4) {
+            // Refused on the first byte that is not the signature, not waited on
+            final head = view(available);
+            for (var i = 0; i < head.length; i++) {
+              if (head[i] != BZip2.bzhSignature[i]) {
+                throw ArchiveException('bzip2: not a bzip2 archive');
+              }
+            }
             return;
           }
           _readSignature();

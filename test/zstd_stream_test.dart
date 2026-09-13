@@ -119,6 +119,75 @@ void main() {
       });
     }
 
+    // The input may stop sending without closing: what arrived whole is not
+    // held back for the close, and what cannot be zstd is refused at once
+    test('a whole frame comes out before the input closes', () async {
+      final source = StreamController<List<int>>();
+      final content = List<int>.generate(3000, (i) => (i * 7) & 0xff);
+      final got = <int>[];
+      final arrived = Completer<void>();
+      final subscription =
+          source.stream.transform(zstdCodec.decoder).listen((piece) {
+        got.addAll(piece);
+        if (got.length >= content.length && !arrived.isCompleted) {
+          arrived.complete();
+        }
+      });
+      source.add(ZstdEncoder().encodeBytes(content));
+      await arrived.future.timeout(const Duration(seconds: 5));
+      expect(got, content);
+      await subscription.cancel();
+      expect(source.hasListener, isFalse);
+      await source.close();
+    });
+
+    for (final junk in [
+      [0x27],
+      [0x28, 0xb5, 0x2e],
+      [0x53, 0x2a, 0x4c],
+    ]) {
+      test('$junk, which no frame starts with, is refused at once', () async {
+        final source = StreamController<List<int>>();
+        final failed = Completer<Object>();
+        final subscription = source.stream
+            .transform(zstdCodec.decoder)
+            .listen((_) {}, onError: failed.complete);
+        source.add(junk);
+        expect(await failed.future.timeout(const Duration(seconds: 5)),
+            isA<ArchiveException>());
+        await subscription.cancel();
+        await source.close();
+      });
+    }
+
+    for (final start in [
+      [0x28, 0xb5, 0x2f],
+      [0x5f, 0x2a],
+    ]) {
+      test('$start, which a frame may still follow, is waited on', () async {
+        final source = StreamController<List<int>>();
+        Object? error;
+        final ended = Completer<void>();
+        source.stream.transform(zstdCodec.decoder).listen((_) {},
+            onError: (Object e) {
+          error = e;
+          if (!ended.isCompleted) {
+            ended.complete();
+          }
+        }, onDone: () {
+          if (!ended.isCompleted) {
+            ended.complete();
+          }
+        });
+        source.add(start);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(error, isNull);
+        await source.close();
+        await ended.future.timeout(const Duration(seconds: 5));
+        expect(error, isA<ArchiveException>());
+      });
+    }
+
     test('a damaged frame is caught by its checksum', () {
       final src = Uint8List.fromList(_archive('text-1k-l19.zst'));
       src[src.length - 12] ^= 0xff;

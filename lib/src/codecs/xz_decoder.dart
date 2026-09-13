@@ -451,25 +451,25 @@ class XZDecoder {
       if (onError != null) {
         onError(error, stack);
       } else {
-        options.onDone(onFailure);
+        options.onDone!(onFailure);
       }
       return;
     }
-    options.onDone(result);
+    options.onDone!(result);
   }
 
   // As [_report], for work that finishes later.
   static void _reportAsync<T>(
       XZMultithreadOptions<T> options, Future<T> Function() work, T onFailure) {
     unawaited(
-        work().then(options.onDone, onError: (Object error, StackTrace stack) {
+        work().then(options.onDone!, onError: (Object error, StackTrace stack) {
       final onError = options.onError;
       if (onError != null) {
         onError(error, stack);
       } else {
         // Nothing would observe an unhandled asynchronous error, so the
         // failure is reported the same way an invalid archive is.
-        options.onDone(onFailure);
+        options.onDone!(onFailure);
       }
     }));
   }
@@ -479,8 +479,15 @@ class XZDecoder {
   // a nonsensical value there does not fail loudly: a negative read buffer
   // makes the per worker cost come out negative, which skips the memory budget
   // altogether and hands out more workers than the budget allows.
-  static void _checkOptions(
-      XZMultithreadOptions<Object?> options, bool throwOnError) {
+  // Generic so that reading onDone meets its own type rather than Object?,
+  // which a function taking Uint8List is not
+  static void _checkOptions<T>(
+      XZMultithreadOptions<T> options, bool throwOnError) {
+    if (options.onDone == null) {
+      throw ArgumentError.value(null, 'onDone',
+          'Must be given here, since this call has nowhere else to put the '
+              'result; only a stream carries its own end');
+    }
     // Asking to be told about failures while leaving nowhere to tell would put
     // the failure back where it started, so it is refused here, while the
     // caller is still on the stack to hear about it.

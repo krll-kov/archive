@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import '../../archive/archive_file.dart';
 import '../../util/archive_exception.dart';
+import '../../util/cancellable_stream.dart';
 import '../../util/chunked_sink.dart';
 import '../../util/input_memory_stream.dart';
 import '../tar_encoder.dart';
@@ -86,11 +87,17 @@ class TarStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
   static const _piece = 64 * 1024;
 
   @override
-  Stream<List<int>> bind(Stream<ArchiveFile> stream) async* {
+  Stream<List<int>> bind(Stream<ArchiveFile> stream) =>
+      cancellableStream<ArchiveFile, List<int>>(
+          stream, (input, signal) => _write(input, signal));
+
+  Stream<List<int>> _write(
+      StreamIterator<ArchiveFile> input, CancelSignal signal) async* {
     final held = <List<int>>[];
     final encoder = TarChunkedEncoder(_Pieces(held),
         filenameEncoding: filenameEncoding);
-    await for (final entry in stream) {
+    while (await input.moveNext()) {
+      final entry = input.current;
       // The header goes through the encoder, the content does not: a yield in
       // between is what lets a reader have the first bytes before the last of
       // the entry has been read
@@ -113,6 +120,9 @@ class TarStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
       if (pad > 0) {
         yield Uint8List(pad);
       }
+    }
+    if (signal.cancelled) {
+      return;
     }
     encoder.close();
     while (held.isNotEmpty) {
@@ -144,7 +154,8 @@ class TarStreamDecoder extends StreamTransformerBase<List<int>, TarEntry> {
 
   @override
   Stream<TarEntry> bind(Stream<List<int>> stream) =>
-      _read(stream, filenameEncoding);
+      cancellableStream<List<int>, TarEntry>(
+          stream, (input, _) => _read(_Reader(input), filenameEncoding));
 }
 
 /// What an entry is, as the header's type flag names it. Old archives leave
@@ -211,6 +222,9 @@ class TarEntry {
   /// Set once the reader skipped bytes this entry still owed its content
   var _gone = false;
 
+  /// Done once a content read has stopped touching the reader
+  Future<void> _settled = Future.value();
+
   /// A plain file, and only that: a link or a device is not one
   bool get isFile => type == TarEntryType.file;
 
@@ -228,8 +242,43 @@ class TarEntry {
       throw StateError('tar: the content of $name was already read');
     }
     _taken = true;
-    return _pieces();
+    return _detached(_pieces());
   }
+
+  /// [pieces] behind a cancel that returns at once, so a timeout on a silent
+  /// input gets its caller out; a read still pending ends at its next piece
+  Stream<List<int>> _detached(Stream<List<int>> pieces) {
+    StreamSubscription<List<int>>? inner;
+    late final StreamController<List<int>> out;
+    out = StreamController<List<int>>(
+      onListen: () {
+        final settled = Completer<void>();
+        _settled = settled.future;
+        inner = pieces.listen(out.add, onError: out.addError, onDone: () {
+          if (!settled.isCompleted) {
+            settled.complete();
+          }
+          unawaited(out.close());
+        });
+        _finish = () {
+          if (!settled.isCompleted) {
+            settled.complete();
+          }
+        };
+      },
+      onPause: () => inner?.pause(),
+      onResume: () => inner?.resume(),
+      onCancel: () {
+        unawaited(inner!
+            .cancel()
+            .catchError((Object _) {})
+            .whenComplete(() => _finish?.call()));
+      },
+    );
+    return out.stream;
+  }
+
+  void Function()? _finish;
 
   Stream<List<int>> _pieces() async* {
     if (_gone) {
@@ -247,8 +296,7 @@ class TarEntry {
   }
 }
 
-Stream<TarEntry> _read(Stream<List<int>> source, Encoding encoding) async* {
-  final reader = _Reader(source);
+Stream<TarEntry> _read(_Reader reader, Encoding encoding) async* {
   final metadata = TarMetadata();
   try {
     while (true) {
@@ -284,6 +332,8 @@ Stream<TarEntry> _read(Stream<List<int>> source, Encoding encoding) async* {
       final entry = TarEntry._(file, reader);
       yield entry;
       entry._done = true;
+      // A content read still under way shares the reader, so it ends first
+      await entry._settled;
       entry._gone = entry._left > 0;
       await reader.skip(entry._left + _padding(entry.size));
       entry._left = 0;
@@ -309,7 +359,7 @@ bool _allZero(Uint8List block) {
 
 /// Bytes out of a `Stream`, by the count the format names
 class _Reader {
-  _Reader(Stream<List<int>> source) : _it = StreamIterator(source);
+  _Reader(this._it);
 
   final StreamIterator<List<int>> _it;
   Uint8List _held = Uint8List(0);

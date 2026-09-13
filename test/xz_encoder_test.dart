@@ -106,6 +106,17 @@ void main() {
       expect(held.bytes, isEmpty);
     });
 
+    test('the stream decoder with workers reads what this writes', () async {
+      // Without isolates, on the web, the same options fall back to one thread
+      final source = _sample(300000);
+      final decoded = await Stream<List<int>>.value(XZEncoder().encodeBytes(source))
+          .transform(const XzCodec(
+                  multithread: XZMultithreadOptions<Object?>(workers: 2))
+              .decoder)
+          .fold<List<int>>(<int>[], (all, piece) => all..addAll(piece));
+      expect(decoded, source);
+    });
+
     test('any sizes and any cuts give an archive that reads back', () {
       final random = Random(20260911);
       for (var round = 0; round < 60; round++) {

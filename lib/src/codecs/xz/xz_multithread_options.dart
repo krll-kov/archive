@@ -31,7 +31,11 @@ class XZMultithreadOptions<T> {
   /// This is the only place the result appears. It is called even when the
   /// archive turns out not to be worth splitting up, and on platforms without
   /// isolates, so a caller never has to special case either.
-  final void Function(T result) onDone;
+  ///
+  /// [XZDecoder.decodeBytes] and [XZDecoder.decodeStream] refuse options
+  /// without it. `XzCodec.decoder` bound to a stream leaves it null, since the
+  /// stream carries its own end.
+  final void Function(T result)? onDone;
 
   /// Called instead of [onDone] when the decode fails.
   ///
@@ -116,7 +120,7 @@ class XZMultithreadOptions<T> {
   final int fileReadBufferSize;
 
   const XZMultithreadOptions({
-    required this.onDone,
+    this.onDone,
     this.onError,
     this.workers,
     this.memoryBudget,

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -195,6 +196,22 @@ void main() {
       expect(bytes, _zip(_entries()));
       expect(ZipDecoder().decodeBytes(Uint8List.fromList(bytes)).files.length,
           _entries().length);
+    });
+
+    test('a source that goes silent can be cancelled and is let go', () async {
+      // Parked waiting for an entry that never comes, which a cancel used to
+      // wait on for good
+      final source = StreamController<ArchiveFile>();
+      final written = Completer<void>();
+      final subscription = source.stream.transform(zipCodec.encoder).listen(
+          (_) => written.isCompleted ? null : written.complete());
+      source.add(_entries().first);
+      await written.future.timeout(const Duration(seconds: 5));
+      // Past the last piece of the entry, so it waits on the source
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await subscription.cancel().timeout(const Duration(seconds: 5));
+      expect(source.hasListener, isFalse);
+      await source.close();
     });
   });
 

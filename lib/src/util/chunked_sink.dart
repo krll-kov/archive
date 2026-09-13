@@ -107,6 +107,19 @@ abstract class ChunkedSink extends ByteConversionSink {
     _guarded(step);
   }
 
+  /// Runs the parse again over what is already held, for a subclass that
+  /// stopped on something other than a short field
+  void resume() {
+    if (_closed) {
+      return;
+    }
+    final failure = _failure;
+    if (failure != null) {
+      throw failure;
+    }
+    _guarded(step);
+  }
+
   @override
   void close() {
     if (_closed) {

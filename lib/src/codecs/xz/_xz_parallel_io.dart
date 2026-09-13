@@ -8,13 +8,17 @@ import 'dart:typed_data';
 // file_handle.dart, whose conditional export resolves to the web class when
 // the analyser has no platform in mind, and that one has no path.
 import '../../util/_file_handle_io.dart';
+import '../../util/archive_exception.dart';
 import '../../util/byte_order.dart';
+import '../../util/cancellable_stream.dart';
 import '../../util/crc32.dart';
 import '../../util/crc64.dart';
 import '../../util/input_file_stream.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_stream.dart';
+import 'xz_block_dispatch.dart';
+import 'xz_chunked.dart';
 import 'xz_index.dart';
 import 'xz_multithread_options.dart';
 import 'xz_stream_decoder.dart';
@@ -499,6 +503,362 @@ Future<bool> _runJobs(
   return completer.future;
 }
 
+/// The largest piece the stream decoder hands on, as the converter does
+const _streamPieceSize = 1 << 16;
+
+/// Worker offsets carry the block's place in the stream above these bits
+const _idShift = 40;
+
+/// The blocks of an xz stream decoded on isolates as the bytes arrive and
+/// handed back in order.
+///
+/// The parse is [XzChunkedDecoder]'s. It hands over every block whose header
+/// declares both lengths and decodes any other itself once the blocks before
+/// it are out. The pool is sized from the first block handed over and grows by
+/// a worker for each block waiting for one. A block decoded on a worker comes
+/// out only whole and checked; one decoded here streams as the converter on one
+/// thread writes it
+Stream<Uint8List> xzDecodeStreamMultithreaded(Stream<List<int>> input,
+        {required bool verify, int? workers, int? memoryBudget}) =>
+    cancellableStream<List<int>, Uint8List>(
+        input,
+        (input, signal) => _xzDecodeStream(input, signal,
+            verify: verify, workers: workers, memoryBudget: memoryBudget));
+
+Stream<Uint8List> _xzDecodeStream(
+    StreamIterator<List<int>> input, CancelSignal signal,
+    {required bool verify, int? workers, int? memoryBudget}) async* {
+  final budget = memoryBudget ?? xzDefaultMemoryBudget;
+  final ready = ListQueue<Uint8List>();
+  final dispatch = _StreamDispatch(budget);
+  final parser = XzChunkedDecoder(_QueueSink(ready),
+      verify: verify, dispatch: dispatch);
+  final receive = ReceivePort();
+  final isolates = <Isolate>[];
+  final idleWorkers = <SendPort>[];
+  var pool = 0;
+
+  /// Spawned and not yet reported ready
+  var starting = 0;
+  Completer<void>? waiting;
+  Object? failure;
+  StackTrace? failureStack;
+  Object? parseFailure;
+  StackTrace? parseStack;
+
+  void wake() {
+    final waiter = waiting;
+    if (waiter != null && !waiter.isCompleted) {
+      waiting = null;
+      waiter.complete();
+    }
+  }
+
+  signal.onCancel = wake;
+
+  // A block comes out whole and only once it passed its check, so what a
+  // failure leaves is every block before it
+  void release() {
+    while (dispatch.records.isNotEmpty) {
+      final head = dispatch.records.first;
+      if (!head.done) {
+        return;
+      }
+      if (!head.ok) {
+        failure ??= ArchiveException('xz: ${head.reason ?? 'a block failed'}');
+        return;
+      }
+      for (final piece in head.pieces) {
+        for (var at = 0; at < piece.length; at += _streamPieceSize) {
+          final end = at + _streamPieceSize < piece.length
+              ? at + _streamPieceSize
+              : piece.length;
+          ready.add(Uint8List.sublistView(piece, at, end));
+        }
+      }
+      head.pieces.clear();
+      dispatch.records.removeFirst();
+      dispatch.byId.remove(head.id);
+    }
+  }
+
+  void pump() {
+    while (idleWorkers.isNotEmpty && dispatch.unsent.isNotEmpty) {
+      final record = dispatch.unsent.removeFirst();
+      final bytes = record.bytes!;
+      record.bytes = null;
+      idleWorkers.removeLast().send(_Job(
+        kind: _kindBlock,
+        bytes: bytes,
+        path: null,
+        offset: 0,
+        length: bytes.length,
+        streamFlags: record.streamFlags,
+        outputOffset: record.id << _idShift,
+        verify: verify,
+        maxPreallocateSize: budget,
+        fileReadBufferSize: 0,
+      ).toMessage());
+    }
+  }
+
+  receive.listen((message) {
+    try {
+      if (message is! List || message.isEmpty || message[0] is! int) {
+        failure ??= StateError('XZ decode isolate failed: $message');
+      } else if (message[0] == _msgChunk) {
+        final id = (message[1] as int) >> _idShift;
+        dispatch.byId[id]?.pieces.add(message[2] as Uint8List);
+        release();
+      } else {
+        if (message[0] == _msgReady) {
+          starting--;
+        } else if (message[0] == _msgDone) {
+          final id = (message[4] as int) >> _idShift;
+          final record = dispatch.byId[id];
+          if (record != null) {
+            record
+              ..done = true
+              ..ok = message[2] as bool && message[3] == null
+              ..reason = message[5] as String? ?? message[3] as String?;
+          }
+        }
+        idleWorkers.add(message[1] as SendPort);
+        pump();
+        release();
+      }
+    } catch (error, stack) {
+      failure ??= error;
+      failureStack ??= stack;
+    }
+    wake();
+  });
+
+  // One worker for each block waiting for one, up to the pool, so a single
+  // block starts one isolate and comes out without waiting for the close. A
+  // spawn that fails is a failure of the decode, which every wait here ends on
+  Future<void> grow() async {
+    if (dispatch.unsent.isEmpty) {
+      return;
+    }
+    if (pool == 0) {
+      final cores = Platform.numberOfProcessors;
+      var count = workers ?? cores - 1;
+      if (count > cores) {
+        count = cores;
+      }
+      if (count < 1) {
+        count = 1;
+      }
+      // The charge _pickWorkerCount makes, taken from the first block: its
+      // compressed bytes, its dictionary, the staging and one held decoded block
+      final affordable = budget ~/ dispatch.perWorker;
+      if (count > affordable) {
+        count = affordable < 1 ? 1 : affordable;
+      }
+      pool = count;
+    }
+    while (failure == null &&
+        dispatch.unsent.length > idleWorkers.length + starting &&
+        isolates.length < pool) {
+      starting++;
+      try {
+        isolates.add(await Isolate.spawn(_xzWorker, receive.sendPort,
+            onError: receive.sendPort, errorsAreFatal: true));
+      } catch (error, stack) {
+        starting--;
+        failure ??= error;
+        failureStack ??= stack;
+      }
+    }
+  }
+
+  // The pool is fed after every step, a failed one too: one step can hand
+  // over the last blocks and then fail on the index behind them
+  bool parse(void Function() run) {
+    try {
+      run();
+      return true;
+    } catch (error, stack) {
+      parseFailure ??= error;
+      parseStack ??= stack;
+      return false;
+    } finally {
+      pump();
+    }
+  }
+
+  // Everything handed over, written out
+  Stream<Uint8List> drain() async* {
+    while (
+        failure == null && !signal.cancelled && dispatch.records.isNotEmpty) {
+      await grow();
+      pump();
+      while (ready.isNotEmpty) {
+        yield ready.removeFirst();
+      }
+      if (failure == null && dispatch.records.isNotEmpty) {
+        waiting = Completer<void>();
+        await waiting!.future;
+      }
+    }
+    while (ready.isNotEmpty) {
+      yield ready.removeFirst();
+    }
+  }
+
+  // No more blocks held than the pool decodes, and a block the parse has to
+  // read itself only once those before it are out
+  Stream<Uint8List> settle() async* {
+    while (failure == null && parseFailure == null && !signal.cancelled) {
+      await grow();
+      pump();
+      if (failure != null) {
+        return;
+      }
+      if (parser.waitingForIdle) {
+        yield* drain();
+        if (failure != null || !parse(parser.resume)) {
+          return;
+        }
+        continue;
+      }
+      while (ready.isNotEmpty) {
+        yield ready.removeFirst();
+      }
+      if (pool == 0 || dispatch.records.length < pool) {
+        return;
+      }
+      waiting = Completer<void>();
+      await waiting!.future;
+    }
+  }
+
+  final ahead = InputAhead<List<int>>(input, wake);
+  try {
+    try {
+      while (true) {
+        ahead.ask();
+        while (!ahead.arrived && failure == null && !signal.cancelled) {
+          while (ready.isNotEmpty) {
+            yield ready.removeFirst();
+          }
+          if (ahead.arrived || failure != null || signal.cancelled) {
+            break;
+          }
+          waiting = Completer<void>();
+          await waiting!.future;
+        }
+        if (failure != null || signal.cancelled) {
+          break;
+        }
+        final chunk = ahead.take();
+        if (chunk == null) {
+          break;
+        }
+        if (!parse(() => parser.add(chunk))) {
+          break;
+        }
+        yield* settle();
+        if (failure != null || parseFailure != null || signal.cancelled) {
+          break;
+        }
+      }
+    } catch (error, stack) {
+      parseFailure ??= error;
+      parseStack ??= stack;
+    }
+    if (signal.cancelled) {
+      return;
+    }
+    if (failure == null && parseFailure == null) {
+      yield* drain();
+      while (failure == null && parser.waitingForIdle && parse(parser.resume)) {
+        yield* drain();
+      }
+      if (failure == null && parseFailure == null) {
+        parse(parser.close);
+      }
+    }
+    // What was handed over before a failure in the parse is still written out
+    yield* drain();
+    final thrown = failure ?? parseFailure;
+    if (thrown != null) {
+      Error.throwWithStackTrace(
+          thrown,
+          (identical(thrown, failure) ? failureStack : parseStack) ??
+              StackTrace.current);
+    }
+  } finally {
+    for (final isolate in isolates) {
+      isolate.kill(priority: Isolate.immediate);
+    }
+    receive.close();
+    // Leaving early, on a failure or a cancel, still lets go of the input
+    await input.cancel();
+  }
+}
+
+class _StreamBlock {
+  final int id;
+  final int streamFlags;
+
+  /// Dropped once the block is on its way to a worker
+  Uint8List? bytes;
+  final pieces = <Uint8List>[];
+  var done = false;
+  var ok = false;
+  String? reason;
+
+  _StreamBlock(this.id, this.bytes, this.streamFlags);
+}
+
+class _StreamDispatch implements XzBlockDispatch {
+  @override
+  final int maxBlockBytes;
+
+  /// Handed over and not yet written out, in stream order
+  final records = ListQueue<_StreamBlock>();
+  final unsent = ListQueue<_StreamBlock>();
+  final byId = <int, _StreamBlock>{};
+  var _next = 0;
+  var perWorker = 1;
+
+  _StreamDispatch(this.maxBlockBytes);
+
+  @override
+  bool get idle => records.isEmpty;
+
+  @override
+  void block(Uint8List bytes, int streamFlags, int uncompressedLength,
+      int dictionarySize) {
+    final record = _StreamBlock(_next++, bytes, streamFlags);
+    records.add(record);
+    unsent.add(record);
+    byId[record.id] = record;
+    if (record.id == 0) {
+      final dictionary = dictionarySize > 0 && dictionarySize < 0x40000000
+          ? dictionarySize + (dictionarySize >> 2) + (2 << 20) + 16
+          : 0;
+      perWorker = bytes.length + dictionary + _stagingSize + uncompressedLength;
+    }
+  }
+}
+
+/// Where the parse writes a block it decodes itself
+class _QueueSink implements Sink<List<int>> {
+  final ListQueue<Uint8List> _ready;
+
+  _QueueSink(this._ready);
+
+  @override
+  void add(List<int> data) =>
+      _ready.add(data is Uint8List ? data : Uint8List.fromList(data));
+
+  @override
+  void close() {}
+}
+
 /// Reads the check field, which is the tail of a block.
 ///
 /// The block padding sits in front of it and every check size is a multiple of
@@ -574,73 +934,97 @@ void _xzWorker(SendPort toMain) {
       return;
     }
 
-    var ok = false;
-    // Why the block was rejected, carried back so that a caller who asked to
-    // be told about failures gets the reason and not just the fact.
-    String? reason;
-    final checkType = streamFlags & 0xf;
-    // Verification is left off in the block decoder and done by the sink, on
-    // the bytes as they stream past, so that verifying does not force the whole
-    // block to be held in memory.
-    final verifyHere = verify && kind == _kindBlock;
-    final sink = _PortSink(toMain, outputOffset, verifyHere ? checkType : 0);
-    try {
-      if (kind == _kindBlock) {
-        final result = decodeXZBlock(input, streamFlags, sink,
-            maxPreallocateSize: maxPreallocateSize);
-        ok = result.ok;
-        reason = result.reason;
-      } else {
-        final decoder = XZStreamDecoder(
-            verify: verify, maxPreallocateSize: maxPreallocateSize);
-        ok = decoder.decode(input, sink);
-        reason = decoder.failureReason;
-      }
-    } catch (error) {
-      // A corrupt archive throws its way out of the decoder. The single
-      // threaded path swallows that and reports false, and so does this one,
-      // keeping the text for whoever wants to know what went wrong.
-      ok = false;
-      reason = '$error';
-    } finally {
-      // Flushing even after a failure keeps what was decoded before it, which
-      // is what the single threaded path leaves in its output stream.
-      try {
-        sink.flush();
-      } catch (error) {
-        ok = false;
-        reason ??= '$error';
-      }
-    }
-
-    if (ok && verifyHere) {
-      try {
-        ok = sink.checkMatches(
-            _readCheckField(input, data, length, xzCheckSize(checkType)));
-        if (!ok) {
-          reason = 'Block check failed';
-        }
-      } catch (error) {
-        ok = false;
-        reason = '$error';
-      }
-    }
-
+    final result = _decodeJob(
+        kind: kind,
+        input: input,
+        data: data,
+        length: length,
+        streamFlags: streamFlags,
+        verify: verify,
+        maxPreallocateSize: maxPreallocateSize,
+        outputOffset: outputOffset,
+        onPiece: (at, piece) => toMain.send([_msgChunk, at, piece]));
     file?.closeSync();
-    toMain.send([_msgDone, receive.sendPort, ok, null, outputOffset, reason]);
+    toMain.send([
+      _msgDone,
+      receive.sendPort,
+      result.ok,
+      null,
+      outputOffset,
+      result.reason
+    ]);
   });
 
   toMain.send([_msgReady, receive.sendPort, null, null, -1, null]);
 }
 
-/// An [OutputStream] that ships what it is given back to the calling isolate.
+/// Decodes one job into pieces handed to [onPiece] and checks a block against
+/// the field it ends with. A corrupt archive is a verdict here, not a throw
+({bool ok, String? reason}) _decodeJob({
+  required int kind,
+  required InputStream input,
+  required Uint8List? data,
+  required int length,
+  required int streamFlags,
+  required bool verify,
+  required int maxPreallocateSize,
+  required int outputOffset,
+  required void Function(int offset, Uint8List piece) onPiece,
+}) {
+  var ok = false;
+  String? reason;
+  final checkType = streamFlags & 0xf;
+  // The check is folded in as the pieces go past, so verifying never holds
+  // the whole block
+  final verifyHere = verify && kind == _kindBlock;
+  final sink = _BlockSink(onPiece, outputOffset, verifyHere ? checkType : 0);
+  try {
+    if (kind == _kindBlock) {
+      final result = decodeXZBlock(input, streamFlags, sink,
+          maxPreallocateSize: maxPreallocateSize);
+      ok = result.ok;
+      reason = result.reason;
+    } else {
+      final decoder = XZStreamDecoder(
+          verify: verify, maxPreallocateSize: maxPreallocateSize);
+      ok = decoder.decode(input, sink);
+      reason = decoder.failureReason;
+    }
+  } catch (error) {
+    ok = false;
+    reason = '$error';
+  } finally {
+    // What decoded before a failure is kept, as the single threaded path does
+    try {
+      sink.flush();
+    } catch (error) {
+      ok = false;
+      reason ??= '$error';
+    }
+  }
+  if (ok && verifyHere) {
+    try {
+      ok = sink.checkMatches(
+          _readCheckField(input, data, length, xzCheckSize(checkType)));
+      if (!ok) {
+        reason = 'Block check failed';
+      }
+    } catch (error) {
+      ok = false;
+      reason = '$error';
+    }
+  }
+  return (ok: ok, reason: reason);
+}
+
+/// An [OutputStream] that hands what it is given to [_onPiece] in pieces.
 ///
-/// Writes are buffered into a fixed staging area and sent whenever it fills,
-/// so the worker never holds more than [_stagingSize] of decoded output.
-/// [SendPort.send] serialises eagerly, so the staging buffer is safe to reuse
-/// the moment it returns.
-class _PortSink extends OutputStream {
-  final SendPort _port;
+/// Writes are buffered into a fixed staging area and handed over whenever it
+/// fills, so a decode never holds more than [_stagingSize] of its output. The
+/// staging buffer is reused, so a receiver keeps a piece only by copying it;
+/// [SendPort.send] does that on its own
+class _BlockSink extends OutputStream {
+  final void Function(int offset, Uint8List piece) _onPiece;
   final int _outputOffset;
 
   /// Check type to accumulate, or 0 to accumulate nothing.
@@ -651,7 +1035,7 @@ class _PortSink extends OutputStream {
   int _emitted = 0;
   int _crc = 0;
 
-  _PortSink(this._port, this._outputOffset, this._checkType)
+  _BlockSink(this._onPiece, this._outputOffset, this._checkType)
       : super(byteOrder: ByteOrder.littleEndian);
 
   @override
@@ -712,7 +1096,7 @@ class _PortSink extends OutputStream {
     } else if (_checkType == 0x4 && isCrc64Supported()) {
       _crc = getCrc64(view, _crc);
     }
-    _port.send([_msgChunk, _outputOffset + _emitted, view]);
+    _onPiece(_outputOffset + _emitted, view);
     _emitted += view.length;
   }
 

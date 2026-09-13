@@ -102,6 +102,65 @@ void main() {
       });
     }
 
+    // The input may stop sending without closing: what arrived whole is not
+    // held back for the close, and what cannot be xz is refused at once
+    test('a whole archive comes out before the input closes', () async {
+      final source = StreamController<List<int>>();
+      final content = List<int>.generate(3000, (i) => (i * 7) & 0xff);
+      final got = <int>[];
+      final arrived = Completer<void>();
+      final subscription =
+          source.stream.transform(xzCodec.decoder).listen((piece) {
+        got.addAll(piece);
+        if (got.length >= content.length && !arrived.isCompleted) {
+          arrived.complete();
+        }
+      });
+      source.add(XZEncoder().encodeBytes(content));
+      await arrived.future.timeout(const Duration(seconds: 5));
+      expect(got, content);
+      await subscription.cancel();
+      expect(source.hasListener, isFalse);
+      await source.close();
+    });
+
+    test('a byte no archive starts with is refused at once', () async {
+      final source = StreamController<List<int>>();
+      final failed = Completer<Object>();
+      final subscription = source.stream
+          .transform(xzCodec.decoder)
+          .listen((_) {}, onError: failed.complete);
+      source.add([0xfd, 0x37, 0x7b]);
+      expect(await failed.future.timeout(const Duration(seconds: 5)),
+          isA<ArchiveException>());
+      await subscription.cancel();
+      await source.close();
+    });
+
+    test('part of the magic, which an archive may still follow, is waited on',
+        () async {
+      final source = StreamController<List<int>>();
+      Object? error;
+      final ended = Completer<void>();
+      source.stream.transform(xzCodec.decoder).listen((_) {},
+          onError: (Object e) {
+        error = e;
+        if (!ended.isCompleted) {
+          ended.complete();
+        }
+      }, onDone: () {
+        if (!ended.isCompleted) {
+          ended.complete();
+        }
+      });
+      source.add([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0, 0]);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(error, isNull);
+      await source.close();
+      await ended.future.timeout(const Duration(seconds: 5));
+      expect(error, isA<ArchiveException>());
+    });
+
     test('a damaged block is caught by its check', () {
       final src = Uint8List.fromList(_archive('crc32.xz'));
       src[src.length - 20] ^= 0xff;

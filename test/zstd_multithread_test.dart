@@ -167,6 +167,89 @@ void main() {
     expect(frame, [0x28, 0xb5, 0x2f, 0xfd, 0x20, 0, 1, 0, 0]);
   });
 
+  // The last job of a stream is whatever arrived after the one before it, and a
+  // source that fails part way through a job has to end the frame, not hang it
+  group('a transform whose input stops', () {
+    Future<List<int>> encode(Uint8List source, int piece,
+        {int workers = 4}) async {
+      Stream<List<int>> pieces() async* {
+        for (var at = 0; at < source.length; at += piece) {
+          final end = at + piece < source.length ? at + piece : source.length;
+          yield Uint8List.sublistView(source, at, end);
+        }
+      }
+
+      return pieces()
+          .transform(ZstdCodec(
+            level: 6,
+            frameChecksum: false,
+            multithread:
+                ZstdMultithreadOptions(workers: workers, jobSize: 524288),
+          ).encoder)
+          .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk))
+          .timeout(const Duration(seconds: 60));
+    }
+
+    for (final length in [2 * 524288 + 12345, 2 * 524288, 1000]) {
+      final label = length == 2 * 524288
+          ? 'on a job boundary'
+          : (length < 524288 ? 'before the first job is full' : 'part way into a job');
+      test('$label writes one frame whatever the pieces', () async {
+        final source = Uint8List.sublistView(input, 0, length);
+        final whole = await encode(source, source.length);
+        expect(
+            ZstdDecoder()
+                .decodeBytes(whole, verify: true, throwOnError: true),
+            source);
+        for (final piece in [4099, 524288 + 7]) {
+          expect(await encode(source, piece), whole, reason: 'pieces of $piece');
+        }
+        expect(await encode(source, 4099, workers: 1), whole,
+            reason: 'one worker');
+      });
+    }
+
+    for (final at in [1000, 700000, 2 * 524288]) {
+      test('a source that fails after $at bytes ends with that error',
+          () async {
+        final source = StreamController<List<int>>();
+        final output = source.stream
+            .transform(const ZstdCodec(
+              level: 6,
+              multithread: ZstdMultithreadOptions(workers: 4, jobSize: 524288),
+            ).encoder)
+            .toList()
+            .timeout(const Duration(seconds: 60));
+        source.add(Uint8List.sublistView(input, 0, at));
+        source.addError(StateError('source failed'));
+        await expectLater(output, throwsStateError);
+        expect(source.hasListener, isFalse);
+        await source.close();
+      });
+    }
+  });
+
+  test('a silent input can be cancelled and is let go', () async {
+    // Parked on an input that neither sends nor closes: before the first job
+    // is full, and with a job already out on a worker
+    for (final start in [0, 1000, 600000]) {
+      final source = StreamController<List<int>>();
+      final subscription = source.stream
+          .transform(const ZstdCodec(
+            level: 1,
+            multithread: ZstdMultithreadOptions(workers: 2, jobSize: 524288),
+          ).encoder)
+          .listen((_) {});
+      if (start > 0) {
+        source.add(Uint8List.sublistView(input, 0, start));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await subscription.cancel().timeout(const Duration(seconds: 10));
+      expect(source.hasListener, isFalse, reason: 'after $start bytes');
+      await source.close();
+    }
+  }, testOn: 'vm');
+
   test('cancelling the output cancels the input subscription', () async {
     final input = StreamController<List<int>>();
     final firstBody = Completer<void>();

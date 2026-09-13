@@ -10,6 +10,9 @@ import '../../util/output_memory_stream.dart';
 import '../bcj_x86.dart';
 import '../lzma/lzma_decoder.dart';
 import '../xz_encoder.dart';
+import 'xz_block_dispatch.dart';
+import 'xz_multithread_options.dart';
+import 'xz_parallel.dart';
 
 /// Decodes xz from a `Stream` of pieces into a `Stream` of pieces:
 ///
@@ -26,13 +29,55 @@ class XzDecoderConverter extends ChunkedConverter {
   /// by the time the check would be made, so there is no second chance at it
   final bool verify;
 
-  const XzDecoderConverter({this.verify = true});
+  /// Decodes blocks on isolates when this converter is bound to a stream. Only
+  /// a block whose header declares both lengths can be sent ahead, which is
+  /// what `xz` writes in threaded mode; any other is decoded here, after the
+  /// blocks before it are out. `startChunkedConversion` cannot take it: its
+  /// sink owes its output before it returns, and a worker answers later
+  final XZMultithreadOptions<Object?>? multithread;
+
+  const XzDecoderConverter({this.verify = true, this.multithread});
 
   @override
-  ByteConversionSink startChunkedConversion(Sink<List<int>> sink) =>
-      XzChunkedDecoder(
-          sink is ByteConversionSink ? sink : ByteConversionSink.from(sink),
-          verify: verify);
+  ByteConversionSink startChunkedConversion(Sink<List<int>> sink) {
+    if (multithread != null) {
+      throw ArgumentError.value(multithread, 'multithread',
+          'Works through a stream only, since a sink owes its output before '
+              'it returns');
+    }
+    return XzChunkedDecoder(
+        sink is ByteConversionSink ? sink : ByteConversionSink.from(sink),
+        verify: verify);
+  }
+
+  @override
+  Stream<List<int>> bind(Stream<List<int>> stream) {
+    final options = multithread;
+    if (options == null) {
+      return super.bind(stream);
+    }
+    return _bindMultithread(stream, options);
+  }
+
+  Stream<List<int>> _bindMultithread(
+      Stream<List<int>> stream, XZMultithreadOptions<Object?> options) async* {
+    final workers = options.workers;
+    if (workers != null && workers < 1) {
+      throw ArgumentError.value(workers, 'workers', 'Must be at least 1');
+    }
+    final budget = options.memoryBudget;
+    if (budget != null && budget < 1) {
+      throw ArgumentError.value(budget, 'memoryBudget', 'Must be at least 1');
+    }
+    if (!xzIsolatesSupported) {
+      // Not super.bind: that goes through startChunkedConversion, which
+      // refuses the options this converter still carries
+      yield* XzDecoderConverter(verify: verify).bind(stream);
+      return;
+    }
+    yield* xzDecodeStreamMultithreaded(stream,
+        verify: verify, workers: workers, memoryBudget: budget);
+  }
 }
 
 /// xz for data that arrives in pieces, which is what a `Stream` gives.
@@ -47,10 +92,16 @@ class XzCodec extends Codec<List<int>, List<int>> {
   /// Which check the blocks this writes carry
   final XZCheck check;
 
-  const XzCodec({this.verify = true, this.check = XZCheck.crc64});
+  /// Decodes on isolates when [decoder] is bound to a stream, as
+  /// [XzDecoderConverter.multithread] describes
+  final XZMultithreadOptions<Object?>? multithread;
+
+  const XzCodec(
+      {this.verify = true, this.check = XZCheck.crc64, this.multithread});
 
   @override
-  XzDecoderConverter get decoder => XzDecoderConverter(verify: verify);
+  XzDecoderConverter get decoder =>
+      XzDecoderConverter(verify: verify, multithread: multithread);
 
   @override
   XzEncoderConverter get encoder => XzEncoderConverter(check: check);
@@ -72,7 +123,16 @@ class XzChunkedDecoder extends ChunkedSink {
   /// default for the reason [XzDecoderConverter.verify] gives
   final bool verify;
 
-  XzChunkedDecoder(super.output, {this.verify = true}) {
+  /// Takes the blocks that can be decoded elsewhere, which is how the threaded
+  /// stream decoder shares this parse rather than repeating it
+  final XzBlockDispatch? dispatch;
+
+  /// Set while the parse waits for [dispatch] to go idle before a block it has
+  /// to decode itself
+  bool get waitingForIdle => _waitingForIdle;
+  var _waitingForIdle = false;
+
+  XzChunkedDecoder(super.output, {this.verify = true, this.dispatch}) {
     _sink = SinkOutputStream(output);
   }
 
@@ -155,6 +215,15 @@ class XzChunkedDecoder extends ChunkedSink {
       switch (_stage) {
         case _Stage.streamHeader:
           if (available < 12) {
+            // Refused on the first byte that is not the magic rather than
+            // waited on, since the input may stop sending without closing
+            final seen = available < 6 ? available : 6;
+            final head = view(seen);
+            for (var i = 0; i < seen; i++) {
+              if (head[i] != const [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0][i]) {
+                throw ArchiveException('xz: invalid stream header signature');
+              }
+            }
             return;
           }
           _readStreamHeader();
@@ -173,7 +242,9 @@ class XzChunkedDecoder extends ChunkedSink {
           if (available < size) {
             return;
           }
-          _readBlockHeader(size);
+          if (!_readBlockHeader(size)) {
+            return;
+          }
         case _Stage.chunkControl:
           if (available < 1) {
             return;
@@ -308,7 +379,9 @@ class XzChunkedDecoder extends ChunkedSink {
     _stage = _Stage.blockOrIndex;
   }
 
-  void _readBlockHeader(int size) {
+  /// False while it waits: for the rest of a block it hands over, or for the
+  /// dispatch to go idle before a block it decodes itself
+  bool _readBlockHeader(int size) {
     _blockStart = _streamPosition;
     final header = view(size - 4);
     final crc = getCrc32(header);
@@ -370,16 +443,54 @@ class XzChunkedDecoder extends ChunkedSink {
       }
     }
 
+    final stored = view(size);
+    final storedCrc = stored[size - 4] |
+        (stored[size - 3] << 8) |
+        (stored[size - 2] << 16) |
+        (stored[size - 1] << 24);
+    if (storedCrc != crc) {
+      throw ArchiveException('xz: invalid block header CRC checksum');
+    }
+
+    final dispatch = this.dispatch;
+    if (dispatch != null) {
+      _waitingForIdle = false;
+      final compressed = _declaredCompressedLength;
+      final uncompressed = _declaredUncompressedLength;
+      // Past the limit a claimed length would make the parse hold the rest of
+      // the stream while it waits, so such a block is decoded here instead
+      final limit = dispatch.maxBlockBytes;
+      if (compressed != null &&
+          uncompressed != null &&
+          compressed <= limit &&
+          uncompressed <= limit) {
+        final checkSize = _checkSize(_streamFlags & 0xf);
+        final total =
+            size + compressed + ((4 - ((size + compressed) & 3)) & 3) + checkSize;
+        if (available < total) {
+          return false;
+        }
+        dispatch.block(Uint8List.fromList(view(total)), _streamFlags,
+            uncompressed, _dictionarySize);
+        // The worker holds the block to its declared lengths, so they are what
+        // the index is checked against
+        _blocks.add(_BlockSize(size + compressed + checkSize, uncompressed));
+        skip(total);
+        _stage = _Stage.blockOrIndex;
+        return true;
+      }
+      if (!dispatch.idle) {
+        _waitingForIdle = true;
+        return false;
+      }
+    }
+
     _decoder.dictionaryLimit = _dictionarySize;
     if (_dictionarySize > 0 && _dictionarySize < 0x40000000) {
       _decoder.dictionaryCap =
           _dictionarySize + (_dictionarySize >> 2) + (2 << 20) + 16;
     }
-
-    skip(size - 4);
-    if (_readUint32() != crc) {
-      throw ArchiveException('xz: invalid block header CRC checksum');
-    }
+    skip(size);
 
     // The x86 filter reads the block back, so that block alone is held. Every
     // other block is handed to the sink as its chunks come out
@@ -395,6 +506,7 @@ class XzChunkedDecoder extends ChunkedSink {
     _blockDataStart = _streamPosition;
     _needDictionaryReset = true;
     _stage = _Stage.chunkControl;
+    return true;
   }
 
   void _readChunkControl() {
@@ -545,6 +657,10 @@ class XzChunkedDecoder extends ChunkedSink {
       _sink.divert = null;
     }
     _sink.watch = null;
+    // A finished block goes out now rather than waiting in the sink: the input
+    // may say nothing more for a long time without closing, and a block handed
+    // to a worker next is written out behind this one
+    _sink.flush();
 
     // What the index records is the block without its padding: the header, the
     // data and the check

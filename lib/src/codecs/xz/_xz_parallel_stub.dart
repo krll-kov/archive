@@ -25,6 +25,10 @@ XZFileRegion? xzFileRegionOf(InputStream input) => null;
 XZLayout? xzLayoutOfFile(XZFileRegion region, {int? maxUncompressedSize}) =>
     null;
 
+Stream<Uint8List> xzDecodeStreamMultithreaded(Stream<List<int>> input,
+        {required bool verify, int? workers, int? memoryBudget}) =>
+    throw UnsupportedError('Isolates are not available on this platform');
+
 /// Never called on this platform; [xzIsolatesSupported] gates it.
 Future<bool> xzDecodeMultithreaded({
   Uint8List? bytes,

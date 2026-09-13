@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -197,6 +198,42 @@ void main() {
           .transform(bzip2Codec.decoder)
           .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
       expect(back, source);
+    });
+
+    // The input may stop sending without closing, as dart:io's gzip is
+    // expected to cope with: what cannot be bzip2 fails at once, and a whole
+    // archive is out before the input closes
+    test('a byte no archive starts with is refused at once', () async {
+      final source = StreamController<List<int>>();
+      final failed = Completer<Object>();
+      final subscription = source.stream
+          .transform(bzip2Codec.decoder)
+          .listen((_) {}, onError: failed.complete);
+      source.add([0x42, 0x5a, 0x69]);
+      expect(await failed.future.timeout(const Duration(seconds: 5)),
+          isA<ArchiveException>());
+      await subscription.cancel();
+      await source.close();
+    });
+
+    test('a whole archive comes out before the input closes', () async {
+      final content = _source(3000, 41);
+      final source = StreamController<List<int>>();
+      final got = <int>[];
+      final arrived = Completer<void>();
+      final subscription =
+          source.stream.transform(bzip2Codec.decoder).listen((piece) {
+        got.addAll(piece);
+        if (got.length >= content.length && !arrived.isCompleted) {
+          arrived.complete();
+        }
+      });
+      source.add(BZip2Encoder().encodeBytes(content));
+      await arrived.future.timeout(const Duration(seconds: 5));
+      expect(got, content);
+      await subscription.cancel();
+      expect(source.hasListener, isFalse);
+      await source.close();
     });
   });
 }

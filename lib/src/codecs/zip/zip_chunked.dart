@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import '../../archive/archive_file.dart';
+import '../../util/cancellable_stream.dart';
 import '../../util/chunked_sink.dart';
 import '../zip_encoder.dart';
 import '../zlib/deflate.dart';
@@ -46,18 +47,26 @@ class ZipStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
       this.streamed = true});
 
   @override
-  Stream<List<int>> bind(Stream<ArchiveFile> stream) async* {
+  Stream<List<int>> bind(Stream<ArchiveFile> stream) =>
+      cancellableStream<ArchiveFile, List<int>>(
+          stream, (input, signal) => _write(input, signal));
+
+  Stream<List<int>> _write(
+      StreamIterator<ArchiveFile> input, CancelSignal signal) async* {
     final held = <List<int>>[];
     final encoder = ZipChunkedEncoder(_Pieces(held),
         level: level,
         password: password,
         filenameEncoding: filenameEncoding,
         streamed: streamed);
-    await for (final entry in stream) {
-      encoder.add(entry);
+    while (await input.moveNext()) {
+      encoder.add(input.current);
       while (held.isNotEmpty) {
         yield held.removeAt(0);
       }
+    }
+    if (signal.cancelled) {
+      return;
     }
     encoder.close();
     while (held.isNotEmpty) {

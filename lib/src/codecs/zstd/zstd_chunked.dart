@@ -456,6 +456,23 @@ class ZstdChunkedDecoder extends ChunkedSink {
       switch (_stage) {
         case _Stage.magic:
           if (available < 4) {
+            // Refused on the first byte no frame starts with, not waited on
+            if (available > 0) {
+              final head = view(available);
+              final skippable = head[0] & 0xf0 == 0x50;
+              if (!skippable && head[0] != 0x28) {
+                throw ArchiveException('zstd: not a zstd frame');
+              }
+              const rest = [
+                [0xb5, 0x2f, 0xfd],
+                [0x2a, 0x4d, 0x18],
+              ];
+              for (var i = 1; i < head.length; i++) {
+                if (head[i] != rest[skippable ? 1 : 0][i - 1]) {
+                  throw ArchiveException('zstd: not a zstd frame');
+                }
+              }
+            }
             return;
           }
           _readMagic();
@@ -638,6 +655,8 @@ class ZstdChunkedDecoder extends ChunkedSink {
 
   void _endFrame() {
     _window!.finish();
+    // Out now, not held in the sink: the input may pause without closing
+    _sink.flush();
     _window = null;
     _header = null;
     _frames++;
