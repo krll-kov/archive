@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -6,6 +5,7 @@ import 'dart:typed_data';
 import '../../util/input_stream.dart';
 import '../../util/output_stream.dart';
 import '_zlib_decoder_base.dart';
+import '_zlib_encoder_base.dart';
 
 const platformZLibDecoder = _ZLibDecoder();
 
@@ -21,13 +21,7 @@ class _ZLibDecoder extends ZLibDecoderBase {
   @override
   bool decodeStream(InputStream input, OutputStream output,
       {bool verify = false, bool raw = false}) {
-    final outSink = ChunkedConversionSink<List<int>>.withCallback((chunks) {
-      for (final chunk in chunks) {
-        output.writeBytes(chunk);
-      }
-      output.flush();
-    });
-
+    final outSink = ZLibOutputSink(output);
     final inSink = ZLibCodec(raw: raw).decoder.startChunkedConversion(outSink);
 
     while (!input.isEOS) {

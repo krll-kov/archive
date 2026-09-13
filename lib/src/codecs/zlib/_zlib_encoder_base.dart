@@ -17,10 +17,16 @@ abstract class ZLibEncoderBase {
 class ZLibOutputSink implements Sink<List<int>> {
   final OutputStream _output;
 
+  /// Bytes this sink put into [_output], whose own length may count more
+  var written = 0;
+
   ZLibOutputSink(this._output);
 
   @override
-  void add(List<int> data) => _output.writeBytes(data);
+  void add(List<int> data) {
+    _output.writeBytes(data);
+    written += data.length;
+  }
 
   @override
   void close() => _output.flush();
