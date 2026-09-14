@@ -19,8 +19,17 @@
 * ZipEncoder now applies CompressionType.none to entries with no content
 * Replaced ChunkedConversionSink with ZLibOutputSink for gzip and zlib to forward every piece the codec produces instead
   of holding it to the end
-* Added usage examples of new apis is package readme file
-
+* Added usage examples of new apis is package readme file, shrinked amount of docs for XZDecoder
+* Fixed tar stream decoder allocating whatever a GNU long name or PAX header declared, before any of
+  those bytes arrived. A 512 byte header claiming 2^40 was an out of memory kill; the buffer now
+  grows with what actually arrives
+* Fixed ZipEncoder with a password writing a stale MAC into entries that have no content, such as
+  every directory. The local header declared 12 bytes it never wrote, which left every local header
+  after it off by 2 and unreachable to a forward-only reader
+* Fixed ZipEncoder central directory always claiming UTF-8 file names. It now carries the same
+  general purpose flag as the local header, so a non-UTF-8 filenameEncoding is no longer misreported
+* Removed unused localFileSize, centralDirectorySize and endOfCentralDirectorySize from the zip
+  encoder, where localFileSize also counted a streamed entry's header twice
 
 # 4.3.0
 

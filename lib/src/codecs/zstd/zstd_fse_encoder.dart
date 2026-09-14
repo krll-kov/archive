@@ -61,7 +61,8 @@ bool zstdNormalizeCount(Int16List into, Uint32List counts, int total,
   final scale = 62 - accuracyLog;
   final step = (1 << 62) ~/ total;
   final vStep = 1 << (scale - 20);
-  final webScale = zstdUse64Bit ? null : ZstdFseScale.normalize(total, accuracyLog);
+  final webScale =
+      zstdUse64Bit ? null : ZstdFseScale.normalize(total, accuracyLog);
   var left = 1 << accuracyLog;
   var largest = 0;
   var largestPoints = 0;
@@ -84,7 +85,8 @@ bool zstdNormalizeCount(Int16List into, Uint32List counts, int total,
     if (webScale == null) {
       final scaled = count * step;
       points = scaled >> scale;
-      if (points < 8 && scaled - (points << scale) > vStep * _roundUpAt[points]) {
+      if (points < 8 &&
+          scaled - (points << scale) > vStep * _roundUpAt[points]) {
         points++;
       }
     } else {
@@ -309,7 +311,9 @@ class ZstdFseCTable {
   /// typed lists infers `List<int>` and the field will not take it
   ZstdFseCTable(int maxLog, int maxSymbolCount)
       : nextState = Uint16List(1 << maxLog),
-        symbolTT = (zstdUse64Bit ? Int64List(maxSymbolCount) : Int32List(maxSymbolCount * 2)) as TypedData;
+        symbolTT = (zstdUse64Bit
+            ? Int64List(maxSymbolCount)
+            : Int32List(maxSymbolCount * 2)) as TypedData;
 
   void build(Int16List counts, int maxSymbol, int accuracyLog, Uint8List spread,
       Uint16List scratch, Uint32List cumulative) {
@@ -359,8 +363,12 @@ class ZstdFseCTable {
 
   /// `FSE_getMaxNbBits`: the widest this symbol can be, in whole bits
   int maxBits(int symbol) =>
-      ((zstdUse64Bit ? (symbolTT as Int64List)[symbol] >> 32 :
-          (symbolTT as Int32List)[symbol * 2]) + (1 << 16) - 1) >> 16;
+      ((zstdUse64Bit
+              ? (symbolTT as Int64List)[symbol] >> 32
+              : (symbolTT as Int32List)[symbol * 2]) +
+          (1 << 16) -
+          1) >>
+      16;
 
   /// The state the last symbol of a stream starts from, which costs no bits
   @pragma('vm:prefer-inline')
@@ -383,8 +391,9 @@ class ZstdFseCTable {
   /// probability at all reads as one bit past the accuracy, which is the value
   /// the caller compares against to reject a table it cannot use
   int bitCost(int symbol) {
-    final delta = zstdUse64Bit ? (symbolTT as Int64List)[symbol] >> 32 :
-        (symbolTT as Int32List)[symbol * 2];
+    final delta = zstdUse64Bit
+        ? (symbolTT as Int64List)[symbol] >> 32
+        : (symbolTT as Int32List)[symbol * 2];
     final least = delta >> 16;
     final beyond = ((least + 1) << 16) - (delta + (1 << accuracyLog));
     return ((least + 1) << 8) - ((beyond << 8) >> accuracyLog);

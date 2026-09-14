@@ -2,31 +2,31 @@ import 'dart:typed_data';
 
 import '../../util/crc32.dart';
 
-// Reads the stream index of an xz archive, which describes every block without
-// decoding any of them.
+// Reads the stream index of an xz archive. It describes every block, and we
+// decode none of them to read it.
 //
-// The index is what makes parallel decoding possible: it gives the compressed
-// and the uncompressed size of every block, and blocks are independent of each
-// other, so where each one sits in the input and in the output can both be
-// worked out up front.
+// The index is what makes parallel decoding possible. It gives the compressed
+// and uncompressed size of every block, and blocks do not depend on each
+// other. So we can work out up front where each one sits in the input and in
+// the output
 
 /// Random access over the compressed bytes of an xz archive.
 ///
 /// The stream index sits at the end of an archive but describes offsets from
 /// its start, so parsing it has to reach both ends. Going through this
-/// interface lets a file be indexed without reading all of it into memory.
+/// interface lets a file be indexed without reading all of it into memory
 abstract class XZByteSource {
-  /// Total number of bytes in the archive.
+  /// Total number of bytes in the archive
   int get length;
 
   /// The bytes from [start] (inclusive) to [end] (exclusive).
   ///
   /// The result must not be modified by the caller, and may be a view onto
-  /// storage the source owns.
+  /// storage the source owns
   Uint8List range(int start, int end);
 }
 
-/// An [XZByteSource] over an archive that is already in memory.
+/// An [XZByteSource] over an archive that is already in memory
 class XZMemorySource extends XZByteSource {
   final Uint8List bytes;
 
@@ -40,23 +40,23 @@ class XZMemorySource extends XZByteSource {
       Uint8List.sublistView(bytes, start, end);
 }
 
-/// Where a single xz block sits in the input and in the decoded output.
+/// Where a single xz block sits in the input and in the decoded output
 class XZBlockLayout {
-  /// Offset of the block header from the start of the archive.
+  /// Offset of the block header from the start of the archive
   final int compressedOffset;
 
   /// Number of bytes the block occupies in the archive, covering the header,
-  /// the compressed data, the block padding and the check field.
+  /// the compressed data, the block padding and the check field
   final int compressedLength;
 
-  /// Offset of this block's data in the fully decoded output.
+  /// Offset of this block's data in the fully decoded output
   final int outputOffset;
 
-  /// Number of bytes this block decodes to.
+  /// Number of bytes this block decodes to
   final int uncompressedLength;
 
   /// Flags of the stream this block belongs to. The low four bits are the
-  /// check type, which every block in a stream shares.
+  /// check type, which every block in a stream shares
   final int streamFlags;
 
   const XZBlockLayout({
@@ -67,18 +67,18 @@ class XZBlockLayout {
     required this.streamFlags,
   });
 
-  /// The type of integrity check stored at the end of the block.
+  /// The type of integrity check stored at the end of the block
   int get checkType => streamFlags & 0xf;
 
-  /// The size of the check field in bytes.
+  /// The size of the check field in bytes
   int get checkSize => xzCheckSize(checkType);
 }
 
-/// The blocks of an archive, in the order they appear.
+/// The blocks of an archive, in the order they appear
 class XZLayout {
   final List<XZBlockLayout> blocks;
 
-  /// Total size of the decoded output of every stream in the archive.
+  /// Total size of the decoded output of every stream in the archive
   final int uncompressedSize;
 
   const XZLayout(this.blocks, this.uncompressedSize);
@@ -87,7 +87,7 @@ class XZLayout {
 /// The size in bytes of the check field for [checkType].
 ///
 /// The check types are grouped in threes by size, which is what lets an
-/// unrecognised check still be skipped over.
+/// unrecognised check still be skipped over
 int xzCheckSize(int checkType) {
   if (checkType == 0) {
     return 0;
@@ -105,14 +105,14 @@ int xzCheckSize(int checkType) {
 
 /// Reads the layout of every block in [source] from the stream indexes.
 ///
-/// Returns null when the layout cannot be established. This only ever feeds
-/// buffer sizing and work scheduling, so anything unexpected makes it give up
-/// rather than fail: the data itself is validated when it is decoded.
+/// Returns null if we cannot work the layout out. This only feeds buffer sizes
+/// and work scheduling, so anything unexpected makes it give up instead of
+/// failing. We validate the data itself when we decode it.
 ///
-/// [maxUncompressedSize] caps the total decoded size that will be reported. A
-/// valid index can describe an output much larger than the available memory,
-/// so a caller that is about to allocate that much passes its own ceiling and
-/// gets null instead of an unusable answer.
+/// [maxUncompressedSize] caps the total decoded size we report. A valid index
+/// can describe an output far larger than the memory we have. A caller about
+/// to allocate that much passes its own ceiling and gets null instead of an
+/// answer it cannot use
 XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
   try {
     var end = _skipTrailingZeroPadding(source, source.length);
@@ -121,11 +121,11 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
     // Streams are concatenated back to back and only the last one can be found
     // directly, so the archive is walked backwards, one stream footer at a
     // time. Each stream's blocks are collected in order and the streams
-    // themselves are reversed at the end.
+    // themselves are reversed at the end
     final streams = <List<XZBlockLayout>>[];
 
     while (end > 0) {
-      // Stream footer: CRC32 (4), backward size (4), stream flags (2), 'YZ' (2).
+      // Stream footer: CRC32 (4), backward size (4), stream flags (2), 'YZ' (2)
       if (end < 32) {
         return null;
       }
@@ -139,7 +139,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
       }
       // The footer covers its backward size and flags with a CRC32. Nothing
       // downstream reads these bytes again, so leaving it unchecked would let
-      // a damaged footer through a decode that works entirely from the index.
+      // a damaged footer through a decode that works entirely from the index
       final footerCrc =
           footer[0] | footer[1] << 8 | footer[2] << 16 | footer[3] << 24;
       if (getCrc32(Uint8List.sublistView(footer, 4, 10)) != footerCrc) {
@@ -152,13 +152,13 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         return null;
       }
 
-      // Backward size holds the size of the index in four byte units, minus one.
+      // Backward size holds the size of the index in four byte units, minus one
       final backwardSize =
           footer[4] | footer[5] << 8 | footer[6] << 16 | footer[7] << 24;
       final indexSize = (backwardSize + 1) * 4;
       final indexStart = footerStart - indexSize;
       // The smallest index is eight bytes, and it is preceded by at least the
-      // twelve byte stream header.
+      // twelve byte stream header
       if (indexSize < 8 || indexStart < 12) {
         return null;
       }
@@ -167,7 +167,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
       if (index[0] != 0) {
         return null;
       }
-      // The index ends with the CRC32 of everything before it in the index.
+      // The index ends with the CRC32 of everything before it in the index
       final storedCrc = index[indexSize - 4] |
           index[indexSize - 3] << 8 |
           index[indexSize - 2] << 16 |
@@ -178,11 +178,11 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
       }
 
       // Positions below are absolute offsets into the archive, so that the
-      // bounds checks read the same way as the offsets being computed.
+      // bounds checks read the same way as the offsets being computed
       final crcStart = footerStart - 4;
       var position = indexStart + 1;
       // Reads a multibyte integer, returning -1 when it is malformed or runs
-      // past the last record.
+      // past the last record
       int readMultibyteInteger() {
         var value = 0;
         var multiplier = 1;
@@ -206,14 +206,14 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
       }
 
       final recordCount = readMultibyteInteger();
-      // Every record takes at least two bytes.
+      // Every record takes at least two bytes
       if (recordCount < 0 || recordCount > (crcStart - position) ~/ 2) {
         return null;
       }
 
       // The block sizes are known before the stream header has been located,
       // so blocks are recorded relative to the start of the blocks area and
-      // shifted into place once the header has been found.
+      // shifted into place once the header has been found
       final blocks = <XZBlockLayout>[];
       var blocksSize = 0;
       for (var i = 0; i < recordCount; i++) {
@@ -226,7 +226,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         }
         // Blocks are padded to a four byte boundary. Every check size is
         // itself a multiple of four, so padding the unpadded size covers the
-        // header, the compressed data, the block padding and the check.
+        // header, the compressed data, the block padding and the check
         final paddedLength = (unpaddedLength + 3) & ~3;
         if (paddedLength < 0 || paddedLength < unpaddedLength) {
           return null;
@@ -252,7 +252,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         }
       }
 
-      // The twelve byte stream header sits in front of the blocks.
+      // The twelve byte stream header sits in front of the blocks
       final streamStart = indexStart - blocksSize - 12;
       if (streamStart < 0 || streamStart + 12 > source.length) {
         return null;
@@ -266,15 +266,14 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
           header[5] != 0) {
         return null;
       }
-      // The header repeats the flags that the footer carries.
+      // The header repeats the flags that the footer carries
       if (header[6] != 0 || header[7] != streamFlags) {
         return null;
       }
-      // And covers them with its own CRC32, which is the only thing standing
-      // between a damaged header and a decode that never looks at it: the
-      // blocks are found through the index, so nothing downstream would read
-      // these bytes again. Without this an archive that xz rejects decodes
-      // here without complaint.
+      // And covers them with its own CRC32. Nothing else guards a damaged
+      // header here. We find the blocks through the index, so nothing
+      // downstream reads these bytes again. Without this check an archive that
+      // xz rejects decodes here without complaint
       final headerCrc =
           header[8] | header[9] << 8 | header[10] << 16 | header[11] << 24;
       if (getCrc32(Uint8List.sublistView(header, 6, 8)) != headerCrc) {
@@ -303,7 +302,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
 
     // The streams were collected from the last one to the first, and the
     // output offsets were accumulated in that same order, so both are put back
-    // into archive order here.
+    // into archive order here
     final blocks = <XZBlockLayout>[];
     for (var i = streams.length - 1; i >= 0; i--) {
       blocks.addAll(streams[i]);
@@ -329,9 +328,9 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
 
 /// Reads the LZMA2 dictionary size out of a block [header].
 ///
-/// A decoder of that block has to allocate a dictionary of this size, so the
-/// parallel decoder uses it to work out how many blocks fit in its memory
-/// budget rather than guessing. Returns 0 when the header does not name one.
+/// Whoever decodes that block has to allocate a dictionary of this size. The
+/// parallel decoder uses it to count how many blocks fit in its memory budget,
+/// instead of guessing. Returns 0 if the header does not name one
 int xzBlockDictionarySize(Uint8List header) {
   try {
     if (header.isEmpty) {
@@ -398,10 +397,10 @@ int xzBlockDictionarySize(Uint8List header) {
 }
 
 // Returns the offset of the start of the stream padding that ends at [end].
-// Padding is zero bytes in multiples of four.
+// Padding is zero bytes in multiples of four
 int _skipTrailingZeroPadding(XZByteSource source, int end) {
   // Padding is almost always absent, so this reads a small window at a time
-  // rather than the whole archive.
+  // rather than the whole archive
   const windowSize = 1024;
   while (end >= 4) {
     final start = end - windowSize < 0 ? 0 : end - windowSize;

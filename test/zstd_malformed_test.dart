@@ -66,7 +66,9 @@ _Outcome _push(Uint8List src, int piece) {
 _Outcome _agreed(Uint8List src, String what) {
   final whole = _whole(src);
   final pull = _pull(src);
-  final pushes = [for (final piece in [1, 7, 1 << 16]) _push(src, piece)];
+  final pushes = [
+    for (final piece in [1, 7, 1 << 16]) _push(src, piece)
+  ];
   for (final other in [pull, ...pushes]) {
     expect(other.refused, whole.refused,
         reason: '$what: one shot says $whole, another path says $other');
@@ -98,9 +100,7 @@ int _firstBlock(Uint8List frame) {
   const fcs = [0, 2, 4, 8];
   const dict = [0, 1, 2, 4];
   final single = (descriptor >> 5) & 1 != 0;
-  final size = (descriptor >> 6) == 0
-      ? (single ? 1 : 0)
-      : fcs[descriptor >> 6];
+  final size = (descriptor >> 6) == 0 ? (single ? 1 : 0) : fcs[descriptor >> 6];
   return 5 + (single ? 0 : 1) + dict[descriptor & 3] + size;
 }
 
@@ -196,9 +196,8 @@ void main() {
     });
 
     test('a dictionary this decoder does not have', () {
-      final dictionary =
-          ZstdDictionary(File('test/_data/zstd/dict-trained.dict')
-              .readAsBytesSync());
+      final dictionary = ZstdDictionary(
+          File('test/_data/zstd/dict-trained.dict').readAsBytesSync());
       expect(dictionary.id, isNot(0));
       _refuse(ZstdEncoder(dictionary: dictionary).encodeBytes(_source),
           'a frame naming a dictionary');

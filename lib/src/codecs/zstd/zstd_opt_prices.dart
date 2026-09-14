@@ -36,8 +36,7 @@ class ZstdOptPrices {
   /// asked for on every candidate the parse considers
   final Uint32List _litWeight = Uint32List(256);
   final Uint32List _litLengthWeight = Uint32List(zstdLiteralsLengthCodeMax + 1);
-  final Uint32List _matchLengthWeight =
-      Uint32List(zstdMatchLengthCodeMax + 1);
+  final Uint32List _matchLengthWeight = Uint32List(zstdMatchLengthCodeMax + 1);
   final Uint32List _offCodeWeight = Uint32List(zstdOffsetCodeMax + 1);
 
   int _litBase = 0;
@@ -132,8 +131,7 @@ class ZstdOptPrices {
         _seedTable(litLengthFreq, dictionaryLitLengths, litLengthFreq.length);
     matchLengthSum = _seedTable(
         matchLengthFreq, dictionaryMatchLengths, matchLengthFreq.length);
-    offCodeSum =
-        _seedTable(offCodeFreq, dictionaryOffsets, offCodeFreq.length);
+    offCodeSum = _seedTable(offCodeFreq, dictionaryOffsets, offCodeFreq.length);
   }
 
   static int _seedTable(Uint32List into, ZstdFseCTable? table, int length) {

@@ -214,7 +214,8 @@ class ZstdSequences extends ZstdSequencesBase {
         // moved down
         from += lap;
         if (lap == 0 || from <= out) {
-          throw ZstdSequencesException('Match offset $offset reaches before the '
+          throw ZstdSequencesException(
+              'Match offset $offset reaches before the '
               'start of the output');
         }
         out = _wrapped(window.buffer, out, from, matchLength, lap);
@@ -253,8 +254,7 @@ class ZstdSequences extends ZstdSequencesBase {
 
   /// A match that reaches across the head of the ring, taken a run at a time so
   /// the two pieces are copied where they are rather than moved together first
-  static int _wrapped(
-      Uint8List dst, int out, int from, int length, int lap) {
+  static int _wrapped(Uint8List dst, int out, int from, int length, int lap) {
     var left = length;
     var read = from;
     var at = out;

@@ -120,8 +120,8 @@ class ZstdBlockSplitter {
   }
 
   /// The two distributions scaled to a common total, summed term by term
-  int _distance(Uint32List a, int aEvents, Uint32List b, int bEvents,
-      int hashLog) {
+  int _distance(
+      Uint32List a, int aEvents, Uint32List b, int bEvents, int hashLog) {
     var distance = 0;
     for (var n = 0; n < 1 << hashLog; n++) {
       final term = a[n] * bEvents - b[n] * aEvents;

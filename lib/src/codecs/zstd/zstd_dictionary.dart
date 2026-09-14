@@ -48,9 +48,16 @@ class ZstdDictionary {
   /// `ZSTD_compress_insertDictionary` drops one under eight bytes, the decoder keeps it
   bool get usableForEncode => sourceSize >= 8 && content.isNotEmpty;
 
-  ZstdDictionary._(this.id, this.content, this.sourceSize, this.repeatOffsets,
+  ZstdDictionary._(
+      this.id,
+      this.content,
+      this.sourceSize,
+      this.repeatOffsets,
       this.hasEntropy,
-      this.huffman, this.huffmanWeights, this.counts, this.maxSymbols,
+      this.huffman,
+      this.huffmanWeights,
+      this.counts,
+      this.maxSymbols,
       this.logs);
 
   factory ZstdDictionary(List<int> data) {
@@ -62,7 +69,8 @@ class ZstdDictionary {
           bytes.length,
           Uint32List.fromList(zstdInitialRepeatOffsets),
           false,
-          ZstdHuffmanTable(), Uint8List(0), const [], const [], const []);
+          ZstdHuffmanTable(),
+          Uint8List(0), const [], const [], const []);
     }
 
     final end = bytes.length;
@@ -107,9 +115,17 @@ class ZstdDictionary {
       repeatOffsets[i] = value;
     }
 
-    return ZstdDictionary._(_uint32At(bytes, 4), content, bytes.length,
-        repeatOffsets, true,
-        huffman, Uint8List.fromList(huffmanWeights), counts, maxSymbols, logs);
+    return ZstdDictionary._(
+        _uint32At(bytes, 4),
+        content,
+        bytes.length,
+        repeatOffsets,
+        true,
+        huffman,
+        Uint8List.fromList(huffmanWeights),
+        counts,
+        maxSymbols,
+        logs);
   }
 
   static const _maxSymbol = [

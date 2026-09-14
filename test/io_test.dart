@@ -678,7 +678,8 @@ void main() {
       ..add(ArchiveFile('first.bin', 3, [1, 2, 3]))
       ..add(ArchiveFile('second.bin', 3, [4, 5, 6]));
     final tar = TarEncoder().encodeBytes(archive);
-    final first = ZstdEncoder().encodeBytes(Uint8List.sublistView(tar, 0, 1024));
+    final first =
+        ZstdEncoder().encodeBytes(Uint8List.sublistView(tar, 0, 1024));
     final last = ZstdEncoder().encodeBytes(Uint8List.sublistView(tar, 1024));
     final input = File('${directory.path}/input.tar.zst')
       ..writeAsBytesSync([...first, ...last]);
@@ -698,7 +699,8 @@ void main() {
         throwsA(isA<ArchiveException>()));
   });
 
-  test('extractFileToDisk removes temporary tar files after rejection', () async {
+  test('extractFileToDisk removes temporary tar files after rejection',
+      () async {
     final directory = Directory.systemTemp.createTempSync('archive-cleanup-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final scratch = Directory('${directory.path}/scratch')..createSync();
@@ -860,5 +862,30 @@ void main() {
         );
       },
     );
+  });
+
+  group('extractFileToDisk after a failure part way through', () {
+    test('keeps the cause and takes the temporary tar with it', () async {
+      final scratch = Directory.systemTemp.createTempSync('extract_failure');
+      addTearDown(() => scratch.deleteSync(recursive: true));
+      int leftovers() => Directory.systemTemp
+          .listSync()
+          .where((entry) => p.basename(entry.path).startsWith('dart_archive'))
+          .length;
+      final before = leftovers();
+
+      final archive = Archive()
+        ..add(ArchiveFile.string('f0.txt', 'x' * 4096))
+        // A path under a name that is already a file, so the write fails
+        ..add(ArchiveFile.string('f0.txt/inner.txt', 'boom'))
+        ..add(ArchiveFile.string('f1.txt', 'y' * 4096));
+      final path = p.join(scratch.path, 'a.tar.gz');
+      File(path).writeAsBytesSync(
+          GZipEncoder().encodeBytes(TarEncoder().encodeBytes(archive)));
+
+      await expectLater(extractFileToDisk(path, p.join(scratch.path, 'out')),
+          throwsA(isA<FileSystemException>()));
+      expect(leftovers(), before);
+    });
   });
 }

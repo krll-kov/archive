@@ -10,7 +10,7 @@ import 'package:test/test.dart';
 
 // The chunked decoder is the pull decoder turned inside out, so what it must
 // do is agree with it on every archive whatever the input is cut into. The
-// archives are the ones the pull decoder is already tested against.
+// archives are the ones the pull decoder is already tested against
 
 Uint8List _archive(String name) =>
     File(p.join('test/_data/xz', name)).readAsBytesSync();
@@ -70,9 +70,14 @@ void main() {
       expect(() => xzCodec.decode(encoded), throwsA(isA<ArchiveException>()));
     });
 
-    for (final field in ['stream flags', 'block flags', 'LZMA2 property size']) {
+    for (final field in [
+      'stream flags',
+      'block flags',
+      'LZMA2 property size'
+    ]) {
       test('unsupported $field with valid checksums is rejected', () {
-        final encoded = XZEncoder().encodeBytes([65, 66, 67], check: XZCheck.none);
+        final encoded =
+            XZEncoder().encodeBytes([65, 66, 67], check: XZCheck.none);
         final view = ByteData.sublistView(encoded);
         // Recompute the checks so only the unsupported field can reject this
         if (field == 'stream flags') {
@@ -92,11 +97,14 @@ void main() {
             encoded[15] = 2;
           }
           final headerLength = (encoded[12] + 1) * 4;
-          view.setUint32(12 + headerLength - 4,
-              getCrc32(encoded.sublist(12, 12 + headerLength - 4)), Endian.little);
+          view.setUint32(
+              12 + headerLength - 4,
+              getCrc32(encoded.sublist(12, 12 + headerLength - 4)),
+              Endian.little);
         }
         for (final piece in [1, encoded.length]) {
-          expect(() => _decode(encoded, piece), throwsA(isA<ArchiveException>()),
+          expect(
+              () => _decode(encoded, piece), throwsA(isA<ArchiveException>()),
               reason: 'piece size $piece');
         }
       });
@@ -178,8 +186,8 @@ void main() {
     test('a sink that failed keeps reporting the same failure', () {
       final decoder = XzChunkedDecoder(_Held(), verify: true);
       // Not an xz signature, which the first piece is enough to know
-      expect(() => decoder.add(Uint8List(64)),
-          throwsA(isA<ArchiveException>()));
+      expect(
+          () => decoder.add(Uint8List(64)), throwsA(isA<ArchiveException>()));
       // What follows is not read as if the failure had not happened
       expect(() => decoder.add(_archive('hello.xz')),
           throwsA(isA<ArchiveException>()));
@@ -193,7 +201,10 @@ void main() {
       src[src.length - 28] ^= 0xff;
       final held = _Held();
       // The default verifies, which is the only chance a stream reader gets
-      expect(() => XzChunkedDecoder(held)..add(src)..close(),
+      expect(
+          () => XzChunkedDecoder(held)
+            ..add(src)
+            ..close(),
           throwsA(isA<ArchiveException>()));
       expect(() {
         XzChunkedDecoder(_Held(), verify: false)
@@ -237,7 +248,8 @@ void main() {
         void agree(Uint8List src, String what) {
           Uint8List? pull;
           try {
-            pull = XZDecoder().decodeBytes(src, verify: true, throwOnError: true);
+            pull =
+                XZDecoder().decodeBytes(src, verify: true, throwOnError: true);
           } catch (_) {
             pull = null;
           }
@@ -402,7 +414,9 @@ void main() {
       final src = _archive('good-1-lzma2-1.xz');
       final cut = Uint8List.sublistView(src, 0, src.length ~/ 2);
       expect(
-          Stream<List<int>>.fromIterable([cut]).transform(xzCodec.decoder).toList(),
+          Stream<List<int>>.fromIterable([cut])
+              .transform(xzCodec.decoder)
+              .toList(),
           throwsA(isA<ArchiveException>()));
     });
   });

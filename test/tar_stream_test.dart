@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
-import 'package:archive/src/util/chunked_sink.dart';
 import 'package:test/test.dart';
 
 // tar has no index at the end and no back references, so it goes both ways in
@@ -60,7 +59,8 @@ Stream<List<int>> _pieces(Uint8List bytes, int piece) async* {
 /// `Uint8List` compares by identity, which would pass nothing
 Future<List<List<Object>>> _stream(Uint8List archive, int piece) async {
   final held = <List<Object>>[];
-  await for (final entry in _pieces(archive, piece).transform(tarCodec.decoder)) {
+  await for (final entry
+      in _pieces(archive, piece).transform(tarCodec.decoder)) {
     final bytes = <int>[];
     await for (final part in entry.content) {
       bytes.addAll(part);
@@ -95,7 +95,8 @@ void main() {
 
   group('tar chunked encoder', () {
     test('it writes what one archive writes', () {
-      expect(_tar(_entries()), TarEncoder().encodeBytes(_archiveOf(_entries())));
+      expect(
+          _tar(_entries()), TarEncoder().encodeBytes(_archiveOf(_entries())));
     });
 
     test('an empty archive is still an archive', () {
@@ -200,6 +201,18 @@ void main() {
           .transform(tarCodec.encoder)
           .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
       expect(bytes, _tar(entries));
+    });
+
+    test('the bytes of an entry survive the transformer', () async {
+      // By default the entry is left alone, so the same archive can be written
+      // again
+      final archive = Archive()..add(ArchiveFile.string('a.txt', 'hello'));
+      Future<List<int>> once() => Stream.fromIterable(archive.files)
+          .transform(tarCodec.encoder)
+          .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
+      final first = await once();
+      expect(archive.files.single.content, 'hello'.codeUnits);
+      expect(await once(), first);
     });
 
     test('a .tar.zst is one chain of transforms', () async {
@@ -309,7 +322,8 @@ void main() {
         ..add(ArchiveFile.bytes('b.bin', _source(9000, 11)));
       final bytes = TarEncoder().encodeBytes(archive);
       final names = <String>[];
-      await for (final entry in _pieces(bytes, 333).transform(tarCodec.decoder)) {
+      await for (final entry
+          in _pieces(bytes, 333).transform(tarCodec.decoder)) {
         names.add(entry.name);
       }
       expect(names, ['a.bin', 'b.bin']);
@@ -322,7 +336,8 @@ void main() {
         ..add(ArchiveFile.string('b.txt', 'second'));
       final bytes = TarEncoder().encodeBytes(archive);
       final names = <String>[];
-      await for (final entry in _pieces(bytes, 700).transform(tarCodec.decoder)) {
+      await for (final entry
+          in _pieces(bytes, 700).transform(tarCodec.decoder)) {
         names.add(entry.name);
         if (entry.name == 'a.bin') {
           // One piece, then walk away from the rest
@@ -335,7 +350,8 @@ void main() {
     test('reading the content twice is refused', () async {
       final archive = Archive()..add(ArchiveFile.string('a.txt', 'one'));
       final bytes = TarEncoder().encodeBytes(archive);
-      await for (final entry in _pieces(bytes, 512).transform(tarCodec.decoder)) {
+      await for (final entry
+          in _pieces(bytes, 512).transform(tarCodec.decoder)) {
         await entry.content.drain<void>();
         expect(() => entry.content, throwsA(isA<StateError>()));
       }
@@ -347,7 +363,8 @@ void main() {
         ..add(ArchiveFile.string('b.txt', 'two'));
       final bytes = TarEncoder().encodeBytes(archive);
       final held = <TarEntry>[];
-      await for (final entry in _pieces(bytes, 512).transform(tarCodec.decoder)) {
+      await for (final entry
+          in _pieces(bytes, 512).transform(tarCodec.decoder)) {
         held.add(entry);
       }
       expect(() => held.first.content, throwsA(isA<StateError>()));
@@ -368,7 +385,8 @@ void main() {
         ..add(ArchiveFile.symlink('link', 'dir/a.txt'));
       final bytes = TarEncoder().encodeBytes(archive);
       final types = <String, TarEntryType>{};
-      await for (final entry in _pieces(bytes, 512).transform(tarCodec.decoder)) {
+      await for (final entry
+          in _pieces(bytes, 512).transform(tarCodec.decoder)) {
         types[entry.name] = entry.type;
         await entry.content.drain<void>();
       }
@@ -391,8 +409,9 @@ void main() {
       final gz = Uint8List.fromList(gzip.encode(tar));
       final names = <String>[];
       var bytes = 0;
-      await for (final entry
-          in _pieces(gz, 4096).transform(gzip.decoder).transform(tarCodec.decoder)) {
+      await for (final entry in _pieces(gz, 4096)
+          .transform(gzip.decoder)
+          .transform(tarCodec.decoder)) {
         names.add(entry.name);
         await for (final piece in entry.content) {
           bytes += piece.length;
@@ -412,8 +431,8 @@ void main() {
           .transform(zstdCodec.decoder)
           .transform(tarCodec.decoder)) {
         read.add(entry.name);
-        expect(await entry.content.fold<int>(0, (n, p) => n + p.length),
-            300000);
+        expect(
+            await entry.content.fold<int>(0, (n, p) => n + p.length), 300000);
       }
       expect(read, ['big.bin']);
     });
@@ -438,7 +457,10 @@ void main() {
     // An input may go silent without closing, a stalled download being the
     // usual one. Neither a cancel nor a timeout may then wait on it for good
     test('a silent input can be cancelled while a header is awaited', () async {
-      for (final start in [<int>[], [1, 2, 3]]) {
+      for (final start in [
+        <int>[],
+        [1, 2, 3]
+      ]) {
         final source = StreamController<List<int>>();
         final subscription =
             source.stream.transform(tarCodec.decoder).listen((_) {});
@@ -454,8 +476,8 @@ void main() {
 
     test('a timeout on content over a silent input gets the caller out',
         () async {
-      final tar = TarEncoder()
-          .encodeBytes(Archive()..add(ArchiveFile.bytes('a.bin', _source(3000, 3))));
+      final tar = TarEncoder().encodeBytes(
+          Archive()..add(ArchiveFile.bytes('a.bin', _source(3000, 3))));
       final source = StreamController<List<int>>();
       source.add(Uint8List.sublistView(tar, 0, 1000));
       Object? error;
@@ -480,7 +502,8 @@ void main() {
         ..add(ArchiveFile.bytes('first.bin', first))
         ..add(ArchiveFile.bytes('second.bin', second)));
       final got = <String, List<int>>{};
-      await for (final entry in _pieces(tar, 4096).transform(tarCodec.decoder)) {
+      await for (final entry
+          in _pieces(tar, 4096).transform(tarCodec.decoder)) {
         if (entry.name == 'first.bin') {
           await entry.content.first;
           continue;
@@ -496,8 +519,9 @@ void main() {
     test('a source that goes silent can be cancelled and is let go', () async {
       final source = StreamController<ArchiveFile>();
       final written = Completer<void>();
-      final subscription = source.stream.transform(tarCodec.encoder).listen(
-          (_) => written.isCompleted ? null : written.complete());
+      final subscription = source.stream
+          .transform(tarCodec.encoder)
+          .listen((_) => written.isCompleted ? null : written.complete());
       source.add(ArchiveFile.bytes('a.bin', _source(3000, 5)));
       await written.future.timeout(const Duration(seconds: 5));
       // Past the last piece of the entry, so it waits on the source
@@ -506,7 +530,94 @@ void main() {
       expect(source.hasListener, isFalse);
       await source.close();
     });
+
+    for (final autoClose in [false, true]) {
+      test('autoClose $autoClose decides whether a written entry is closed',
+          () async {
+        final content = _ClosingInput(_source(300000, 21));
+        final bytes = await Stream.value(ArchiveFile.stream('big.bin', content))
+            .transform(TarCodec(autoClose: autoClose).encoder)
+            .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
+        expect(bytes, isNotEmpty);
+        expect(content.closed, autoClose);
+      });
+    }
+
+    test('autoClose closes an entry cut off by a cancel', () async {
+      final content = _ClosingInput(_source(4 << 20, 23));
+      final source = StreamController<ArchiveFile>();
+      final written = Completer<void>();
+      final subscription = source.stream
+          .transform(const TarCodec(autoClose: true).encoder)
+          .listen((_) => written.isCompleted ? null : written.complete());
+      source.add(ArchiveFile.stream('big.bin', content));
+      await written.future.timeout(const Duration(seconds: 5));
+      await subscription.cancel().timeout(const Duration(seconds: 5));
+      await source.close();
+      expect(content.closed, isTrue);
+    });
   });
+
+  group('a declared length buys no memory', () {
+    test('a long name header claiming a terabyte reserves nothing', () async {
+      final header = _longLink(1 << 40);
+      expect(TarDecoder().decodeBytes(header).length, 0,
+          reason: 'the whole-archive decoder clamps the claim to its input');
+      Object? thrown;
+      try {
+        await Stream<List<int>>.value(header)
+            .transform(tarCodec.decoder)
+            .toList();
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown, isA<ArchiveException>());
+    });
+  });
+}
+
+/// A `././@LongLink` header that says it has [size] bytes of content. The
+/// content never comes
+Uint8List _longLink(int size) {
+  final header = Uint8List(512);
+  const name = '././@LongLink';
+  for (var i = 0; i < name.length; i++) {
+    header[i] = name.codeUnitAt(i);
+  }
+  for (final field in [100, 108, 116]) {
+    for (var i = 0; i < 7; i++) {
+      header[field + i] = 0x30;
+    }
+  }
+  // The octal size field is too narrow for this, base 256 is not
+  header[124] = 0x80;
+  var left = size;
+  for (var i = 135; i > 124; i--) {
+    header[i] = left & 0xff;
+    left >>= 8;
+  }
+  for (var i = 0; i < 11; i++) {
+    header[136 + i] = 0x30;
+  }
+  header[156] = 0x4c;
+  const magic = 'ustar  ';
+  for (var i = 0; i < magic.length; i++) {
+    header[257 + i] = magic.codeUnitAt(i);
+  }
+  for (var i = 0; i < 8; i++) {
+    header[148 + i] = 0x20;
+  }
+  var sum = 0;
+  for (final byte in header) {
+    sum += byte;
+  }
+  final octal = sum.toRadixString(8).padLeft(6, '0');
+  for (var i = 0; i < 6; i++) {
+    header[148 + i] = octal.codeUnitAt(i);
+  }
+  header[154] = 0;
+  header[155] = 0x20;
+  return header;
 }
 
 class _ObservedInput extends InputMemoryStream {
@@ -556,5 +667,24 @@ class _Held implements Sink<List<int>> {
       at += piece.length;
     }
     return out;
+  }
+}
+
+/// Reports whether whoever took it closed it
+class _ClosingInput extends InputMemoryStream {
+  var closed = false;
+
+  _ClosingInput(super.bytes);
+
+  @override
+  void closeSync() {
+    closed = true;
+    super.closeSync();
+  }
+
+  @override
+  Future<void> close() async {
+    closed = true;
+    await super.close();
   }
 }

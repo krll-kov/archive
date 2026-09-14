@@ -51,8 +51,7 @@ void main() {
     expect(await _encode(input, jobSize: 524288, overlapLog: 9), isNot(held));
   });
 
-  test('an input below the job minimum is the single threaded frame',
-      () async {
+  test('an input below the job minimum is the single threaded frame', () async {
     final small = Uint8List.sublistView(input, 0, 300000);
     expect(await _encode(small),
         ZstdEncoder(checksum: false, level: 6).encodeBytes(small));
@@ -92,14 +91,28 @@ void main() {
   // Sizes and CRC32s of the frame this writes with 512 KB jobs, each one
   // checked against `zstd -T4` when it was taken
   const golden = {
-    1: [347511, 2857033639], 2: [338931, 821975185], 3: [330656, 2728980344],
-    4: [331597, 3025348148], 5: [330535, 824438816], 6: [307385, 553688082],
-    7: [303744, 1404570688], 8: [303756, 1183189126], 9: [303756, 1183189126],
-    10: [303739, 2920552062], 11: [303639, 711546979], 12: [303639, 711546979],
-    13: [303620, 3284221855], 14: [303759, 3336732534],
-    15: [303840, 4031621013], 16: [303038, 338922815], 17: [303040, 1808676593],
-    18: [302871, 1862306182], 19: [302812, 3661292887],
-    20: [302812, 3661292887], 21: [302834, 645373895], 22: [302845, 4012362388],
+    1: [347511, 2857033639],
+    2: [338931, 821975185],
+    3: [330656, 2728980344],
+    4: [331597, 3025348148],
+    5: [330535, 824438816],
+    6: [307385, 553688082],
+    7: [303744, 1404570688],
+    8: [303756, 1183189126],
+    9: [303756, 1183189126],
+    10: [303739, 2920552062],
+    11: [303639, 711546979],
+    12: [303639, 711546979],
+    13: [303620, 3284221855],
+    14: [303759, 3336732534],
+    15: [303840, 4031621013],
+    16: [303038, 338922815],
+    17: [303040, 1808676593],
+    18: [302871, 1862306182],
+    19: [302812, 3661292887],
+    20: [302812, 3661292887],
+    21: [302834, 645373895],
+    22: [302845, 4012362388],
   };
   for (var level = 1; level <= 22; level++) {
     test('level $level writes the frame the reference writes', () async {
@@ -146,12 +159,14 @@ void main() {
       }
     }
 
-    final frame = await pieces().transform(const ZstdCodec(
+    final frame = await pieces()
+        .transform(const ZstdCodec(
       level: 22,
       frameChecksum: false,
       multithread:
           ZstdMultithreadOptions(workers: 1, jobSize: 524288, overlapLog: 1),
-    ).encoder).fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
+    ).encoder)
+        .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
     // ZSTD_compressStream2 enables LDM when the content size is unknown at level 22
     expect([frame.length, getCrc32(frame)], [211267, 4043156817]);
   });
@@ -159,10 +174,10 @@ void main() {
   test('an empty stream writes the reference frame', () async {
     final frame = await const Stream<List<int>>.empty()
         .transform(const ZstdCodec(
-          level: 1,
-          frameChecksum: false,
-          multithread: ZstdMultithreadOptions(workers: 1),
-        ).encoder)
+      level: 1,
+      frameChecksum: false,
+      multithread: ZstdMultithreadOptions(workers: 1),
+    ).encoder)
         .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
     expect(frame, [0x28, 0xb5, 0x2f, 0xfd, 0x20, 0, 1, 0, 0]);
   });
@@ -181,28 +196,29 @@ void main() {
 
       return pieces()
           .transform(ZstdCodec(
-            level: 6,
-            frameChecksum: false,
-            multithread:
-                ZstdMultithreadOptions(workers: workers, jobSize: 524288),
-          ).encoder)
-          .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk))
-          .timeout(const Duration(seconds: 60));
+        level: 6,
+        frameChecksum: false,
+        multithread: ZstdMultithreadOptions(workers: workers, jobSize: 524288),
+      ).encoder)
+          .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk)).timeout(
+              const Duration(seconds: 60));
     }
 
     for (final length in [2 * 524288 + 12345, 2 * 524288, 1000]) {
       final label = length == 2 * 524288
           ? 'on a job boundary'
-          : (length < 524288 ? 'before the first job is full' : 'part way into a job');
+          : (length < 524288
+              ? 'before the first job is full'
+              : 'part way into a job');
       test('$label writes one frame whatever the pieces', () async {
         final source = Uint8List.sublistView(input, 0, length);
         final whole = await encode(source, source.length);
         expect(
-            ZstdDecoder()
-                .decodeBytes(whole, verify: true, throwOnError: true),
+            ZstdDecoder().decodeBytes(whole, verify: true, throwOnError: true),
             source);
         for (final piece in [4099, 524288 + 7]) {
-          expect(await encode(source, piece), whole, reason: 'pieces of $piece');
+          expect(await encode(source, piece), whole,
+              reason: 'pieces of $piece');
         }
         expect(await encode(source, 4099, workers: 1), whole,
             reason: 'one worker');
@@ -284,10 +300,12 @@ void main() {
 
     var events = 0;
     late StreamSubscription<List<int>> subscription;
-    subscription = source().transform(const ZstdCodec(
+    subscription = source()
+        .transform(const ZstdCodec(
       level: 1,
       multithread: ZstdMultithreadOptions(workers: 1, jobSize: 524288),
-    ).encoder).listen((_) {
+    ).encoder)
+        .listen((_) {
       if (++events == 2) {
         subscription.pause();
         firstBody.complete();
@@ -313,9 +331,9 @@ void main() {
 
   group('the worker pool the settings ask for', () {
     // The geometry of the streamed frame, which is what the transform runs on
-    List<int> geometry(int level) => ZstdMtFrameEncoder.geometry(
-        level, zstdMtSizeUnknown,
-        jobSize: 0, overlapLog: 0);
+    List<int> geometry(int level) =>
+        ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
+            jobSize: 0, overlapLog: 0);
 
     test('a budget under one worker still affords one', () {
       for (final level in [1, 6, 12, 19]) {
@@ -341,7 +359,8 @@ void main() {
       expect(zstdMtPoolSize(4, 16, 0), 4, reason: 'no cap, no change');
       expect(zstdMtPoolSize(4, 16, 1), 1, reason: 'the cap lowers it');
       expect(zstdMtPoolSize(4, 16, 9), 4, reason: 'a cap above it does not');
-      expect(zstdMtPoolSize(0, 16, 0), 15, reason: 'a core left for the caller');
+      expect(zstdMtPoolSize(0, 16, 0), 15,
+          reason: 'a core left for the caller');
       expect(zstdMtPoolSize(0, 16, 2), 2);
       expect(zstdMtPoolSize(0, 1, 0), 1, reason: 'never below one');
     });
@@ -377,15 +396,20 @@ void main() {
     Future<List<int>> encode(ZstdCodec codec) => source()
         .transform(codec.encoder)
         .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
-    final expected = [...List<int>.filled(1000, 1), ...List<int>.filled(1000, 2)];
+    final expected = [
+      ...List<int>.filled(1000, 1),
+      ...List<int>.filled(1000, 2)
+    ];
     final ordinary = await encode(const ZstdCodec(level: 1));
-    expect(ZstdDecoder().decodeBytes(ordinary, verify: true, throwOnError: true),
+    expect(
+        ZstdDecoder().decodeBytes(ordinary, verify: true, throwOnError: true),
         expected);
     final parallel = await encode(const ZstdCodec(
       level: 1,
       multithread: ZstdMultithreadOptions(workers: 1),
     ));
-    expect(ZstdDecoder().decodeBytes(parallel, verify: true, throwOnError: true),
+    expect(
+        ZstdDecoder().decodeBytes(parallel, verify: true, throwOnError: true),
         expected);
   });
 
@@ -402,7 +426,8 @@ void main() {
     final error = Completer<Object>();
     var completed = false;
     expect(
-        () => ZstdEncoder().encodeStream(_UnreadableInput(), OutputMemoryStream(),
+        () => ZstdEncoder().encodeStream(
+            _UnreadableInput(), OutputMemoryStream(),
             multithread: ZstdMultithreadOptions<bool>(
                 workers: 1,
                 onDone: (_) => completed = true,
@@ -428,7 +453,8 @@ void main() {
           ));
     }, (_, __) => result.complete('uncaught zone error'));
     try {
-      expect(await result.future.timeout(const Duration(seconds: 10)), 'onError');
+      expect(
+          await result.future.timeout(const Duration(seconds: 10)), 'onError');
     } finally {
       input.closeSync();
       directory.deleteSync(recursive: true);
@@ -437,8 +463,7 @@ void main() {
 
   test('a sink refuses the options, since it cannot wait for a worker', () {
     expect(
-        () => ZstdCodec(
-                multithread: ZstdMultithreadOptions(workers: 2))
+        () => ZstdCodec(multithread: ZstdMultithreadOptions(workers: 2))
             .encoder
             .startChunkedConversion(_Held()),
         throwsArgumentError);
@@ -461,13 +486,13 @@ void main() {
   test('a dictionary goes to the first job and the frame names it', () async {
     final dictionary = ZstdDictionary(Uint8List.sublistView(input, 0, 4096));
     final done = Completer<Uint8List>();
-    ZstdEncoder(checksum: false, level: 6, dictionary: dictionary)
-        .encodeBytes(input,
-            multithread: ZstdMultithreadOptions(
-                onDone: done.complete,
-                onError: done.completeError,
-                jobSize: 524288,
-                workers: 4));
+    ZstdEncoder(checksum: false, level: 6, dictionary: dictionary).encodeBytes(
+        input,
+        multithread: ZstdMultithreadOptions(
+            onDone: done.complete,
+            onError: done.completeError,
+            jobSize: 524288,
+            workers: 4));
     final frame = await done.future;
     expect(
         ZstdDecoder(dictionary: dictionary)
@@ -495,4 +520,3 @@ class _FailingOutput extends OutputMemoryStream {
   void writeBytes(List<int> bytes, {int? length}) =>
       throw StateError('output failed');
 }
-

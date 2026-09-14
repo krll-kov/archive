@@ -39,9 +39,16 @@ class ZstdLevelParams {
   /// matcher reads directly rather than through the six the parse has
   final int refStrategy;
 
-  const ZstdLevelParams(this.strategy, this.windowLog, this.hashLog,
-      this.chainLog, this.searchLog, this.targetLength, this.depth,
-      this.hashBytes, this.refStrategy);
+  const ZstdLevelParams(
+      this.strategy,
+      this.windowLog,
+      this.hashLog,
+      this.chainLog,
+      this.searchLog,
+      this.targetLength,
+      this.depth,
+      this.hashBytes,
+      this.refStrategy);
 }
 
 const _fast = 0;

@@ -61,7 +61,8 @@ void main() {
     test('every level round trips what it wrote', () {
       for (var level = 0; level <= 22; level++) {
         final frame = ZstdEncoder(level: level).encodeBytes(source);
-        expect(ZstdDecoder().decodeBytes(frame, verify: true, throwOnError: true),
+        expect(
+            ZstdDecoder().decodeBytes(frame, verify: true, throwOnError: true),
             source,
             reason: 'level $level');
       }
@@ -73,7 +74,8 @@ void main() {
       for (var level = 0; level <= 22; level++) {
         final frame = ZstdEncoder(level: level).encodeBytes(Uint8List(0));
         expect(frame, isNotEmpty, reason: 'level $level');
-        expect(ZstdDecoder().uncompressedSize(frame), 0, reason: 'level $level');
+        expect(ZstdDecoder().uncompressedSize(frame), 0,
+            reason: 'level $level');
         expect(
             ZstdDecoder().decodeBytes(frame, verify: true, throwOnError: true),
             isEmpty,
@@ -139,7 +141,8 @@ void main() {
     test('a window limit below the smallest window', () {
       for (final limit in [0, 1, 1023]) {
         expect(() => ZstdDecoder(windowSizeLimit: limit),
-            throwsA(isA<ArgumentError>()), reason: 'limit $limit');
+            throwsA(isA<ArgumentError>()),
+            reason: 'limit $limit');
       }
       expect(ZstdDecoder(windowSizeLimit: 1024), isA<ZstdDecoder>());
     });

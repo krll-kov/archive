@@ -49,7 +49,8 @@ void main() {
       old: () => _old((i, o) => ZstdEncoder().encodeStream(i, o), source),
       converter: zstdCodec.encoder,
       decoder: zstdCodec.decoder,
-      back: (a) => ZstdDecoder().decodeBytes(a, verify: true, throwOnError: true),
+      back: (a) =>
+          ZstdDecoder().decodeBytes(a, verify: true, throwOnError: true),
       toFile: (i, o) => ZstdDecoder().decodeStream(i, o, verify: true),
       // The chunked encoder writes what ZSTD_compressStream2 writes, which is
       // a different archive from the one shot ZSTD_compress2
@@ -98,7 +99,11 @@ void main() {
       });
 
       test('all three read back as the original', () {
-        for (final archive in [paths.whole(), paths.old(), _chunked(paths.converter, source, 8192)]) {
+        for (final archive in [
+          paths.whole(),
+          paths.old(),
+          _chunked(paths.converter, source, 8192)
+        ]) {
           expect(paths.back(archive), source);
           expect(_chunked(paths.decoder, archive, 997), source);
         }
@@ -128,7 +133,6 @@ void main() {
           directory.deleteSync(recursive: true);
         }
       });
-
     });
   }
 }

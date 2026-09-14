@@ -27,8 +27,8 @@ bool _contains(Uint8List bytes, List<int> signature) {
 List<ArchiveFile> _entries() => [
       ArchiveFile.bytes(
           'one.txt',
-          Uint8List.fromList(
-              utf8.encode('the quick brown fox jumps over the lazy dog\n' * 200))),
+          Uint8List.fromList(utf8
+              .encode('the quick brown fox jumps over the lazy dog\n' * 200))),
       ArchiveFile.bytes('two.txt',
           Uint8List.fromList(utf8.encode('second entry payload\n' * 50))),
     ];
@@ -61,8 +61,8 @@ void main() {
           reason: 'without this signature no reader can open the archive');
     });
 
-    test('the streamed encoder round trips through the decoder',
-        testOn: 'vm', () async {
+    test('the streamed encoder round trips through the decoder', testOn: 'vm',
+        () async {
       final bytes = await _encode(zipCodec.encoder);
       final archive = ZipDecoder().decodeBytes(bytes);
       expect(archive.files.map((f) => f.name), ['one.txt', 'two.txt']);

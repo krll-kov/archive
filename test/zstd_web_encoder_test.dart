@@ -8,17 +8,30 @@ void main() {
   test('FSE fixed-point rounding retains bits beyond JS precision', () {
     const roundUp = [0, 473195, 504333, 520860, 550000, 700000, 750000, 830000];
     const cases = [
-      [10, 5, 1, 3], [10, 5, 3, 9], [10, 5, 5, 15], [10, 5, 9, 28],
-      [10, 12, 1, 409], [10, 12, 3, 1228], [10, 12, 5, 2047],
-      [10, 12, 9, 3686], [131071, 5, 1, 1], [131071, 5, 43690, 10],
-      [131071, 5, 65535, 15], [131071, 5, 131070, 31],
-      [131071, 12, 43690, 1365], [131071, 12, 131070, 4095],
-      [4294967295, 5, 1431655765, 10], [4294967295, 5, 2147483647, 15],
-      [4294967295, 12, 1431655765, 1365], [4294967295, 12, 4294967294, 4095],
+      [10, 5, 1, 3],
+      [10, 5, 3, 9],
+      [10, 5, 5, 15],
+      [10, 5, 9, 28],
+      [10, 12, 1, 409],
+      [10, 12, 3, 1228],
+      [10, 12, 5, 2047],
+      [10, 12, 9, 3686],
+      [131071, 5, 1, 1],
+      [131071, 5, 43690, 10],
+      [131071, 5, 65535, 15],
+      [131071, 5, 131070, 31],
+      [131071, 12, 43690, 1365],
+      [131071, 12, 131070, 4095],
+      [4294967295, 5, 1431655765, 10],
+      [4294967295, 5, 2147483647, 15],
+      [4294967295, 12, 1431655765, 1365],
+      [4294967295, 12, 4294967294, 4095],
     ];
     for (final row in cases) {
-      expect(ZstdFseScale.normalize(row[0], row[1]).probability(row[2], roundUp),
-          row[3], reason: '$row');
+      expect(
+          ZstdFseScale.normalize(row[0], row[1]).probability(row[2], roundUp),
+          row[3],
+          reason: '$row');
     }
     final remainder = ZstdFseScale.remainder(131071, 31, 8);
     expect([43690, 32767, 54614].map(remainder.advance), [10, 8, 13]);
@@ -39,10 +52,17 @@ void main() {
     }
   }
   const golden = {
-    1: [5795, 278041362], 2: [5795, 278041362], 3: [5795, 278041362],
-    4: [5795, 278041362], 5: [5795, 278041362], 6: [6243, 2774145976],
-    9: [6284, 3627928677], 12: [6284, 3627928677],
-    15: [6236, 617795840], 19: [5785, 3155801168], 22: [5814, 3822642021],
+    1: [5795, 278041362],
+    2: [5795, 278041362],
+    3: [5795, 278041362],
+    4: [5795, 278041362],
+    5: [5795, 278041362],
+    6: [6243, 2774145976],
+    9: [6284, 3627928677],
+    12: [6284, 3627928677],
+    15: [6236, 617795840],
+    19: [5785, 3155801168],
+    22: [5814, 3822642021],
   };
   for (var level = 1; level <= 22; level++) {
     test('encoder level $level preserves matches and entropy on web', () {
@@ -50,7 +70,8 @@ void main() {
       if (golden.containsKey(level)) {
         expect([encoded.length, getCrc32(encoded)], golden[level]);
       }
-      expect(ZstdDecoder().decodeBytes(encoded, verify: true, throwOnError: true),
+      expect(
+          ZstdDecoder().decodeBytes(encoded, verify: true, throwOnError: true),
           input);
     });
     test('unknown-size stream and dictionary level $level work on web', () {
@@ -63,10 +84,17 @@ void main() {
       }
       stream.close();
       final decoder = ZstdDecoder(dictionary: dictionary);
-      expect(ZstdDecoder().decodeBytes(held.bytes.takeBytes(),
-          verify: true, throwOnError: true), input);
-      expect(decoder.decodeBytes(ZstdEncoder(level: level, dictionary: dictionary)
-          .encodeBytes(input), verify: true, throwOnError: true), input);
+      expect(
+          ZstdDecoder().decodeBytes(held.bytes.takeBytes(),
+              verify: true, throwOnError: true),
+          input);
+      expect(
+          decoder.decodeBytes(
+              ZstdEncoder(level: level, dictionary: dictionary)
+                  .encodeBytes(input),
+              verify: true,
+              throwOnError: true),
+          input);
     });
   }
 }

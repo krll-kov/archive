@@ -70,9 +70,8 @@ int zstdLiteralsLengthCode(int length) => length < 64
     : zstdHighestBitFast(length) + 19;
 
 @pragma('vm:prefer-inline')
-int zstdMatchLengthCode(int base) => base < 128
-    ? zstdMatchLengthCodes[base]
-    : zstdHighestBitFast(base) + 36;
+int zstdMatchLengthCode(int base) =>
+    base < 128 ? zstdMatchLengthCodes[base] : zstdHighestBitFast(base) + 36;
 
 /// The sequences of one block, plus the literals they leave behind.
 ///
@@ -115,7 +114,8 @@ class ZstdSequenceStore {
       // write past the run cost less than a call that has to be exact.
       // `litLimit_w`: near the end of the input there is nothing to over read
       // into, so the exact copy is the only safe one
-      if (zstdUse64Bit && length <= 16 &&
+      if (zstdUse64Bit &&
+          length <= 16 &&
           from + 16 <= src.length &&
           literalsLength + 16 <= literals.length) {
         final view = _viewOf(src);
@@ -310,14 +310,26 @@ class ZstdSequencesEncoder {
     _holdSlots();
     _countCodes(store, from, to);
     var total = header + _describeTables(scratch, 0, store, count, to);
-    total += _symbolCost(llMode, _llCounts, zstdLiteralsLengthCodeMax, _llSlot,
-        zstdPredefinedLiteralsLength, zstdPredefinedLiteralsLengthLog,
-        zstdLiteralsLengthExtraBits, count);
+    total += _symbolCost(
+        llMode,
+        _llCounts,
+        zstdLiteralsLengthCodeMax,
+        _llSlot,
+        zstdPredefinedLiteralsLength,
+        zstdPredefinedLiteralsLengthLog,
+        zstdLiteralsLengthExtraBits,
+        count);
     total += _symbolCost(ofMode, _ofCounts, zstdOffsetCodeMax, _ofSlot,
         zstdPredefinedOffset, zstdPredefinedOffsetLog, null, count);
-    total += _symbolCost(mlMode, _mlCounts, zstdMatchLengthCodeMax, _mlSlot,
-        zstdPredefinedMatchLength, zstdPredefinedMatchLengthLog,
-        zstdMatchLengthExtraBits, count);
+    total += _symbolCost(
+        mlMode,
+        _mlCounts,
+        zstdMatchLengthCodeMax,
+        _mlSlot,
+        zstdPredefinedMatchLength,
+        zstdPredefinedMatchLengthLog,
+        zstdMatchLengthExtraBits,
+        count);
     return total;
   }
 
@@ -388,9 +400,8 @@ class ZstdSequencesEncoder {
     final end = last * _stride;
     for (var at = from * _stride; at < end; at += _stride) {
       final llLength = seq[at];
-      final ll = llLength < 64
-          ? llTable[llLength]
-          : zstdHighestBitFast(llLength) + 19;
+      final ll =
+          llLength < 64 ? llTable[llLength] : zstdHighestBitFast(llLength) + 19;
       final mlLength = seq[at + 1];
       final ml = mlLength < 128
           ? mlTable[mlLength]
@@ -411,8 +422,8 @@ class ZstdSequencesEncoder {
 
   /// Describes all three tables at [at] and returns what they took, leaving how
   /// each was chosen in [llMode], [ofMode] and [mlMode]
-  int _describeTables(Uint8List out, int at, ZstdSequenceStore store, int count,
-      int last) {
+  int _describeTables(
+      Uint8List out, int at, ZstdSequenceStore store, int count, int last) {
     // The last sequence's state is written into the bitstream rather than
     // coded, so `ZSTD_buildCTable` leaves it out of the distribution it
     // describes
@@ -668,7 +679,8 @@ class ZstdSequencesEncoder {
 
   /// The three tables a dictionary handed over, for the optimal parse to price
   /// its first block from. Null once nothing trusted is left
-  ZstdFseCTable? get dictionaryLitLengths => _llSlot.trusted ? _llSlot.live : null;
+  ZstdFseCTable? get dictionaryLitLengths =>
+      _llSlot.trusted ? _llSlot.live : null;
   ZstdFseCTable? get dictionaryOffsets => _ofSlot.trusted ? _ofSlot.live : null;
   ZstdFseCTable? get dictionaryMatchLengths =>
       _mlSlot.trusted ? _mlSlot.live : null;

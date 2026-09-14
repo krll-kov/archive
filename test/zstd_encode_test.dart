@@ -312,10 +312,8 @@ void main() {
       final held = _Piped(source)..skip(1024);
       final out = OutputMemoryStream();
       const ZstdEncoder().encodeStream(held, out);
-      expect(
-          out.getBytes(),
-          const ZstdEncoder()
-              .encodeBytes(Uint8List.sublistView(source, 1024)));
+      expect(out.getBytes(),
+          const ZstdEncoder().encodeBytes(Uint8List.sublistView(source, 1024)));
     });
   });
 }

@@ -44,9 +44,7 @@ class ZstdCodec extends Codec<List<int>, List<int>> {
 
   @override
   ZstdDecoderConverter get decoder => ZstdDecoderConverter(
-      verify: verify,
-      dictionary: dictionary,
-      windowSizeLimit: windowSizeLimit);
+      verify: verify, dictionary: dictionary, windowSizeLimit: windowSizeLimit);
 
   /// What [ZstdEncoderConverter.level] uses
   final int level;
@@ -118,7 +116,9 @@ class ZstdEncoderConverter extends ChunkedConverter {
   @override
   ByteConversionSink startChunkedConversion(Sink<List<int>> sink) {
     if (multithread != null) {
-      throw ArgumentError.value(multithread, 'multithread',
+      throw ArgumentError.value(
+          multithread,
+          'multithread',
           'Works through a stream only, since a sink owes its output before '
               'it returns');
     }
@@ -145,8 +145,8 @@ class ZstdEncoderConverter extends ChunkedConverter {
     return _bindMultithread(stream, options);
   }
 
-  Stream<List<int>> _bindMultithread(
-      Stream<List<int>> stream, ZstdMultithreadOptions<Object?> options) async* {
+  Stream<List<int>> _bindMultithread(Stream<List<int>> stream,
+      ZstdMultithreadOptions<Object?> options) async* {
     checkZstdMultithreadOptions(options);
     final hash = Xxh64()..reset();
     final counted = stream.map((chunk) {
@@ -209,10 +209,10 @@ class ZstdChunkedEncoder extends ChunkedSink {
   late final _out = SinkOutputStream(output);
   late final ZstdLevelParams _params = zstdParamsForLevel(level, _sizeUnknown);
   late final int _matchWindow = 1 << _params.windowLog;
-  late final int _blockSizeMax = _matchWindow < zstdBlockMaximumSize
-      ? _matchWindow
-      : zstdBlockMaximumSize;
-  late final ZstdBlockEncoder _blocks = ZstdBlockEncoder(_blockSizeMax, _params);
+  late final int _blockSizeMax =
+      _matchWindow < zstdBlockMaximumSize ? _matchWindow : zstdBlockMaximumSize;
+  late final ZstdBlockEncoder _blocks =
+      ZstdBlockEncoder(_blockSizeMax, _params);
   final _splitter = ZstdBlockSplitter();
   // The header is written on the first block, which is after the first bytes
   // have gone through the checksum, so neither may be set up there
@@ -357,8 +357,8 @@ class ZstdChunkedEncoder extends ChunkedSink {
       return;
     }
     while (left > 0) {
-      final take =
-          _splitter.sizeFor(_buffer, _at, left, _blockSizeMax, _params, _savings);
+      final take = _splitter.sizeFor(
+          _buffer, _at, left, _blockSizeMax, _params, _savings);
       // `ZSTD_checkDictValidity` measures from the end of the block, and what
       // it drops stays dropped
       if (_blocks.dictionaryEnd != 0 &&

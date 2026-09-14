@@ -80,7 +80,8 @@ void main() {
     });
 
     test('an archive cut short is refused', () {
-      expect(() => _decode(Uint8List.sublistView(small, 0, small.length - 4), 8),
+      expect(
+          () => _decode(Uint8List.sublistView(small, 0, small.length - 4), 8),
           throwsA(isA<ArchiveException>()));
     });
 

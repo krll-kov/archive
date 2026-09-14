@@ -68,9 +68,6 @@ class _ZipEncoderData {
   int? level;
   late final int? time;
   late final int? date;
-  int localFileSize = 0;
-  int centralDirectorySize = 0;
-  int endOfCentralDirectorySize = 0;
   List<_ZipFileData> files = [];
 
   _ZipEncoderData(this.level, [DateTime? dateTime]) {
@@ -212,9 +209,22 @@ class ZipEncoder {
   }
 
   void add(ArchiveFile entry,
+          {bool autoClose = true, ArchiveCallback? callback, int? level}) =>
+      addHeader(entry, autoClose: autoClose, callback: callback, level: level)
+          ?.finish();
+
+  /// Writes [entry]'s local header and returns its body. Null if the entry is
+  /// already written whole, which is everything but a streamed deflate
+  ZipEntryBody? addHeader(ArchiveFile entry,
       {bool autoClose = true, ArchiveCallback? callback, int? level}) {
     final fileData = _ZipFileData();
     _data.files.add(fileData);
+
+    // An entry with no content is not encrypted. Without this reset it keeps
+    // the last entry's mac, so its header declares 12 bytes it never writes
+    // and every local header after it is off by 2
+    _mac = null;
+    _pwdVer = null;
 
     if (callback != null) {
       callback(entry);
@@ -308,10 +318,6 @@ class ZipEncoder {
       }
     }
 
-    final encodedFilename = filenameEncoding.encode(entry.name);
-    final comment =
-        entry.comment != null ? filenameEncoding.encode(entry.comment!) : null;
-
     Uint8List? salt;
 
     if (password != null && compressedData != null) {
@@ -341,11 +347,6 @@ class ZipEncoder {
     final deferred = fileData.source != null;
     fileData.deferred = deferred;
 
-    _data.localFileSize += 30 + encodedFilename.length + dataLen;
-
-    _data.centralDirectorySize +=
-        46 + encodedFilename.length + (comment != null ? comment.length : 0);
-
     fileData.crc32 = crc32;
     fileData.compressedSize = deferred ? 0 : dataLen;
     fileData.compressedData = compressedData;
@@ -354,25 +355,19 @@ class ZipEncoder {
     fileData.comment = entry.comment;
     fileData.position = _output!.length;
 
-    _writeFile(fileData, _output!, salt: salt);
-
-    if (deferred) {
-      // 30 for the local header, 16 for the descriptor behind the data
-      _data.localFileSize += 46 + encodedFilename.length +
-          fileData.compressedSize;
-    }
-    fileData.compressedData = null;
-    fileData.source = null;
-
-    /*if (entry.isDirectory) {
-      for (final file in entry) {
-        add(file, autoClose: autoClose, callback: callback);
+    void done() {
+      fileData.compressedData = null;
+      fileData.source = null;
+      if (autoClose) {
+        entry.closeSync();
       }
-    }*/
-
-    if (autoClose) {
-      entry.closeSync();
     }
+
+    final body = _writeFile(fileData, _output!, salt: salt, done: done);
+    if (body == null) {
+      done();
+    }
+    return body;
   }
 
   void endEncode({String? comment = ''}) {
@@ -418,8 +413,8 @@ class ZipEncoder {
     return out.getBytes();
   }
 
-  void _writeFile(_ZipFileData fileData, OutputStream output,
-      {Uint8List? salt}) {
+  ZipEntryBody? _writeFile(_ZipFileData fileData, OutputStream output,
+      {Uint8List? salt, required void Function() done}) {
     var filename = fileData.name;
 
     output.writeUint32(ZipFile.zipSignature);
@@ -486,25 +481,20 @@ class ZipEncoder {
       output.writeBytes(_pwdVer!);
     }
 
-    if (fileData.source != null) {
+    final source = fileData.source;
+    if (source != null) {
       // Deflated straight into the output, so its length is only known once it
       // is there, and it goes into the descriptor behind the data
-      final before = output.length;
-      platformZLibEncoder.encodeStream(fileData.source!, output,
-          level: fileData.level, raw: true);
-      fileData.compressedSize = output.length - before;
-      output.writeUint32(_dataDescriptorSignature);
-      output.writeUint32(fileData.crc32);
-      output.writeUint32(fileData.compressedSize);
-      output.writeUint32(fileData.uncompressedSize);
+      return ZipEntryBody._(source, output, fileData, done);
     } else if (compressedData != null) {
       // local file data
       output.writeStream(compressedData);
     }
 
-    if (password != null && _mac != null) {
+    if (password != null && salt != null && _mac != null) {
       output.writeBytes(_mac!);
     }
+    return null;
   }
 
   List<int> _getZip64CfhData(_ZipFileData fileData) {
@@ -540,7 +530,12 @@ class ZipEncoder {
 
       final versionMadeBy = (os << 8) | version;
       final versionNeededToExtract = version;
-      var generalPurposeBitFlag = languageEncodingBitUtf8;
+      // Must match the local header. If only this one sets bit 11, a reader
+      // decodes a latin1 name as UTF-8
+      var generalPurposeBitFlag = 0;
+      if (filenameEncoding.name == "utf-8") {
+        generalPurposeBitFlag |= languageEncodingBitUtf8;
+      }
       if (fileData.deferred) {
         generalPurposeBitFlag |= 0x08;
       }
@@ -655,4 +650,79 @@ class ZipEncoder {
 
   // enum OS
   static const _osMSDos = 0;
+}
+
+/// Deflates one entry a piece at a time. Call [step] until it returns false,
+/// then [finish]. This lets a caller pass the bytes on before the whole entry
+/// is compressed
+class ZipEntryBody {
+  ZipEntryBody._(this._source, this._output, this._data, this._done)
+      : _before = _output.length,
+        _sink = platformZLibEncoder.startEncode(_output,
+            level: _data.level, raw: true);
+
+  /// How much one [step] deflates. It still feeds the deflate in 1024 byte
+  /// reads, so the output bytes do not change
+  static const _piece = 64 * 1024;
+
+  final InputStream _source;
+  final OutputStream _output;
+  final _ZipFileData _data;
+  final void Function() _done;
+  final int _before;
+
+  /// Null on the web, where deflate only runs whole. Then [finish] does the
+  /// entry in one call
+  final Sink<List<int>>? _sink;
+
+  var _closed = false;
+
+  bool step() {
+    final sink = _sink;
+    if (sink == null || _closed || _source.isEOS) {
+      return false;
+    }
+    var left = _piece;
+    while (left > 0 && !_source.isEOS) {
+      final take = _source.length < 1024 ? _source.length : 1024;
+      sink.add(_source.readBytes(take).toUint8List());
+      left -= take;
+    }
+    return true;
+  }
+
+  /// Lets the entry go without finishing it. The archive is being abandoned,
+  /// so we skip the descriptor and only release what the entry holds
+  void cancel() {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    _sink?.close();
+    _done();
+  }
+
+  /// Deflates what is left, then writes the crc and the sizes that the local
+  /// header skipped
+  void finish() {
+    if (_closed) {
+      return;
+    }
+    final sink = _sink;
+    if (sink == null) {
+      platformZLibEncoder.encodeStream(_source, _output,
+          level: _data.level, raw: true);
+    } else {
+      while (step()) {}
+      sink.close();
+    }
+    _closed = true;
+    _data.compressedSize = _output.length - _before;
+    _output
+      ..writeUint32(ZipEncoder._dataDescriptorSignature)
+      ..writeUint32(_data.crc32)
+      ..writeUint32(_data.compressedSize)
+      ..writeUint32(_data.uncompressedSize);
+    _done();
+  }
 }

@@ -7,7 +7,7 @@ import 'package:test/test.dart';
 
 // Sizes the encoder used to get wrong. Every archive here is read back with
 // the checks on, which is what catches an index or a chunk that does not
-// describe the block it belongs to.
+// describe the block it belongs to
 
 Uint8List _sample(int size) {
   final data = Uint8List(size);
@@ -41,7 +41,8 @@ void main() {
       test('$size bytes come back byte for byte', () {
         final source = _sample(size);
         final archive = XZEncoder().encodeBytes(source);
-        expect(XZDecoder().decodeBytes(archive, verify: true, throwOnError: true),
+        expect(
+            XZDecoder().decodeBytes(archive, verify: true, throwOnError: true),
             source);
       });
     }
@@ -50,7 +51,8 @@ void main() {
       test('a $check archive of 1000 bytes reads back', () {
         final source = _sample(1000);
         final archive = XZEncoder().encodeBytes(source, check: check);
-        expect(XZDecoder().decodeBytes(archive, verify: true, throwOnError: true),
+        expect(
+            XZDecoder().decodeBytes(archive, verify: true, throwOnError: true),
             source);
       });
     }
@@ -85,7 +87,8 @@ void main() {
       test('a $check archive reads back', () {
         final source = _sample(5000);
         final archive = encode(source, 700, check: check);
-        expect(XZDecoder().decodeBytes(archive, verify: true, throwOnError: true),
+        expect(
+            XZDecoder().decodeBytes(archive, verify: true, throwOnError: true),
             source);
       });
     }
@@ -109,11 +112,12 @@ void main() {
     test('the stream decoder with workers reads what this writes', () async {
       // Without isolates, on the web, the same options fall back to one thread
       final source = _sample(300000);
-      final decoded = await Stream<List<int>>.value(XZEncoder().encodeBytes(source))
-          .transform(const XzCodec(
-                  multithread: XZMultithreadOptions<Object?>(workers: 2))
-              .decoder)
-          .fold<List<int>>(<int>[], (all, piece) => all..addAll(piece));
+      final decoded =
+          await Stream<List<int>>.value(XZEncoder().encodeBytes(source))
+              .transform(const XzCodec(
+                      multithread: XZMultithreadOptions<Object?>(workers: 2))
+                  .decoder)
+              .fold<List<int>>(<int>[], (all, piece) => all..addAll(piece));
       expect(decoded, source);
     });
 
@@ -134,7 +138,8 @@ void main() {
         }
         encoder.close();
         final archive = held.bytes;
-        expect(XZDecoder().decodeBytes(archive, verify: true, throwOnError: true),
+        expect(
+            XZDecoder().decodeBytes(archive, verify: true, throwOnError: true),
             source,
             reason: 'size $size');
         expect(archive, XZEncoder().encodeBytes(source), reason: 'size $size');

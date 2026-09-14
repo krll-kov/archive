@@ -37,8 +37,9 @@ Future<List<Uint8List>> zstdMtCompressJobs(
   // copied again: a message holding a Uint8List is serialised on its way to
   // the isolate, a transfer is not
   Object source(int start, int end, int prefix) =>
-      TransferableTypedData.fromList(
-          [Uint8List.fromList(Uint8List.sublistView(src, start - prefix, end))]);
+      TransferableTypedData.fromList([
+        Uint8List.fromList(Uint8List.sublistView(src, start - prefix, end))
+      ]);
   final whole = size > 0 ? size : src.length;
   final pass = ZstdMtLdmPass.forParams(
       zstdParamsForLevel(level, whole), jobSize > 0 ? jobSize : src.length);
@@ -72,7 +73,8 @@ Future<List<Uint8List>> zstdMtCompressFileJobs(String path, int offset,
   List<Object>? ldmFor(int start, int end) {
     final reader = handle!;
     reader.setPositionSync(offset + start);
-    return zstdMtPackLdm(pass!.generate(reader.readSync(end - start), 0, end - start));
+    return zstdMtPackLdm(
+        pass!.generate(reader.readSync(end - start), 0, end - start));
   }
 
   try {
@@ -300,9 +302,8 @@ Stream<Uint8List> _zstdMtCompressStream(
     int cap = 0,
     ZstdDictionary? dictionary,
     Uint8List Function(bool empty)? header}) async* {
-  final geometry =
-      ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
-          jobSize: jobSize, overlapLog: overlapLog);
+  final geometry = ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
+      jobSize: jobSize, overlapLog: overlapLog);
   final ring = ZstdMtRing(geometry[0], geometry[1]);
   // One long distance pass over the whole frame, run here in job order, with
   // its matches handed to each job. A job sees only its own prefix and cannot
@@ -573,8 +574,7 @@ void _zstdMtWorker(SendPort toMain) {
           lastJob: job[6] as bool,
           jobSize: job[7] as int,
           overlapLog: job[8] as int,
-          ldmSequences:
-              job.length > 9 ? zstdMtUnpackLdm(job[9]) : null);
+          ldmSequences: job.length > 9 ? zstdMtUnpackLdm(job[9]) : null);
       toMain.send([
         port.sendPort,
         index,

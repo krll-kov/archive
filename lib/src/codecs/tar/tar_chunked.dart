@@ -20,8 +20,7 @@ class TarChunkedEncoder {
   /// through
   final Encoding filenameEncoding;
 
-  TarChunkedEncoder(this.output,
-      {this.filenameEncoding = const Utf8Codec()}) {
+  TarChunkedEncoder(this.output, {this.filenameEncoding = const Utf8Codec()}) {
     _encoder.start(_out);
   }
 
@@ -64,13 +63,17 @@ class TarChunkedEncoder {
 class TarCodec {
   final Encoding filenameEncoding;
 
-  const TarCodec({this.filenameEncoding = const Utf8Codec()});
+  /// See [TarStreamEncoder.autoClose]
+  final bool autoClose;
+
+  const TarCodec(
+      {this.filenameEncoding = const Utf8Codec(), this.autoClose = false});
 
   TarStreamDecoder get decoder =>
       TarStreamDecoder(filenameEncoding: filenameEncoding);
 
-  TarStreamEncoder get encoder =>
-      TarStreamEncoder(filenameEncoding: filenameEncoding);
+  TarStreamEncoder get encoder => TarStreamEncoder(
+      filenameEncoding: filenameEncoding, autoClose: autoClose);
 }
 
 /// The codec with its defaults, for `stream.transform(tarCodec.decoder)`
@@ -80,7 +83,13 @@ const tarCodec = TarCodec();
 class TarStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
   final Encoding filenameEncoding;
 
-  const TarStreamEncoder({this.filenameEncoding = const Utf8Codec()});
+  /// Closes each entry once it is written, the way `ZipEncoder.add` does. Off
+  /// by default, as it is on `ZipEncoder.encodeStream`: the entries are the
+  /// caller's, and whoever opened a file closes it
+  final bool autoClose;
+
+  const TarStreamEncoder(
+      {this.filenameEncoding = const Utf8Codec(), this.autoClose = false});
 
   /// What an entry's content is handed out in. An entry is not held whole, so
   /// this is all the encoder owes beyond the header it has already written
@@ -94,31 +103,38 @@ class TarStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
   Stream<List<int>> _write(
       StreamIterator<ArchiveFile> input, CancelSignal signal) async* {
     final held = <List<int>>[];
-    final encoder = TarChunkedEncoder(_Pieces(held),
-        filenameEncoding: filenameEncoding);
+    final encoder =
+        TarChunkedEncoder(_Pieces(held), filenameEncoding: filenameEncoding);
     while (await input.moveNext()) {
       final entry = input.current;
-      // The header goes through the encoder, the content does not: a yield in
-      // between is what lets a reader have the first bytes before the last of
-      // the entry has been read
-      final file = encoder.addHeader(entry);
-      encoder.flush();
-      while (held.isNotEmpty) {
-        yield held.removeAt(0);
-      }
-      if (file == null) {
-        continue;
-      }
-      final body = file.contentStream;
-      if (body != null) {
-        while (!body.isEOS) {
-          final take = body.length < _piece ? body.length : _piece;
-          yield body.readBytes(take).toUint8List();
+      try {
+        // The header goes through the encoder, the content does not: a yield
+        // in between is what lets a reader have the first bytes before the
+        // last of the entry has been read
+        final file = encoder.addHeader(entry);
+        encoder.flush();
+        while (held.isNotEmpty) {
+          yield held.removeAt(0);
         }
-      }
-      final pad = file.padding;
-      if (pad > 0) {
-        yield Uint8List(pad);
+        if (file == null) {
+          continue;
+        }
+        final body = file.contentStream;
+        if (body != null) {
+          while (!body.isEOS) {
+            final take = body.length < _piece ? body.length : _piece;
+            yield body.readBytes(take).toUint8List();
+          }
+        }
+        final pad = file.padding;
+        if (pad > 0) {
+          yield Uint8List(pad);
+        }
+      } finally {
+        // A cancel lands on a yield above, which is why this is a finally
+        if (autoClose) {
+          entry.closeSync();
+        }
       }
     }
     if (signal.cancelled) {
@@ -196,6 +212,7 @@ class TarEntry {
   final int ownerId;
   final int groupId;
   final int lastModTime;
+
   /// What the entry is. [typeFlag] is the raw field behind it, for the flags
   /// this has no name for
   final TarEntryType type;
@@ -391,12 +408,17 @@ class _Reader {
     return piece;
   }
 
-  /// Exactly [count] bytes, null where the input ended before any of them
+  /// A header can claim any size. Under this we believe it and allocate up
+  /// front, over it we grow the buffer as the bytes really arrive. Every real
+  /// header and long name is far under it
+  static const _reserve = 1 << 16;
+
+  /// Exactly [count] bytes, or null if the input ended before any arrived
   Future<Uint8List?> exact(int count) async {
     if (count == 0) {
       return Uint8List(0);
     }
-    final out = Uint8List(count);
+    var out = Uint8List(count < _reserve ? count : _reserve);
     var got = 0;
     while (got < count) {
       final piece = await some(count - got);
@@ -406,10 +428,17 @@ class _Reader {
         }
         throw ArchiveException('tar: the archive ended part way through');
       }
+      if (got + piece.length > out.length) {
+        var size = out.length;
+        while (size < got + piece.length) {
+          size <<= 1;
+        }
+        out = Uint8List(size)..setRange(0, got, out);
+      }
       out.setRange(got, got + piece.length, piece);
       got += piece.length;
     }
-    return out;
+    return out.length == count ? out : Uint8List.sublistView(out, 0, count);
   }
 
   Future<void> skip(int count) async {

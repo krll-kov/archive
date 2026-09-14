@@ -139,9 +139,8 @@ class ZstdOptLdm {
     final matchLength = store.matchLength[_pos];
     final blockEnd = at + remaining;
     final litLeft = _inSequence < litLength ? litLength - _inSequence : 0;
-    final matchLeft = litLeft == 0
-        ? matchLength - (_inSequence - litLength)
-        : matchLength;
+    final matchLeft =
+        litLeft == 0 ? matchLength - (_inSequence - litLength) : matchLength;
     if (litLeft >= remaining) {
       _start = _never;
       _end = _never;
@@ -292,8 +291,8 @@ class ZstdLdm {
 
   /// `ZSTD_ldm_generateSequences`. One block is always one chunk, since a block
   /// never reaches the reference's chunk size of a megabyte
-  void generate(Uint8List src, ByteData view, int start, int end,
-      ZstdLdmSequences out) {
+  void generate(
+      Uint8List src, ByteData view, int start, int end, ZstdLdmSequences out) {
     out.reset();
     // `ZSTD_ldm_generateSequences` walks a megabyte at a time, bounding the
     // window at each chunk's end rather than once over the whole span. A block
@@ -432,8 +431,8 @@ class ZstdLdm {
       final upper = zstdWebShift(hi, 1) | (lo >>> 31);
       final sum = zstdWebShift(lo, 1) + zstdLdmGearWords[byte * 2 + 1];
       lo = sum & 0xffffffff;
-      hi = (upper + zstdLdmGearWords[byte * 2] +
-          (sum >= 4294967296 ? 1 : 0)) & 0xffffffff;
+      hi = (upper + zstdLdmGearWords[byte * 2] + (sum >= 4294967296 ? 1 : 0)) &
+          0xffffffff;
       n++;
       if ((hi & _stopMaskHigh) == 0 && (lo & _stopMask) == 0) {
         _splits[count++] = n;

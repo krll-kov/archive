@@ -359,8 +359,14 @@ void decodeHuffman4Streams(
     c2 = view.getUint64(p2, Endian.little);
   }
 
-  if (p0 != s0 || p1 != s1 || p2 != s2 || p3 != s3 ||
-      n0 != 64 || n1 != 64 || n2 != 64 || n3 != 64) {
+  if (p0 != s0 ||
+      p1 != s1 ||
+      p2 != s2 ||
+      p3 != s3 ||
+      n0 != 64 ||
+      n1 != 64 ||
+      n2 != 64 ||
+      n3 != 64) {
     _notConsumed();
   }
 }
@@ -378,8 +384,7 @@ int _firstBit(Uint8List src, int start, int length) {
 /// otherwise all register work, and it costs registers on the path that never
 /// throws
 @pragma('vm:never-inline')
-Never _zeroByte() =>
-    throw ZstdHuffmanException('Stream ends in a zero byte');
+Never _zeroByte() => throw ZstdHuffmanException('Stream ends in a zero byte');
 
 @pragma('vm:never-inline')
 Never _streamShort() =>

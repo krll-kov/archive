@@ -22,18 +22,19 @@ import 'xz_parallel.dart';
 /// }
 /// ```
 ///
-/// Where the input is cut means nothing to the format, so any pieces will do
+/// The format does not care where the input is cut, so any pieces will do
 class XzDecoderConverter extends ChunkedConverter {
   /// Checks the CRC of every block that carries one it can compute. On by
   /// default: a caller reading a stream has handed the compressed bytes back
   /// by the time the check would be made, so there is no second chance at it
   final bool verify;
 
-  /// Decodes blocks on isolates when this converter is bound to a stream. Only
-  /// a block whose header declares both lengths can be sent ahead, which is
-  /// what `xz` writes in threaded mode; any other is decoded here, after the
-  /// blocks before it are out. `startChunkedConversion` cannot take it: its
-  /// sink owes its output before it returns, and a worker answers later
+  /// Decodes blocks on isolates when you bind this converter to a stream. We
+  /// can only send ahead a block whose header declares both lengths. `xz`
+  /// writes those in threaded mode. Any other block we decode here, once the
+  /// blocks in front of it are out. `startChunkedConversion` cannot take this
+  /// option. Its sink owes its output before it returns, and a worker answers
+  /// later
   final XZMultithreadOptions<Object?>? multithread;
 
   const XzDecoderConverter({this.verify = true, this.multithread});
@@ -41,7 +42,9 @@ class XzDecoderConverter extends ChunkedConverter {
   @override
   ByteConversionSink startChunkedConversion(Sink<List<int>> sink) {
     if (multithread != null) {
-      throw ArgumentError.value(multithread, 'multithread',
+      throw ArgumentError.value(
+          multithread,
+          'multithread',
           'Works through a stream only, since a sink owes its output before '
               'it returns');
     }
@@ -80,11 +83,11 @@ class XzDecoderConverter extends ChunkedConverter {
   }
 }
 
-/// xz for data that arrives in pieces, which is what a `Stream` gives.
+/// xz for data that arrives in pieces, the way a `Stream` gives it.
 ///
-/// The shape is the one `dart:io` uses for gzip: one converter per direction,
-/// so a pipeline reads `stream.transform(xzCodec.decoder)` and a whole buffer
-/// reads `xzCodec.decode(bytes)`
+/// Same shape as gzip in `dart:io`, one converter per direction. A pipeline
+/// reads `stream.transform(xzCodec.decoder)`. A whole buffer reads
+/// `xzCodec.decode(bytes)`
 class XzCodec extends Codec<List<int>, List<int>> {
   /// Checks the CRC of every block that carries one it can compute
   final bool verify;
@@ -110,14 +113,16 @@ class XzCodec extends Codec<List<int>, List<int>> {
 /// The codec with its defaults, for `stream.transform(xzCodec.decoder)`
 const xzCodec = XzCodec();
 
-/// Decodes an xz archive that arrives in pieces, which is what a `Stream` of
-/// bytes gives. The pull decoder asks its input for the next field and blocks
-/// until it has it; this one is handed whatever has arrived and stops on the
-/// first field that is not there yet, so nothing has to wait inside the parse.
+/// Decodes an xz archive that arrives in pieces, the way a `Stream` of bytes
+/// gives it.
 ///
-/// The unit of progress is one LZMA2 chunk, at most 64 KiB compressed by the
-/// format, so what is held is the LZMA dictionary the archive asks for plus one
-/// chunk, whatever the archive weighs.
+/// The pull decoder asks its input for the next field and blocks until it has
+/// it. This one takes whatever arrived and stops at the first field that is
+/// not there yet, so nothing waits inside the parse.
+///
+/// It moves one LZMA2 chunk at a time, and the format caps a chunk at 64 KiB
+/// compressed. So we hold the dictionary the archive asks for plus one chunk,
+/// however big the archive is
 class XzChunkedDecoder extends ChunkedSink {
   /// Checks the CRC of every block that carries one it can compute, on by
   /// default for the reason [XzDecoderConverter.verify] gives
@@ -264,8 +269,9 @@ class XzChunkedDecoder extends ChunkedSink {
           if (available < pad) {
             return;
           }
+          final blockPad = view(pad);
           for (var i = 0; i < pad; i++) {
-            if (view(pad)[i] != 0) {
+            if (blockPad[i] != 0) {
               throw ArchiveException('xz: invalid block padding');
             }
           }
@@ -291,12 +297,13 @@ class XzChunkedDecoder extends ChunkedSink {
           if (available < pad) {
             return;
           }
+          final indexPad = view(pad);
           for (var i = 0; i < pad; i++) {
-            if (view(pad)[i] != 0) {
+            if (indexPad[i] != 0) {
               throw ArchiveException('xz: invalid stream index padding');
             }
           }
-          _indexCrc = getCrc32(view(pad), _indexCrc);
+          _indexCrc = getCrc32(indexPad, _indexCrc);
           skip(pad);
           _stage = _Stage.indexCrc;
         case _Stage.indexCrc:
@@ -334,10 +341,8 @@ class XzChunkedDecoder extends ChunkedSink {
 
   int _readUint32() {
     final field = view(4);
-    final value = field[0] |
-        (field[1] << 8) |
-        (field[2] << 16) |
-        (field[3] << 24);
+    final value =
+        field[0] | (field[1] << 8) | (field[2] << 16) | (field[3] << 24);
     skip(4);
     return value;
   }
@@ -391,10 +396,8 @@ class XzChunkedDecoder extends ChunkedSink {
       throw ArchiveException('xz: reserved bit is set in the block flags');
     }
     final filterCount = (flags & 0x3) + 1;
-    _declaredCompressedLength =
-        flags & 0x40 != 0 ? reader.multibyte() : null;
-    _declaredUncompressedLength =
-        flags & 0x80 != 0 ? reader.multibyte() : null;
+    _declaredCompressedLength = flags & 0x40 != 0 ? reader.multibyte() : null;
+    _declaredUncompressedLength = flags & 0x80 != 0 ? reader.multibyte() : null;
 
     var lzma2 = false;
     _x86Filter = false;
@@ -465,8 +468,10 @@ class XzChunkedDecoder extends ChunkedSink {
           compressed <= limit &&
           uncompressed <= limit) {
         final checkSize = _checkSize(_streamFlags & 0xf);
-        final total =
-            size + compressed + ((4 - ((size + compressed) & 3)) & 3) + checkSize;
+        final total = size +
+            compressed +
+            ((4 - ((size + compressed) & 3)) & 3) +
+            checkSize;
         if (available < total) {
           return false;
         }
@@ -633,10 +638,8 @@ class XzChunkedDecoder extends ChunkedSink {
     }
 
     if (verify && checkType == 0x1) {
-      final expected = field[0] |
-          (field[1] << 8) |
-          (field[2] << 16) |
-          (field[3] << 24);
+      final expected =
+          field[0] | (field[1] << 8) | (field[2] << 16) | (field[3] << 24);
       final actual = filtered != null ? getCrc32(filtered) : _blockCrc32;
       if (actual != expected) {
         throw ArchiveException('xz: CRC32 check failed');
@@ -664,8 +667,8 @@ class XzChunkedDecoder extends ChunkedSink {
 
     // What the index records is the block without its padding: the header, the
     // data and the check
-    _blocks.add(_BlockSize(_streamPosition - _blockStart - _blockPadding,
-        _blockLength));
+    _blocks.add(_BlockSize(
+        _streamPosition - _blockStart - _blockPadding, _blockLength));
     _stage = _Stage.blockOrIndex;
   }
 
@@ -843,13 +846,13 @@ enum _Stage {
 
 /// Writes xz from a `Stream` of pieces into a `Stream` of pieces.
 ///
-/// Nothing in the format needs the total size: a block header may leave its
-/// lengths out, the index that carries them is written last, and the check is
-/// folded in as the bytes go past. So the archive this writes is the archive
-/// the whole input would have produced.
+/// Nothing in the format needs the total size. A block header may leave its
+/// lengths out, the index that carries them comes last, and we fold the check
+/// in as the bytes go past. So this writes the same archive as the whole input
+/// would have.
 ///
-/// The data itself is stored rather than compressed, which is all
-/// [XZEncoder] does today
+/// It stores the data rather than compressing it. That is all [XZEncoder] does
+/// today
 class XzEncoderConverter extends ChunkedConverter {
   /// Which check the blocks carry
   final XZCheck check;

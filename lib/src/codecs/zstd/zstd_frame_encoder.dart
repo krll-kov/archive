@@ -45,8 +45,8 @@ class ZstdFrameEncoder {
         checksum: checksum, level: level, dictionary: dictionary);
   }
 
-  void _write(InputStream? input, Uint8List? src, int start, int size,
-      OutputStream out,
+  void _write(
+      InputStream? input, Uint8List? src, int start, int size, OutputStream out,
       {required bool checksum,
       required int level,
       required ZstdDictionary? dictionary}) {
@@ -64,8 +64,8 @@ class ZstdFrameEncoder {
     // its content does not shrink: with a dictionary the two differ
     final matchWindow = 1 << params.windowLog;
 
-    _writeHeader(out, size, singleSegment, checksum, params.windowLog,
-        dict?.id ?? 0);
+    _writeHeader(
+        out, size, singleSegment, checksum, params.windowLog, dict?.id ?? 0);
 
     if (checksum) {
       _hash.reset();

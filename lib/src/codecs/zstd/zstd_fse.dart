@@ -252,6 +252,6 @@ Never _tableSpreadDidNot() =>
     throw ZstdFseException('Table spread did not return to its start');
 
 @pragma('vm:never-inline')
-Never _accuracyTooLarge(int accuracyLog, int maxAccuracyLog) => throw
-    ZstdFseException(
+Never _accuracyTooLarge(int accuracyLog, int maxAccuracyLog) =>
+    throw ZstdFseException(
         'Accuracy log $accuracyLog exceeds the $maxAccuracyLog allowed here');

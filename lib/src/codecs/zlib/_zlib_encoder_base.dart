@@ -10,6 +10,12 @@ abstract class ZLibEncoderBase {
 
   void encodeStream(InputStream input, OutputStream output,
       {int? level, int? windowBits, bool raw = false});
+
+  /// A sink that compresses into [output] piece by piece. Null where the
+  /// backend only runs whole, and then [encodeStream] is all there is
+  Sink<List<int>>? startEncode(OutputStream output,
+          {int? level, int? windowBits, bool raw = false}) =>
+      null;
 }
 
 /// Hands every piece the codec produces straight to [output], where

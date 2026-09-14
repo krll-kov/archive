@@ -129,9 +129,7 @@ void main() {
           if (sequence(at + 1, period)) {
             return true;
           }
-          for (var symbol = digits[at - period] + 1;
-              symbol < 64;
-              symbol++) {
+          for (var symbol = digits[at - period] + 1; symbol < 64; symbol++) {
             digits[at] = symbol;
             if (sequence(at + 1, at)) {
               return true;

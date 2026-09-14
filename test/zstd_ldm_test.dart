@@ -62,8 +62,7 @@ void main() {
       expect(out.size, greaterThan(0));
       var found = false;
       for (var n = 0; n < out.size; n++) {
-        if (out.matchLength[n] >= ldm.minMatch &&
-            out.offset[n] >= 1 << 20) {
+        if (out.matchLength[n] >= ldm.minMatch && out.offset[n] >= 1 << 20) {
           found = true;
         }
       }

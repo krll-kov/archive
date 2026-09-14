@@ -160,8 +160,8 @@ class ZstdDecoder {
       if (scratch.length < header.blockSizeMax + 3) {
         scratch = Uint8List(header.blockSizeMax + 3);
       }
-      ZstdFrameDecoder().decodeBlocksFrom(
-          input, window, header, verify, dictionary, scratch);
+      ZstdFrameDecoder()
+          .decodeBlocksFrom(input, window, header, verify, dictionary, scratch);
       window.finish();
       frames++;
     }

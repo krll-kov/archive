@@ -145,8 +145,8 @@ class ZstdLiteralsEncoder {
     // `singleStream`: a table the dictionary handed over and a three byte
     // header put the whole section in one stream, whatever its size
     _spare.oneStream = _trusted && headerSize == 3;
-    final streamsSize =
-        _spare.encodeLiterals(out, at + headerSize + tableSize, src, start, end);
+    final streamsSize = _spare.encodeLiterals(
+        out, at + headerSize + tableSize, src, start, end);
     if (streamsSize < 0) {
       return _writeStored(out, at, src, start, size, zstdLiteralsRaw);
     }
@@ -330,8 +330,8 @@ class ZstdLiteralsEncoder {
 
   /// Two bits of type, two of size format, then the two sizes, which together
   /// reach forty bits and so are written by arithmetic rather than shifts
-  static void _writeCodedHeader(Uint8List out, int at, int size, int coded,
-      int headerSize, int type,
+  static void _writeCodedHeader(
+      Uint8List out, int at, int size, int coded, int headerSize, int type,
       {bool one = false}) {
     final int format;
     final int bits;

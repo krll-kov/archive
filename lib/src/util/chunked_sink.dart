@@ -70,9 +70,11 @@ abstract class ChunkedSink extends ByteConversionSink {
   @override
   void addSlice(List<int> chunk, int start, int end, bool isLast) {
     RangeError.checkValidRange(start, end, chunk.length);
+    // One copy, not two. Whatever the parse does not read is moved to our own
+    // buffer before this returns, so this copy is safe to keep
     _add(chunk is Uint8List
         ? Uint8List.sublistView(chunk, start, end)
-        : Uint8List.fromList(chunk.sublist(start, end)));
+        : (Uint8List(end - start)..setRange(0, end - start, chunk, start)));
     if (isLast) {
       close();
     }
@@ -120,6 +122,10 @@ abstract class ChunkedSink extends ByteConversionSink {
     _guarded(step);
   }
 
+  /// Closes [output] only if the input ended cleanly. On a failed parse it
+  /// stays open, the same as `gzip.decoder` and `zlib.decoder` in `dart:io`,
+  /// so the caller has to close its own file or socket. Calling close again
+  /// does not help: the failure is remembered and every call reports it
   @override
   void close() {
     if (_closed) {
@@ -358,8 +364,13 @@ class SinkOutputStream extends OutputStream {
   Uint8List subset(int start, [int? end]) =>
       throw UnsupportedError('a streamed result cannot be read back');
 
+  /// Drops the count and anything still buffered. Bytes already sent to the
+  /// sink cannot be taken back
   @override
-  void clear() => written = 0;
+  void clear() {
+    written = 0;
+    _queued = 0;
+  }
 
   /// Hands over whatever is queued. Every codec calls this when it is done,
   /// which is what makes the gathering safe

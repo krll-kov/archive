@@ -120,7 +120,8 @@ class TarEncoder {
         }
       }
     }
-    ts.write(_outputStream!, filenameEncoder: filenameEncoding, headerOnly: true);
+    ts.write(_outputStream!,
+        filenameEncoder: filenameEncoding, headerOnly: true);
     return ts;
   }
 

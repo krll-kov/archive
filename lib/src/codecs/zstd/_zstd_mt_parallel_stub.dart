@@ -30,7 +30,10 @@ Future<List<Uint8List>> zstdMtCompressJobs(
     final prefix = start < prefixSize ? start : prefixSize;
     final out = OutputMemoryStream();
     ZstdMtFrameEncoder.encodeJob(
-        Uint8List.sublistView(src, start - prefix, end), prefix, out, level,
+        Uint8List.sublistView(src, start - prefix, end),
+        prefix,
+        out,
+        level,
         src.length,
         firstJob: i == 0 && firstIsFirstJob,
         lastJob: i == starts.length - 1,
@@ -84,8 +87,7 @@ Stream<Uint8List> _compressStream(
         ..setRange(content.length, content.length + job.length, job);
       prefix = content.length;
     }
-    ZstdMtFrameEncoder.encodeJob(
-        buffer, prefix, out, level, zstdMtSizeUnknown,
+    ZstdMtFrameEncoder.encodeJob(buffer, prefix, out, level, zstdMtSizeUnknown,
         firstJob: first,
         lastJob: last,
         jobSize: jobSize,
@@ -130,12 +132,12 @@ Stream<Uint8List> _compressStream(
 
 /// There are no files to read from where this file is chosen
 Future<List<Uint8List>> zstdMtCompressFileJobs(String path, int offset,
-    int size, List<int> starts, int prefixSize, int level,
-    {required int jobSize,
-    required int overlapLog,
-    required int workers,
-    int cap = 0,
-    void Function(Uint8List part)? onPart}) =>
+        int size, List<int> starts, int prefixSize, int level,
+        {required int jobSize,
+        required int overlapLog,
+        required int workers,
+        int cap = 0,
+        void Function(Uint8List part)? onPart}) =>
     throw UnsupportedError('zstd: no file access on this target');
 
 int zstdMtFileDigest(String path, int offset, int size) =>

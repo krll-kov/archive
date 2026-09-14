@@ -64,8 +64,7 @@ void main() {
     });
 
     test('an empty zip archive is recognised', () {
-      expect(
-          CodecsRecognizer.recognize(ZipEncoder().encodeBytes(Archive())),
+      expect(CodecsRecognizer.recognize(ZipEncoder().encodeBytes(Archive())),
           ArchiveFormat.zip);
     });
 
@@ -99,8 +98,8 @@ void main() {
       final xz = archives[ArchiveFormat.xz]!;
       expect(CodecsRecognizer.isXZ(Uint8List.sublistView(xz, 0, 5)), isFalse);
       final tar = archives[ArchiveFormat.tar]!;
-      expect(CodecsRecognizer.isTar(Uint8List.sublistView(tar, 0, 262)),
-          isFalse);
+      expect(
+          CodecsRecognizer.isTar(Uint8List.sublistView(tar, 0, 262)), isFalse);
     });
 
     test('six bytes decide every format but tar', () {
@@ -108,8 +107,7 @@ void main() {
         if (format == ArchiveFormat.tar) {
           return;
         }
-        final head =
-            Uint8List.sublistView(bytes, 0, 6);
+        final head = Uint8List.sublistView(bytes, 0, 6);
         expect(CodecsRecognizer.recognize(head), format,
             reason: '$format from ${6} bytes');
       });
@@ -119,8 +117,7 @@ void main() {
       // What this package writes is the format before ustar, which carries no
       // magic at all, so a tar from elsewhere is what shows the short path
       final tar = File(p.join('test/_data/example.tar')).readAsBytesSync();
-      final head =
-          Uint8List.sublistView(tar, 0, 263);
+      final head = Uint8List.sublistView(tar, 0, 263);
       expect(CodecsRecognizer.isTar(head), isTrue);
       expect(CodecsRecognizer.recognize(head), ArchiveFormat.tar);
     });
@@ -128,11 +125,9 @@ void main() {
     test('a tar this package wrote needs its whole header', () {
       final tar = archives[ArchiveFormat.tar]!;
       expect(
-          CodecsRecognizer.isTar(
-              Uint8List.sublistView(tar, 0, 263)),
-          isFalse);
-      expect(CodecsRecognizer.isTar(Uint8List.sublistView(tar, 0, 512)),
-          isTrue);
+          CodecsRecognizer.isTar(Uint8List.sublistView(tar, 0, 263)), isFalse);
+      expect(
+          CodecsRecognizer.isTar(Uint8List.sublistView(tar, 0, 512)), isTrue);
     });
 
     test('a damaged header does not pass the checksum', () {

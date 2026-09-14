@@ -114,8 +114,7 @@ class BZip2Encoder {
     if (!_compressBlock()) {
       return false;
     }
-    _combinedCRC =
-        ((_combinedCRC << 1) | (_combinedCRC >> 31)) & 0xffffffff;
+    _combinedCRC = ((_combinedCRC << 1) | (_combinedCRC >> 31)) & 0xffffffff;
     _combinedCRC ^= _blockCRC;
     _blockNo++;
     _startBlock();

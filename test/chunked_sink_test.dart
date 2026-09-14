@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
-import 'package:archive/src/util/chunked_sink.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -73,7 +72,8 @@ void main() {
         final sink = make(_Held());
         expect(() => sink.addSlice(feed[name]!, 2, 1, false),
             throwsA(isA<RangeError>()));
-        expect(() => sink.addSlice(feed[name]!, 0, feed[name]!.length + 1, false),
+        expect(
+            () => sink.addSlice(feed[name]!, 0, feed[name]!.length + 1, false),
             throwsA(isA<RangeError>()));
       });
 
@@ -130,7 +130,10 @@ void main() {
     test('what a codec throws at bad data becomes one kind of failure', () {
       final src = Uint8List.fromList(_archive('x86.xz'));
       src[src.length ~/ 2] ^= 0xff;
-      expect(() => XzChunkedDecoder(_Held())..add(src)..close(),
+      expect(
+          () => XzChunkedDecoder(_Held())
+            ..add(src)
+            ..close(),
           throwsA(isA<ArchiveException>()));
     });
   });
@@ -205,7 +208,62 @@ void main() {
       expect(out.written, 0);
       expect(held.bytes, [1, 2, 3]);
     });
+
+    test('clear drops what is queued rather than deferring it', () {
+      final held = _Held();
+      final out = SinkOutputStream(held)..writeBytes([1, 2, 3]);
+      out.clear();
+      expect(out.length, 0);
+      out.flush();
+      expect(held.bytes, isEmpty,
+          reason: 'cleared bytes must not reach the sink later');
+    });
   });
+
+  // Measured on this SDK: gzip.decoder and zlib.decoder throw a
+  // FormatException out of add on a corrupt stream and leave the sink they
+  // were given open, and a close afterwards does not close it either
+  group('a failed parse leaves the output open, as dart:io does', () {
+    final source = Uint8List.fromList(List.filled(4096, 65));
+    final truncated = <String, Uint8List>{
+      'xz': _cut(xzCodec.encoder.convert(source), 20),
+      'bzip2': _cut(bzip2Codec.encoder.convert(source), 5),
+      'zstd': _cut(zstdCodec.encoder.convert(source), 5),
+    };
+    final starts = <String, ByteConversionSink Function(Sink<List<int>>)>{
+      'xz': xzCodec.decoder.startChunkedConversion,
+      'bzip2': bzip2Codec.decoder.startChunkedConversion,
+      'zstd': zstdCodec.decoder.startChunkedConversion,
+    };
+
+    for (final name in truncated.keys) {
+      test(name, () {
+        final held = _Watched();
+        final sink = starts[name]!(held);
+        expect(() {
+          sink.add(truncated[name]!);
+          sink.close();
+        }, throwsA(isA<ArchiveException>()));
+        expect(held.closed, isFalse);
+        // The failure is remembered, so nothing closes it later on either
+        expect(sink.close, returnsNormally);
+        expect(held.closed, isFalse);
+      });
+    }
+  });
+}
+
+Uint8List _cut(List<int> bytes, int off) =>
+    Uint8List.fromList(bytes.sublist(0, bytes.length - off));
+
+class _Watched implements Sink<List<int>> {
+  var closed = false;
+
+  @override
+  void add(List<int> data) {}
+
+  @override
+  void close() => closed = true;
 }
 
 class _Held implements Sink<List<int>> {

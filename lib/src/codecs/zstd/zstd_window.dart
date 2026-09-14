@@ -62,7 +62,9 @@ class ZstdWindow {
       // The pass has to end far enough in that a match at the widest offset
       // still lands above what this pass will overwrite, which is why the
       // buffer carries two blocks' room rather than one
-      if (origin == 0 && need == blockReserve && position >= windowSize + need) {
+      if (origin == 0 &&
+          need == blockReserve &&
+          position >= windowSize + need) {
         _flush(sink, 0, position);
         flushed += position;
         // The span is where the pass ended, not where the buffer does: the
@@ -83,7 +85,6 @@ class ZstdWindow {
       at += take;
     }
   }
-
 
   void finish() {
     final sink = output;

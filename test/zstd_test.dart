@@ -113,9 +113,10 @@ void main() {
       final bytes = File('${directory.path}/mix-70k-l19.zst').readAsBytesSync();
       for (final cut in [4, 8, 20, bytes.length ~/ 2, bytes.length - 1]) {
         expect(
-            () => ZstdDecoder()
-                .decodeBytes(Uint8List.sublistView(bytes, 0, cut),
-                    verify: true, throwOnError: true),
+            () => ZstdDecoder().decodeBytes(
+                Uint8List.sublistView(bytes, 0, cut),
+                verify: true,
+                throwOnError: true),
             throwsA(anything),
             reason: 'cut to $cut bytes');
       }
@@ -142,12 +143,12 @@ void main() {
 
     test('data that is not zstd is rejected', () {
       expect(
-          () => ZstdDecoder()
-              .decodeBytes(Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
-                  throwOnError: true),
+          () => ZstdDecoder().decodeBytes(
+              Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
+              throwOnError: true),
           throwsA(anything));
-      expect(ZstdDecoder().decodeBytes(Uint8List.fromList([1, 2, 3, 4])),
-          isEmpty);
+      expect(
+          ZstdDecoder().decodeBytes(Uint8List.fromList([1, 2, 3, 4])), isEmpty);
     });
 
     test('a window above the limit is rejected', () {
@@ -164,8 +165,7 @@ void main() {
   // each of those parts reports on its own. A checksum catches what gets that
   // far, so a corruption has to be aimed to reach the tables at all
   group('zstd rejects', () {
-    final frame =
-        File('${directory.path}/mix-70k-l19.zst').readAsBytesSync();
+    final frame = File('${directory.path}/mix-70k-l19.zst').readAsBytesSync();
     final short = File('${directory.path}/text-1k-l19.zst').readAsBytesSync();
 
     Uint8List broken(Uint8List from, int at, int value) =>
@@ -173,7 +173,8 @@ void main() {
 
     void reject(Uint8List bytes, String reason) {
       expect(() => ZstdDecoder().decodeBytes(bytes, throwOnError: true),
-          throwsA(anything), reason: reason);
+          throwsA(anything),
+          reason: reason);
     }
 
     test('bytes after a zero sequence count', () {
@@ -261,7 +262,8 @@ void main() {
     test('treeless literals in the first block', () {
       final at = _firstBlockAt(short) + 3;
       // Type three reuses the tree of an earlier block, and there is none
-      reject(broken(short, at, (short[at] & ~3) | 3), 'treeless without a tree');
+      reject(
+          broken(short, at, (short[at] & ~3) | 3), 'treeless without a tree');
     });
 
     test('an empty archive', () {
@@ -269,8 +271,7 @@ void main() {
           throwsA(anything));
       final out = OutputMemoryStream();
       expect(
-          () => ZstdDecoder().decodeStream(
-              InputMemoryStream(Uint8List(0)), out,
+          () => ZstdDecoder().decodeStream(InputMemoryStream(Uint8List(0)), out,
               throwOnError: true),
           throwsA(anything));
     });
@@ -324,8 +325,8 @@ void main() {
       final header = readFrameHeader(frame, 4, frame.length, 1024);
       final sink = OutputMemoryStream();
       final window = ZstdWindow(header.windowSize, output: sink);
-      ZstdFrameDecoder().decodeBlocks(frame, 4 + header.size, frame.length,
-          window, header, true, null);
+      ZstdFrameDecoder().decodeBlocks(
+          frame, 4 + header.size, frame.length, window, header, true, null);
       expect(window.capacity,
           lessThanOrEqualTo(header.windowSize + 2 * header.blockReserve));
       window.finish();
@@ -334,7 +335,8 @@ void main() {
 
     test('concatenated frames preserve output across window wraps', () {
       final joined = Uint8List.fromList([...first, ...frame, ...first]);
-      expect(ZstdDecoder().decodeBytes(joined, verify: true, throwOnError: true),
+      expect(
+          ZstdDecoder().decodeBytes(joined, verify: true, throwOnError: true),
           [...prefix, ...source, ...prefix]);
     });
 
@@ -366,8 +368,7 @@ void main() {
       test('level $level round trips through a window it outgrows', () {
         final encoded = ZstdEncoder(level: level).encodeBytes(source);
         final out = OutputMemoryStream();
-        final ok = ZstdDecoder().decodeStream(
-            InputMemoryStream(encoded), out,
+        final ok = ZstdDecoder().decodeStream(InputMemoryStream(encoded), out,
             verify: true, throwOnError: true);
         expect(ok, isTrue);
         final decoded = out.getBytes();

@@ -505,9 +505,9 @@ class TarMetadata {
         valueEnd--;
       }
       // The values of these keywords are UTF-8, but don't let a malformed
-      // one abort the whole archive.
-      final value = utf8.decode(records.sublist(eq + 1, valueEnd),
-          allowMalformed: true);
+      // one abort the whole archive
+      final value =
+          utf8.decode(records.sublist(eq + 1, valueEnd), allowMalformed: true);
       switch (keyword) {
         case 'path':
           name = value;

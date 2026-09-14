@@ -235,9 +235,14 @@ A `.tar.zst` packed straight into an upload, with no temporary file:
 Stream<ArchiveFile> filesOf(Directory dir) async* {
   await for (final entity in dir.list(recursive: true)) {
     if (entity is File) {
-      yield ArchiveFile.stream(
-          p.relative(entity.path, from: dir.path),
-          InputFileStream(entity.path));
+      final input = InputFileStream(entity.path);
+      try {
+        yield ArchiveFile.stream(
+            p.relative(entity.path, from: dir.path), input);
+      } finally {
+        // Runs once the encoder has written the entry, or when it is cancelled
+        await input.close();
+      }
     }
   }
 }
@@ -263,6 +268,10 @@ await upload.addStream(
 final response = await upload.close();
 ```
 
+The encoders leave an entry open by default, the same as `ZipEncoder.encodeStream`.
+`TarCodec(autoClose: true)` and `ZipCodec(autoClose: true)` close each entry once it is
+written, and also when the stream is cancelled part way through one.
+
 
 Both directions also take a whole buffer: `xzCodec.decode(bytes)` and
 `xzCodec.encode(bytes)`, or the sinks directly through
@@ -274,7 +283,24 @@ is no second chance at the check. `XzCodec(verify: false)` skips them, which is
 worth about 6% of the decode.
 
 A failure reaches the stream as an error, and a sink that has failed reports the
-same failure rather than reading what follows it.
+same failure rather than reading what follows it. It does not close the sink it
+was given. `dart:io` behaves the same way: `gzip.decoder` and `zlib.decoder`
+throw a `FormatException` out of `add` and leave the output open. So if your
+sink holds a file or a socket, you have to close it yourself:
+
+```dart
+final file = File('out.bin').openWrite();
+final sink = xzCodec.decoder.startChunkedConversion(file);
+try {
+  sink..add(bytes)..close();
+} catch (_) {
+  await file.close();
+  rethrow;
+}
+```
+
+The `Stream` and `Converter` paths do not need this. `dart:convert` closes its
+own event sink however the conversion ends.
 
 ### Running a codec off the UI isolate
 
@@ -291,9 +317,12 @@ AOT on an Apple M-series:
 | `bzip2Codec.decoder`, 900k blocks | 34 ms |
 | `bzip2Codec.encoder`, 900k blocks | 73 ms |
 | `ZstdEncoderConverter(level: 19)` | 98 ms |
-| `zipCodec.encoder` | one entry: 4 ms per 256 KiB, 67 ms per 4 MiB |
+| `zipCodec.encoder` | one entry: 2.0 ms per 256 KiB, 4.2 ms per 4 MiB |
 
-zip blocks for one whole entry, since deflate runs to the end of it in one go.
+The zip number is the checksum pass, which reads the entry before the deflate
+does. The deflate itself now goes out in 64 KiB steps, so an entry is neither
+held nor blocked on whole. On the web it still is, because `Deflate` there runs
+to the end of its input in one call.
 tar is not in the table: reading 20000 entries costs 42 ms in total, so the
 cost of a `.tar.zst` is the zstd row. A frame is 16 ms at 60 Hz, so use an
 isolate for the lower half of that table and for anything large. Keep the whole pipeline on the worker, so only paths

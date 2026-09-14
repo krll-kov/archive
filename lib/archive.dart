@@ -46,6 +46,7 @@ export 'src/util/adler32.dart';
 export 'src/util/aes_decrypt.dart';
 export 'src/util/archive_exception.dart';
 export 'src/util/byte_order.dart';
+export 'src/util/chunked_sink.dart';
 export 'src/util/codecs_recognizer.dart';
 export 'src/util/crc32.dart';
 export 'src/util/crc64.dart';

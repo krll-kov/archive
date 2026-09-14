@@ -215,7 +215,8 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
       await unwrap(
           (input, output) => GZipDecoder().decodeStream(input, output), 'gzip');
     } else if (archiveExt == '.tar.bz2' || archiveExt == '.tbz') {
-      await unwrap((input, output) => BZip2Decoder().decodeStream(input, output),
+      await unwrap(
+          (input, output) => BZip2Decoder().decodeStream(input, output),
           'bzip2');
     } else if (archiveExt == '.tar.xz' || archiveExt == '.txz') {
       await unwrap(

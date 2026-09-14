@@ -48,9 +48,7 @@ abstract final class CodecsRecognizer {
     }
     final cmf = data[0];
     final flg = data[1];
-    return (cmf & 0x0f) == 8 &&
-        (cmf >> 4) <= 7 &&
-        ((cmf << 8) | flg) % 31 == 0;
+    return (cmf & 0x0f) == 8 && (cmf >> 4) <= 7 && ((cmf << 8) | flg) % 31 == 0;
   }
 
   /// `BZh` and the block size, which is one of nine hundred kilobyte steps

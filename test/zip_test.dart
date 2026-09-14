@@ -932,4 +932,69 @@ void main() async {
       });
     }
   });
+
+  group('zip encoder headers', () {
+    test('an entry with no content leaves the local headers walkable', () {
+      for (final password in <String?>[null, 'secret']) {
+        final encoder = ZipEncoder(password: password);
+        final output = OutputMemoryStream();
+        encoder.startEncode(output);
+        encoder.add(ArchiveFile.string('a.txt', 'aaaa'));
+        encoder.add(ArchiveFile.directory('dir'));
+        encoder.add(ArchiveFile.string('b.txt', 'bbbb'));
+        encoder.endEncode();
+        expect(_walkLocalHeaders(output.getBytes()), ['a.txt', 'dir/', 'b.txt'],
+            reason: 'password=$password');
+      }
+    });
+
+    test('the local and central headers agree on the filename encoding', () {
+      final encoder = ZipEncoder(filenameEncoding: const Latin1Codec());
+      final output = OutputMemoryStream();
+      encoder.startEncode(output);
+      encoder.add(ArchiveFile.string('café.txt', 'x'));
+      encoder.endEncode();
+      final bytes = output.getBytes();
+      final central = _centralDirectoryOffset(bytes);
+      // Bit 11 claims the name is UTF-8, and with this encoding it is latin1
+      expect((bytes[central + 8] | (bytes[central + 9] << 8)) & 0x800,
+          (bytes[6] | (bytes[7] << 8)) & 0x800);
+    });
+  });
 }
+
+/// Walks the local headers the way a forward-only reader does and returns the
+/// names it finds. It stops as soon as one header does not lead to the next
+List<String> _walkLocalHeaders(Uint8List bytes) {
+  final names = <String>[];
+  var at = 0;
+  while (at + 30 <= bytes.length) {
+    if (_uint32(bytes, at) != 0x04034b50) {
+      break;
+    }
+    final nameLength = bytes[at + 26] | (bytes[at + 27] << 8);
+    final extraLength = bytes[at + 28] | (bytes[at + 29] << 8);
+    final compressed = _uint32(bytes, at + 18);
+    names.add(ascii.decode(bytes.sublist(at + 30, at + 30 + nameLength)));
+    at += 30 + nameLength + extraLength + compressed;
+  }
+  return names;
+}
+
+int _centralDirectoryOffset(Uint8List bytes) {
+  for (var at = bytes.length - 22; at >= 0; at--) {
+    if (bytes[at] == 0x50 &&
+        bytes[at + 1] == 0x4b &&
+        bytes[at + 2] == 0x05 &&
+        bytes[at + 3] == 0x06) {
+      return _uint32(bytes, at + 16);
+    }
+  }
+  throw StateError('no end of central directory record');
+}
+
+int _uint32(Uint8List bytes, int at) =>
+    bytes[at] |
+    (bytes[at + 1] << 8) |
+    (bytes[at + 2] << 16) |
+    (bytes[at + 3] << 24);

@@ -127,8 +127,12 @@ class ZstdFrameDecoder {
 
   /// Decodes the blocks that follow [header], pulling one block at a time from
   /// [input] so nothing larger than a block is ever held
-  void decodeBlocksFrom(InputStream input, ZstdWindow window,
-      ZstdFrameHeader header, bool verify, ZstdDictionary? dictionary,
+  void decodeBlocksFrom(
+      InputStream input,
+      ZstdWindow window,
+      ZstdFrameHeader header,
+      bool verify,
+      ZstdDictionary? dictionary,
       Uint8List scratch) {
     _blocks.reset(dictionary);
     _rep.setAll(0, dictionary?.repeatOffsets ?? zstdInitialRepeatOffsets);
@@ -198,8 +202,8 @@ class ZstdFrameDecoder {
     }
   }
 
-  static void _take(InputStream input, Uint8List into, int at, int count,
-      String short) {
+  static void _take(
+      InputStream input, Uint8List into, int at, int count, String short) {
     if (count == 0) {
       return;
     }

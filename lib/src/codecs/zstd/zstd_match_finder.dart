@@ -56,10 +56,70 @@ const _deBruijn = (0x022fdd63 << 32) | 0xcc95386d;
 /// Where the one set bit of a value sits, indexed by `(v * _deBruijn) >>> 58`.
 /// Stays const: the same table as a lazy `Uint8List` static cost 12.3% at level 6
 const _slots = <int>[
-  0, 1, 2, 53, 3, 7, 54, 27, 4, 38, 41, 8, 34, 55, 48, 28,
-  62, 5, 39, 46, 44, 42, 22, 9, 24, 35, 59, 56, 49, 18, 29, 11,
-  63, 52, 6, 26, 37, 40, 33, 47, 61, 45, 43, 21, 23, 58, 17, 10,
-  51, 25, 36, 32, 60, 20, 57, 16, 50, 31, 19, 15, 30, 14, 13, 12,
+  0,
+  1,
+  2,
+  53,
+  3,
+  7,
+  54,
+  27,
+  4,
+  38,
+  41,
+  8,
+  34,
+  55,
+  48,
+  28,
+  62,
+  5,
+  39,
+  46,
+  44,
+  42,
+  22,
+  9,
+  24,
+  35,
+  59,
+  56,
+  49,
+  18,
+  29,
+  11,
+  63,
+  52,
+  6,
+  26,
+  37,
+  40,
+  33,
+  47,
+  61,
+  45,
+  43,
+  21,
+  23,
+  58,
+  17,
+  10,
+  51,
+  25,
+  36,
+  32,
+  60,
+  20,
+  57,
+  16,
+  50,
+  31,
+  19,
+  15,
+  30,
+  14,
+  13,
+  12,
 ];
 
 /// Older SDKs use this fallback; an int instance getter takes precedence, so the
@@ -102,6 +162,7 @@ class ZstdMatchFinder {
   final Uint32List _chain;
   final int _tries;
   final int _shift;
+
   /// The table's prime with the discard shift folded in, so hashing is one
   /// multiply: `(w << s) * p` and `w * (p << s)` agree modulo 2^64
   final int _keyMul;
@@ -228,9 +289,12 @@ class ZstdMatchFinder {
 
   /// The cast keeps the SDK 3.0 floor, where this conditional infers `List<int>`
   ZstdMatchFinder(ZstdLevelParams params)
-      : this._(params, (zstdUse64Bit
-            ? Uint64List(_usesRows(params) ? 1 << (params.hashLog - 3) : 1)
-            : Uint8List(_usesRows(params) ? 1 << params.hashLog : 8)) as TypedData);
+      : this._(
+            params,
+            (zstdUse64Bit
+                ? Uint64List(_usesRows(params) ? 1 << (params.hashLog - 3) : 1)
+                : Uint8List(
+                    _usesRows(params) ? 1 << params.hashLog : 8)) as TypedData);
 
   ZstdMatchFinder._(this.params, TypedData tags)
       : _tags = tags,
@@ -244,8 +308,8 @@ class ZstdMatchFinder {
             ? _searchTree
             : (_usesChainSearch(params) ? _searchChain : _searchRow),
         _shortLog = _shortLogFor(params),
-        _short = Uint32List(
-            params.hashBytes == 3 ? 1 << _shortLogFor(params) : 1),
+        _short =
+            Uint32List(params.hashBytes == 3 ? 1 << _shortLogFor(params) : 1),
         _minMatch = params.hashBytes == 3 ? 3 : zstdMinMatch,
         _tries = _triesFor(params),
         _shift = 64 - params.hashLog,
@@ -508,14 +572,14 @@ class ZstdMatchFinder {
     // name an offset the decoder no longer holds
     final maxDistance = 1 << params.windowLog;
     final floor = _lowestFrom(end, lowLimit, maxDistance);
-    final stepSize = params.targetLength + (params.targetLength == 0 ? 1 : 0) + 1;
+    final stepSize =
+        params.targetLength + (params.targetLength == 0 ? 1 : 0) + 1;
     // The step widens once every `kStepIncr` bytes without a match, which is
     // what keeps incompressible input from costing a lookup a byte
     const stepIncr = 1 << (8 - 1);
     var anchor = start;
-    var ip0 = start == _prefixFrom(floor) && floor >= prefixStart
-        ? start + 1
-        : start;
+    var ip0 =
+        start == _prefixFrom(floor) && floor >= prefixStart ? start + 1 : start;
     var rep0 = rep[0];
     var rep1 = rep[1];
     // A repeat that reaches outside the window is not usable here, and zero
@@ -630,7 +694,8 @@ class ZstdMatchFinder {
         rep0 = ip0 - match;
         code = rep0 + 3;
         length = zstdMinMatch;
-        while (ip0 > anchor && match > floor && src[ip0 - 1] == src[match - 1]) {
+        while (
+            ip0 > anchor && match > floor && src[ip0 - 1] == src[match - 1]) {
           ip0--;
           match--;
           length++;
@@ -887,8 +952,8 @@ class ZstdMatchFinder {
         }
         rep1 = rep0;
         rep0 = ip - match;
-        store.add(src, anchor, ip - anchor, rep0 + 3,
-            length - zstdMatchLengthFloor);
+        store.add(
+            src, anchor, ip - anchor, rep0 + 3, length - zstdMatchLengthFloor);
       } else if (shortHit > floor &&
           view.getUint32(shortHit, Endian.little) ==
               view.getUint32(ip, Endian.little)) {
@@ -911,8 +976,8 @@ class ZstdMatchFinder {
         }
         rep1 = rep0;
         rep0 = ip - match;
-        store.add(src, anchor, ip - anchor, rep0 + 3,
-            length - zstdMatchLengthFloor);
+        store.add(
+            src, anchor, ip - anchor, rep0 + 3, length - zstdMatchLengthFloor);
       } else {
         ip += ((ip - anchor) >> 8) + 1;
         continue;
@@ -969,9 +1034,8 @@ class ZstdMatchFinder {
     final longShift = 64 - params.hashLog;
     final shortShift = 64 - params.chainLog;
     var anchor = start;
-    var ip = start == _prefixFrom(floor) && floor >= prefixStart
-        ? start + 1
-        : start;
+    var ip =
+        start == _prefixFrom(floor) && floor >= prefixStart ? start + 1 : start;
     var rep0 = rep[0];
     var rep1 = rep[1];
     // `ZSTD_getLowestPrefixIndex` again, measured from where the block starts
@@ -1030,7 +1094,8 @@ class ZstdMatchFinder {
             _same8(view, heldLong - 1, ip)) {
           match = heldLong - 1;
           length = 8 + _extendRow(src, view, ip + 8, match + 8, end);
-          while (ip > anchor && match > floor && src[ip - 1] == src[match - 1]) {
+          while (
+              ip > anchor && match > floor && src[ip - 1] == src[match - 1]) {
             ip--;
             match--;
             length++;
@@ -1046,12 +1111,12 @@ class ZstdMatchFinder {
                 view.getUint32(ip, Endian.little)) {
           match = heldShort - 1;
           length = zstdMinMatch +
-              _extendRow(src, view, ip + zstdMinMatch, match + zstdMinMatch, end);
+              _extendRow(
+                  src, view, ip + zstdMinMatch, match + zstdMinMatch, end);
           // A short hit is only worth taking if the long table has nothing
           // longer one position on
           // The reference tests this one strictly, unlike the two above it
-          if (heldLong1 - 1 > floor &&
-              _same8(view, heldLong1 - 1, ip1)) {
+          if (heldLong1 - 1 > floor && _same8(view, heldLong1 - 1, ip1)) {
             final other =
                 8 + _extendRow(src, view, ip1 + 8, heldLong1 - 1 + 8, end);
             if (other > length) {
@@ -1060,7 +1125,8 @@ class ZstdMatchFinder {
               match = heldLong1 - 1;
             }
           }
-          while (ip > anchor && match > floor && src[ip - 1] == src[match - 1]) {
+          while (
+              ip > anchor && match > floor && src[ip - 1] == src[match - 1]) {
             ip--;
             match--;
             length++;
@@ -1090,7 +1156,8 @@ class ZstdMatchFinder {
         if (step < 4) {
           _hashTable[longSlot1] = ip1 + 1;
         }
-        store.add(src, anchor, ip - anchor, code, length - zstdMatchLengthFloor);
+        store.add(
+            src, anchor, ip - anchor, code, length - zstdMatchLengthFloor);
       }
 
       ip += length;
@@ -1108,8 +1175,8 @@ class ZstdMatchFinder {
             view.getUint32(ip, Endian.little) ==
                 view.getUint32(ip - rep1, Endian.little)) {
           final run = zstdMinMatch +
-              _extendRow(src, view, ip + zstdMinMatch, ip - rep1 + zstdMinMatch,
-                  end);
+              _extendRow(
+                  src, view, ip + zstdMinMatch, ip - rep1 + zstdMinMatch, end);
           final held = rep1;
           rep1 = rep0;
           rep0 = held;
@@ -1281,8 +1348,8 @@ class ZstdMatchFinder {
 
   /// Takes every match at the second repeat offset that starts right where the
   /// last one ended, each costing one bit of offset and no literal
-  int _immediate(Uint8List src, ByteData view, int ip, int limit,
-      int lowLimit, int end, ZstdSequenceStore store, Uint32List rep) {
+  int _immediate(Uint8List src, ByteData view, int ip, int limit, int lowLimit,
+      int end, ZstdSequenceStore store, Uint32List rep) {
     while (ip <= limit) {
       final held = rep[1];
       final at = ip - held;
@@ -1302,6 +1369,7 @@ class ZstdMatchFinder {
     }
     return ip;
   }
+
   @pragma('vm:prefer-inline')
   int _searchAt(Uint8List src, ByteData view, int ip, int lowLimit, int end) {
     if (_search == _searchTree) {
@@ -1400,7 +1468,9 @@ class ZstdMatchFinder {
       final candidate = _rows[base + entry] - 1;
       if (candidate < floor) break;
       tries--;
-      if (view.getUint32(candidate + best - 3, Endian.little) != probe) continue;
+      if (view.getUint32(candidate + best - 3, Endian.little) != probe) {
+        continue;
+      }
       final length = _extendRow(src, view, ip, candidate, end);
       if (length > best) {
         best = length;
@@ -1441,9 +1511,9 @@ class ZstdMatchFinder {
     final head = _tagBytes[(row << _rowLog) ^ _tagByteXor];
     // The masks are literal so the shift counts are provably under sixty four,
     // which is what keeps the guarded slow path out of the loop
-    var rest = ((mask >>> (head & 63)) |
-            (mask << ((_rowEntries - head) & 63))) &
-        _entryMask;
+    var rest =
+        ((mask >>> (head & 63)) | (mask << ((_rowEntries - head) & 63))) &
+            _entryMask;
     // The first slot of a row is not a candidate
     rest &= ~(1 << ((_rowEntries - head) & _rowMask));
     final base = row << _rowLog;
@@ -1452,9 +1522,9 @@ class ZstdMatchFinder {
     while (rest != 0 && tries > 0) {
       final low = rest & -rest;
       rest ^= low;
-      final candidate =
-          _rows[base + ((head + _isolatedTrailingZeroBitCount(low)) & _rowMask)] -
-              1;
+      final candidate = _rows[
+              base + ((head + _isolatedTrailingZeroBitCount(low)) & _rowMask)] -
+          1;
       // The row runs newest first, so nothing above the window follows
       if (candidate < floor) {
         break;
@@ -1689,8 +1759,8 @@ class ZstdMatchFinder {
   ///
   /// Every candidate compared becomes a child of the new node on the side it
   /// sorts to, so the descent is the insertion
-  int _insertTree(Uint8List src, ByteData view, int ip, int target,
-      int lowLimit, int end) {
+  int _insertTree(
+      Uint8List src, ByteData view, int ip, int target, int lowLimit, int end) {
     final slot = _key(view, ip);
     var held = _hashTable[slot];
     _hashTable[slot] = ip + _lift;
@@ -1989,8 +2059,8 @@ class ZstdMatchFinder {
       var taken = false;
 
       final litlen = ip - anchor;
-      var found = _allMatches(src, view, ip, lowLimit, end, rep, litlen == 0,
-          sufficient);
+      var found = _allMatches(
+          src, view, ip, lowLimit, end, rep, litlen == 0, sufficient);
       found = _optLdm.process(_matchLengths, _matchOffBases, found, ip - start,
           end - ip, _minMatch);
       if (found == 0) {
@@ -2041,7 +2111,8 @@ class ZstdMatchFinder {
               _optOff[pos] = offBase;
               _optLitlen[pos] = 0;
               _optPrice[pos] = _optPrice[0] +
-                  offsetPrice + prices.matchLengthPrice(pos) +
+                  offsetPrice +
+                  prices.matchLengthPrice(pos) +
                   prices.litLengthPrice(0);
             }
           }
@@ -2072,9 +2143,10 @@ class ZstdMatchFinder {
             _optRep[b + 2] = _optRep[a + 2];
             // A match followed by exactly one literal can beat both the match
             // alone and a longer literal run, and only this look ahead finds it
-            final oneMore =
-                prices.litLengthPrice(1) - prices.litLengthPrice(0);
-            if (prices.level >= 1 && heldLitlen == 0 && oneMore < 0 &&
+            final oneMore = prices.litLengthPrice(1) - prices.litLengthPrice(0);
+            if (prices.level >= 1 &&
+                heldLitlen == 0 &&
+                oneMore < 0 &&
                 inr < end) {
               final one =
                   heldPrice + prices.literalsPrice(src, inr, 1) + oneMore;
@@ -2163,7 +2235,8 @@ class ZstdMatchFinder {
               final offsetPrice = prices.matchOffsetPrice(offBase);
               for (var mlen = reach; mlen >= from; mlen--) {
                 final pos = cur + mlen;
-                final price = base + offsetPrice + prices.matchLengthPrice(mlen);
+                final price =
+                    base + offsetPrice + prices.matchLengthPrice(mlen);
                 if (pos > lastPos || price < _optPrice[pos]) {
                   while (lastPos < pos) {
                     lastPos++;
@@ -2299,7 +2372,6 @@ class ZstdMatchFinder {
     }
   }
 
-
   static int _extendBack(
       Uint8List src, int ip, int match, int anchor, int lowLimit) {
     var back = 0;
@@ -2371,31 +2443,33 @@ class ZstdMatchFinder {
   }
 
   @pragma('vm:prefer-inline')
-  int _shortKey(ByteData view, int at) =>
-      zstdUse64Bit
-          ? (((view.getUint32(at, Endian.little) << 8) * _shortPrime) & 0xffffffff) >>>
-              (32 - _shortLog)
-          : zstdWebMultiply32(view.getUint32(at, Endian.little) << 8, _shortPrime) >>>
-              (32 - _shortLog);
+  int _shortKey(ByteData view, int at) => zstdUse64Bit
+      ? (((view.getUint32(at, Endian.little) << 8) * _shortPrime) &
+              0xffffffff) >>>
+          (32 - _shortLog)
+      : zstdWebMultiply32(
+              view.getUint32(at, Endian.little) << 8, _shortPrime) >>>
+          (32 - _shortLog);
 
   /// The key of the position at [at], in the table's own width
   @pragma('vm:prefer-inline')
-  int _key(ByteData view, int at) =>
-      zstdUse64Bit ? (view.getUint64(at, Endian.little) * _keyMul) >>> _shift
-          : zstdWebKey(view, at, _keyMul, _shift);
+  int _key(ByteData view, int at) => zstdUse64Bit
+      ? (view.getUint64(at, Endian.little) * _keyMul) >>> _shift
+      : zstdWebKey(view, at, _keyMul, _shift);
 
   /// The same key kept to [shift] bits from the top, for a table of its own
   /// width or for a row index with its tag below it
   @pragma('vm:prefer-inline')
-  int _keyTo(ByteData view, int at, int shift) =>
-      zstdUse64Bit ? (view.getUint64(at, Endian.little) * _keyMul) >>> shift
-          : zstdWebKey(view, at, _keyMul, shift);
+  int _keyTo(ByteData view, int at, int shift) => zstdUse64Bit
+      ? (view.getUint64(at, Endian.little) * _keyMul) >>> shift
+      : zstdWebKey(view, at, _keyMul, shift);
 
   /// The same key from a multiplier and a shift the caller already holds, so a
   /// parse that hashes three times a pass does not reload two fields each time
   @pragma('vm:prefer-inline')
   static int _keyWith(ByteData view, int at, int keyMul, int shift) =>
-      zstdUse64Bit ? (view.getUint64(at, Endian.little) * keyMul) >>> (shift & 63)
+      zstdUse64Bit
+          ? (view.getUint64(at, Endian.little) * keyMul) >>> (shift & 63)
           : zstdWebKey(view, at, keyMul, shift);
 
   @pragma('vm:prefer-inline')

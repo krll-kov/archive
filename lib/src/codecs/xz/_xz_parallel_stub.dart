@@ -6,10 +6,10 @@ import 'xz_index.dart';
 /// Whether this platform can decode on isolates.
 ///
 /// False here: neither dart2js nor dart2wasm can spawn one, so callers decode
-/// inline on the calling isolate instead.
+/// inline on the calling isolate instead
 const bool xzIsolatesSupported = false;
 
-/// A stretch of a file on disk holding an xz archive.
+/// A stretch of a file on disk holding an xz archive
 class XZFileRegion {
   final String path;
   final int offset;
@@ -18,10 +18,10 @@ class XZFileRegion {
   const XZFileRegion(this.path, this.offset, this.length);
 }
 
-/// Always null here: there are no files to read blocks from.
+/// Always null here: there are no files to read blocks from
 XZFileRegion? xzFileRegionOf(InputStream input) => null;
 
-/// Never called on this platform; [xzFileRegionOf] never returns a region.
+/// Never called on this platform; [xzFileRegionOf] never returns a region
 XZLayout? xzLayoutOfFile(XZFileRegion region, {int? maxUncompressedSize}) =>
     null;
 
@@ -29,7 +29,7 @@ Stream<Uint8List> xzDecodeStreamMultithreaded(Stream<List<int>> input,
         {required bool verify, int? workers, int? memoryBudget}) =>
     throw UnsupportedError('Isolates are not available on this platform');
 
-/// Never called on this platform; [xzIsolatesSupported] gates it.
+/// Never called on this platform; [xzIsolatesSupported] gates it
 Future<bool> xzDecodeMultithreaded({
   Uint8List? bytes,
   String? path,

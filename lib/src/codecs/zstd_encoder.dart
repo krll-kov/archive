@@ -46,15 +46,15 @@ class ZstdEncoder {
     final bytes = data is Uint8List ? data : Uint8List.fromList(data);
     _checkMultithread(multithread);
     final chosen = level ?? this.level;
-    _reportAsync(multithread, () => _multithreadBytes(bytes, chosen, multithread),
-        Uint8List(0));
+    _reportAsync(multithread,
+        () => _multithreadBytes(bytes, chosen, multithread), Uint8List(0));
     return Uint8List(0);
   }
 
   /// `ZSTDMT_JOBSIZE_MIN`: the reference turns its workers off below this, so
   /// the frame is the single threaded one
-  Future<Uint8List> _multithreadBytes(Uint8List bytes, int level,
-      ZstdMultithreadOptions<Object?> options) {
+  Future<Uint8List> _multithreadBytes(
+      Uint8List bytes, int level, ZstdMultithreadOptions<Object?> options) {
     if (bytes.length <= zstdMtJobSizeMin) {
       return Future.value(encodeBytes(bytes, level: level));
     }
@@ -82,7 +82,9 @@ class ZstdEncoder {
 
   void _checkMultithread<T>(ZstdMultithreadOptions<T> options) {
     if (options.onDone == null) {
-      throw ArgumentError.value(null, 'onDone',
+      throw ArgumentError.value(
+          null,
+          'onDone',
           'Must be given here, since this call has nowhere else to put the '
               'result; only a stream carries its own end');
     }
@@ -120,7 +122,8 @@ class ZstdEncoder {
             _dictionary != null) {
           final bytes = input.toUint8List();
           input.skip(input.length);
-          output.writeBytes(await _multithreadBytes(bytes, chosen, multithread));
+          output
+              .writeBytes(await _multithreadBytes(bytes, chosen, multithread));
           return true;
         }
         input.skip(input.length);

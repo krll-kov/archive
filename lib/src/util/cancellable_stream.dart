@@ -65,8 +65,8 @@ Stream<T> cancellableStream<S, T>(Stream<S> input,
     // body is past the event and a tar entry's content is already skipped
     sync: true,
     onListen: () {
-      inner = body(iterator, signal).listen(controller.add,
-          onError: controller.addError, onDone: () {
+      inner = body(iterator, signal)
+          .listen(controller.add, onError: controller.addError, onDone: () {
         // A body that failed part way has not read its input to the end
         unawaited(iterator.cancel());
         unawaited(controller.close());

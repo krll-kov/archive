@@ -80,8 +80,18 @@ class ZstdMtFrameEncoder {
       final lastJob = jobEnd >= end;
       final before = at - start;
       final prefix = before < prefixSize ? before : prefixSize;
-      _encodeJob(src, at - prefix, at, jobEnd, out, matchWindow, blockSizeMax,
-          params, at == start, lastJob && jobEnd == end, null,
+      _encodeJob(
+          src,
+          at - prefix,
+          at,
+          jobEnd,
+          out,
+          matchWindow,
+          blockSizeMax,
+          params,
+          at == start,
+          lastJob && jobEnd == end,
+          null,
           pass?.generate(src, at, jobEnd));
       at = jobEnd;
       if (lastJob) {
@@ -153,8 +163,7 @@ class ZstdMtFrameEncoder {
           at + take - blocks.dictionaryEnd > matchWindow) {
         blocks.dropDictionary();
       }
-      final reach =
-          blocks.dictionaryEnd != 0 ? base : at - matchWindow;
+      final reach = blocks.dictionaryEnd != 0 ? base : at - matchWindow;
       final before = out.length;
       blocks.encode(src, at, at + take, reach > base ? reach : base, out,
           lastJob && at + take == end, _rep);
@@ -194,7 +203,8 @@ class ZstdMtFrameEncoder {
     if (zstdMtLongRange(params)) {
       // `ZSTDMT_computeOverlapSize`: a fraction of the job, not of the window
       final jobLog = _targetJobLog(params);
-      final ceiling = params.windowLog < jobLog - 2 ? params.windowLog : jobLog - 2;
+      final ceiling =
+          params.windowLog < jobLog - 2 ? params.windowLog : jobLog - 2;
       final ovLog = ceiling - reverse;
       return ovLog <= 0 ? 0 : 1 << ovLog;
     }
@@ -230,7 +240,8 @@ class ZstdMtFrameEncoder {
   }
 
   static void _writeHeader(OutputStream out, int size, bool singleSegment,
-      bool checksum, int windowLog, [int dictionaryId = 0]) {
+      bool checksum, int windowLog,
+      [int dictionaryId = 0]) {
     final int contentSizeFlag;
     if (singleSegment && size < 256) {
       contentSizeFlag = 0;
@@ -295,8 +306,8 @@ class ZstdMtFrameEncoder {
 
   /// One job on its own, holding nothing between calls: [buffer] is its prefix
   /// followed by its own span, and [size] the whole frame's
-  static void encodeJob(Uint8List buffer, int prefix, OutputStream out,
-      int level, int size,
+  static void encodeJob(
+      Uint8List buffer, int prefix, OutputStream out, int level, int size,
       {required bool firstJob,
       required bool lastJob,
       int jobSize = 0,
@@ -308,8 +319,18 @@ class ZstdMtFrameEncoder {
     final windowSize = size <= matchWindow ? size : matchWindow;
     final blockSizeMax =
         windowSize < zstdBlockMaximumSize ? windowSize : zstdBlockMaximumSize;
-    ZstdMtFrameEncoder()._encodeJob(buffer, 0, prefix, buffer.length, out,
-        matchWindow, blockSizeMax, params, firstJob, lastJob, dictionary,
+    ZstdMtFrameEncoder()._encodeJob(
+        buffer,
+        0,
+        prefix,
+        buffer.length,
+        out,
+        matchWindow,
+        blockSizeMax,
+        params,
+        firstJob,
+        lastJob,
+        dictionary,
         ldmSequences);
   }
 }
@@ -407,6 +428,7 @@ class ZstdMtLdmPass {
 class ZstdMtRing {
   final int jobSize;
   final int prefixSize;
+
   /// Copying: what arrives may be filled again the moment the call returns
   final _held = BytesBuilder(copy: true);
   Uint8List _prefix = Uint8List(0);
@@ -593,8 +615,12 @@ Future<Uint8List> zstdMtCompress(Uint8List src, int level,
 
   final out = OutputMemoryStream();
   final params = zstdParamsForLevel(level, src.length);
-  ZstdMtFrameEncoder._writeHeader(out, src.length,
-      src.length <= 1 << params.windowLog, checksum, params.windowLog,
+  ZstdMtFrameEncoder._writeHeader(
+      out,
+      src.length,
+      src.length <= 1 << params.windowLog,
+      checksum,
+      params.windowLog,
       dictionary?.id ?? 0);
   if (firstPart != null) {
     out.writeBytes(firstPart);

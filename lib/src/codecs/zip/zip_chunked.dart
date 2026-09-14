@@ -17,17 +17,22 @@ class ZipCodec {
   /// See [ZipChunkedEncoder.streamed]
   final bool streamed;
 
+  /// See [ZipStreamEncoder.autoClose]
+  final bool autoClose;
+
   const ZipCodec(
       {this.level = DeflateLevel.bestSpeed,
       this.password,
       this.filenameEncoding = const Utf8Codec(),
-      this.streamed = true});
+      this.streamed = true,
+      this.autoClose = false});
 
   ZipStreamEncoder get encoder => ZipStreamEncoder(
       level: level,
       password: password,
       filenameEncoding: filenameEncoding,
-      streamed: streamed);
+      streamed: streamed,
+      autoClose: autoClose);
 }
 
 /// The codec with its defaults, for `entries.transform(zipCodec.encoder)`
@@ -40,11 +45,17 @@ class ZipStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
   final Encoding filenameEncoding;
   final bool streamed;
 
+  /// Closes each entry once it is written, the way `ZipEncoder.add` does. Off
+  /// by default, as it is on `ZipEncoder.encodeStream`: the entries are the
+  /// caller's, and whoever opened a file closes it
+  final bool autoClose;
+
   const ZipStreamEncoder(
       {this.level = DeflateLevel.bestSpeed,
       this.password,
       this.filenameEncoding = const Utf8Codec(),
-      this.streamed = true});
+      this.streamed = true,
+      this.autoClose = false});
 
   @override
   Stream<List<int>> bind(Stream<ArchiveFile> stream) =>
@@ -60,9 +71,37 @@ class ZipStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
         filenameEncoding: filenameEncoding,
         streamed: streamed);
     while (await input.moveNext()) {
-      encoder.add(input.current);
-      while (held.isNotEmpty) {
-        yield held.removeAt(0);
+      final entry = input.current;
+      try {
+        // Header first, then the content in pieces, so a reader gets the first
+        // bytes before the entry is fully deflated. On the web the body is one
+        // step, because deflate there only runs whole
+        final body = encoder.addHeader(entry);
+        while (held.isNotEmpty) {
+          yield held.removeAt(0);
+        }
+        if (body == null) {
+          continue;
+        }
+        try {
+          while (body.step()) {
+            while (held.isNotEmpty) {
+              yield held.removeAt(0);
+            }
+          }
+          body.finish();
+          while (held.isNotEmpty) {
+            yield held.removeAt(0);
+          }
+        } finally {
+          // A cancel stops us at one of the yields above, so finish never ran
+          body.cancel();
+        }
+      } finally {
+        // A cancel lands on a yield above, which is why this is a finally
+        if (autoClose) {
+          entry.closeSync();
+        }
       }
     }
     if (signal.cancelled) {
@@ -121,6 +160,15 @@ class ZipChunkedEncoder {
       throw StateError('Cannot add to a closed encoder');
     }
     _encoder.add(entry);
+  }
+
+  /// Writes [entry]'s local header and returns its body. Null if the entry is
+  /// already written whole. The entry is left open, the caller decides
+  ZipEntryBody? addHeader(ArchiveFile entry) {
+    if (_closed) {
+      throw StateError('Cannot add to a closed encoder');
+    }
+    return _encoder.addHeader(entry, autoClose: false);
   }
 
   /// The central directory and the record that points at it, then the sink

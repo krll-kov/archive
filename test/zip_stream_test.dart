@@ -179,13 +179,17 @@ void main() {
           ..close();
         // Buffered, the whole entry would land in one piece
         expect(held.pieces, greaterThan(16));
-        expect(ZipDecoder().decodeBytes(held.bytes, verify: true).files.single.size,
+        expect(
+            ZipDecoder()
+                .decodeBytes(held.bytes, verify: true)
+                .files
+                .single
+                .size,
             4 << 20);
       } finally {
         directory.deleteSync(recursive: true);
       }
     });
-
   });
 
   group('zip codec', () {
@@ -203,8 +207,9 @@ void main() {
       // wait on for good
       final source = StreamController<ArchiveFile>();
       final written = Completer<void>();
-      final subscription = source.stream.transform(zipCodec.encoder).listen(
-          (_) => written.isCompleted ? null : written.complete());
+      final subscription = source.stream
+          .transform(zipCodec.encoder)
+          .listen((_) => written.isCompleted ? null : written.complete());
       source.add(_entries().first);
       await written.future.timeout(const Duration(seconds: 5));
       // Past the last piece of the entry, so it waits on the source
@@ -212,6 +217,42 @@ void main() {
       await subscription.cancel().timeout(const Duration(seconds: 5));
       expect(source.hasListener, isFalse);
       await source.close();
+    });
+
+    for (final autoClose in [false, true]) {
+      test('autoClose $autoClose decides whether a written entry is closed',
+          () async {
+        final content = _ClosingInput(_source(300000, 21));
+        final bytes = await Stream.value(ArchiveFile.stream('big.bin', content))
+            .transform(ZipCodec(autoClose: autoClose).encoder)
+            .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
+        expect(bytes, isNotEmpty);
+        expect(content.closed, autoClose);
+      });
+    }
+
+    test('autoClose closes an entry cut off by a cancel', () async {
+      final content = _ClosingInput(_source(8 << 20, 23));
+      final source = StreamController<ArchiveFile>();
+      final written = Completer<void>();
+      final subscription = source.stream
+          .transform(const ZipCodec(autoClose: true).encoder)
+          .listen((_) => written.isCompleted ? null : written.complete());
+      source.add(ArchiveFile.stream('big.bin', content));
+      await written.future.timeout(const Duration(seconds: 10));
+      await subscription.cancel().timeout(const Duration(seconds: 10));
+      await source.close();
+      expect(content.closed, isTrue);
+    });
+
+    test('the bytes of an entry survive the transformer', () async {
+      final archive = Archive()..add(ArchiveFile.string('a.txt', 'hello'));
+      Future<List<int>> once() => Stream.fromIterable(archive.files)
+          .transform(zipCodec.encoder)
+          .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
+      final first = await once();
+      expect(archive.files.single.content, 'hello'.codeUnits);
+      expect(await once(), first);
     });
   });
 
@@ -252,6 +293,25 @@ void main() {
       } finally {
         directory.deleteSync(recursive: true);
       }
+    });
+  });
+
+  group('back pressure inside one entry', () {
+    test('an entry is handed over as it is compressed', () async {
+      final content = _source(16 << 20, 11);
+      final started = DateTime.now();
+      var first = -1;
+      await for (final piece in Stream<ArchiveFile>.fromIterable(
+              [ArchiveFile.bytes('big.bin', content)])
+          .transform(zipCodec.encoder)) {
+        if (first < 0 && piece.isNotEmpty) {
+          first = DateTime.now().difference(started).inMicroseconds;
+        }
+      }
+      final whole = DateTime.now().difference(started).inMicroseconds;
+      // The transform used to deflate the whole entry before its first yield,
+      // which held every compressed byte of it in memory
+      expect(first, lessThan(whole ~/ 4));
     });
   });
 }
@@ -308,5 +368,24 @@ class _Held implements Sink<List<int>> {
       at += piece.length;
     }
     return out;
+  }
+}
+
+/// Reports whether whoever took it closed it
+class _ClosingInput extends InputMemoryStream {
+  var closed = false;
+
+  _ClosingInput(super.bytes);
+
+  @override
+  void closeSync() {
+    closed = true;
+    super.closeSync();
+  }
+
+  @override
+  Future<void> close() async {
+    closed = true;
+    await super.close();
   }
 }

@@ -45,7 +45,9 @@ void main() {
 
   ZstdDictionary? dictionaryFor(String name) {
     if (name.startsWith('dv-') || name.contains('-dict')) {
-      return name.contains('raw') ? dictionaries['raw'] : dictionaries['trained'];
+      return name.contains('raw')
+          ? dictionaries['raw']
+          : dictionaries['trained'];
     }
     return null;
   }
@@ -87,7 +89,14 @@ void main() {
       final content = [1, 2, 3];
       final archive = Uint8List.fromList([
         ...ZstdEncoder().encodeBytes(content),
-        0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0,
+        0x50,
+        0x2a,
+        0x4d,
+        0x18,
+        0,
+        0,
+        0,
+        0,
       ]);
       expect(ZstdDecoder().decodeBytes(archive, throwOnError: true), content);
       expect(_decode(archive, archive.length), content);
@@ -97,8 +106,23 @@ void main() {
       'empty': [0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0],
       'payload': [0x5f, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 1, 2, 3],
       'multiple': [
-        0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0,
-        0x5f, 0x2a, 0x4d, 0x18, 1, 0, 0, 0, 7,
+        0x50,
+        0x2a,
+        0x4d,
+        0x18,
+        0,
+        0,
+        0,
+        0,
+        0x5f,
+        0x2a,
+        0x4d,
+        0x18,
+        1,
+        0,
+        0,
+        0,
+        7,
       ],
     };
     for (final entry in skippableOnly.entries) {
@@ -109,7 +133,8 @@ void main() {
           expect(_decode(archive, piece), isEmpty);
         }
       });
-      test('${entry.key} skippable-only archives decode through InputStream', () {
+      test('${entry.key} skippable-only archives decode through InputStream',
+          () {
         final output = OutputMemoryStream();
         expect(
             ZstdDecoder().decodeStream(InputMemoryStream(entry.value), output,
@@ -280,7 +305,8 @@ void main() {
       for (var i = 0; i < source.length; i++) {
         source[i] = (i * 29 + (i >> 7)) & 0xff;
       }
-      Uint8List encode(int piece, {required int level, required bool checksum}) {
+      Uint8List encode(int piece,
+          {required int level, required bool checksum}) {
         final held = _Held();
         final encoder =
             ZstdChunkedEncoder(held, level: level, checksum: checksum);
@@ -308,7 +334,8 @@ void main() {
       }
     });
 
-    test('double-fast matches stop at the window after the input ring wraps', () {
+    test('double-fast matches stop at the window after the input ring wraps',
+        () {
       const block = 131072;
       const ring = (1 << 21) + block;
       final source = Uint8List(ring + block);
@@ -330,12 +357,30 @@ void main() {
         expect(ZstdDecoder().decodeBytes(archive, throwOnError: true), source,
             reason: 'level $level');
         // ZSTD_compressStream2 retains 200 literals before this boundary match
-        expect(archive.sublist(ring + 6 + 3 * 17), [
-          0xa4, 0x06, 0x00, 0x84, 0x0c,
-          ...source.sublist(ring, ring + 200),
-          0x01, 0x00, 0xc8, 0x9a, 0xff, 0x65, 0x00, 0xcf, 0x9b, 0x14,
-          0x01, 0x00, 0x00,
-        ], reason: 'level $level');
+        expect(
+            archive.sublist(ring + 6 + 3 * 17),
+            [
+              0xa4,
+              0x06,
+              0x00,
+              0x84,
+              0x0c,
+              ...source.sublist(ring, ring + 200),
+              0x01,
+              0x00,
+              0xc8,
+              0x9a,
+              0xff,
+              0x65,
+              0x00,
+              0xcf,
+              0x9b,
+              0x14,
+              0x01,
+              0x00,
+              0x00,
+            ],
+            reason: 'level $level');
       }
     });
 
@@ -348,8 +393,7 @@ void main() {
         final held = _Held();
         final encoder = ZstdChunkedEncoder(held, level: level);
         for (var at = 0; at < source.length; at += 33333) {
-          final end =
-              at + 33333 < source.length ? at + 33333 : source.length;
+          final end = at + 33333 < source.length ? at + 33333 : source.length;
           encoder.addSlice(source, at, end, false);
         }
         encoder.close();
@@ -365,8 +409,10 @@ void main() {
       final held = _Held();
       ZstdChunkedEncoder(held).close();
       expect(held.closed, isTrue);
-      expect(ZstdDecoder().decodeBytes(held.bytes, verify: true,
-          throwOnError: true), isEmpty);
+      expect(
+          ZstdDecoder()
+              .decodeBytes(held.bytes, verify: true, throwOnError: true),
+          isEmpty);
     });
 
     test('what it writes carries no content size and reads back', () {
@@ -379,8 +425,7 @@ void main() {
           final held = _Held();
           final encoder = ZstdChunkedEncoder(held, level: level);
           for (var at = 0; at < source.length; at += piece) {
-            final end =
-                at + piece < source.length ? at + piece : source.length;
+            final end = at + piece < source.length ? at + piece : source.length;
             encoder.addSlice(source, at, end, false);
           }
           encoder.close();
@@ -388,8 +433,10 @@ void main() {
           // A frame that names no size says so in its descriptor
           expect(archive[4] >> 6, 0, reason: 'level $level piece $piece');
           expect((archive[4] >> 5) & 1, 0, reason: 'level $level piece $piece');
-          expect(ZstdDecoder().decodeBytes(archive, verify: true,
-              throwOnError: true), source,
+          expect(
+              ZstdDecoder()
+                  .decodeBytes(archive, verify: true, throwOnError: true),
+              source,
               reason: 'level $level piece $piece');
         }
       }

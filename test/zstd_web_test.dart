@@ -178,15 +178,36 @@ void main() {
       final tail = count - 3 * segment;
       // Each zero literal consumes one bit from a two-symbol Huffman table
       final frame = Uint8List.fromList([
-        40, 181, 47, 253, 0, 0, 133, 0, 0,
-        6 | (count << 4), 0, 3, 128, 16,
-        1, 0, 1, 0, 1, 0,
-        1 << segment, 1 << segment, 1 << segment, 1 << tail, 0,
+        40,
+        181,
+        47,
+        253,
+        0,
+        0,
+        133,
+        0,
+        0,
+        6 | (count << 4),
+        0,
+        3,
+        128,
+        16,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        1 << segment,
+        1 << segment,
+        1 << segment,
+        1 << tail,
+        0,
       ]);
       if (count < 6) {
         expect(
-            () => ZstdDecoder().decodeBytes(frame,
-                verify: true, throwOnError: true),
+            () => ZstdDecoder()
+                .decodeBytes(frame, verify: true, throwOnError: true),
             throwsFormatException);
       } else {
         expect(
@@ -200,8 +221,31 @@ void main() {
     test('four Huffman streams validate an empty tail marker $marker', () {
       // The first three streams emit two literals each, leaving the fourth empty
       final frame = Uint8List.fromList([
-        40, 181, 47, 253, 0, 0, 133, 0, 0, 102, 0, 3,
-        128, 16, 1, 0, 1, 0, 1, 0, 4, 4, 4, marker, 0,
+        40,
+        181,
+        47,
+        253,
+        0,
+        0,
+        133,
+        0,
+        0,
+        102,
+        0,
+        3,
+        128,
+        16,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        4,
+        4,
+        4,
+        marker,
+        0,
       ]);
       if (marker == 1) {
         expect(
@@ -209,8 +253,8 @@ void main() {
             List<int>.filled(6, 0));
       } else {
         expect(
-            () => ZstdDecoder().decodeBytes(frame,
-                verify: true, throwOnError: true),
+            () => ZstdDecoder()
+                .decodeBytes(frame, verify: true, throwOnError: true),
             throwsFormatException);
       }
     });

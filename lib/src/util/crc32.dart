@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
-import '_crc32_fast_html.dart'
-    if (dart.library.isolate) '_crc32_fast_io.dart';
+import '_crc32_fast_html.dart' if (dart.library.isolate) '_crc32_fast_io.dart';
 
 /// Get the CRC-32 checksum of the given int.
 int getCrc32Byte(int crc, int b) => _crc32Table[(crc ^ b) & 0xff] ^ (crc >> 8);

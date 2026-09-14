@@ -6,15 +6,43 @@ const zstdUse64Bit = bool.fromEnvironment('dart.library.isolate');
 
 // dart2js truncates a shift to 32 bits, so a left shift is a multiply and the
 // mask keeps the product exact
-int zstdWebShift(int value, int count) => count == 0
-    ? value
-    : (value & (_powers[32 - count] - 1)) * _powers[count];
+int zstdWebShift(int value, int count) =>
+    count == 0 ? value : (value & (_powers[32 - count] - 1)) * _powers[count];
 
 const _powers = <int>[
-  1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
-  16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152,
-  4194304, 8388608, 16777216, 33554432, 67108864, 134217728,
-  268435456, 536870912, 1073741824, 2147483648, 4294967296,
+  1,
+  2,
+  4,
+  8,
+  16,
+  32,
+  64,
+  128,
+  256,
+  512,
+  1024,
+  2048,
+  4096,
+  8192,
+  16384,
+  32768,
+  65536,
+  131072,
+  262144,
+  524288,
+  1048576,
+  2097152,
+  4194304,
+  8388608,
+  16777216,
+  33554432,
+  67108864,
+  134217728,
+  268435456,
+  536870912,
+  1073741824,
+  2147483648,
+  4294967296,
 ];
 
 const _keyLow = [0, 0, 0, 0, 0, 0xbb000000, 0xbf9b0000, 0xbfa56300, 0xb7a56463];
@@ -46,7 +74,8 @@ int zstdWebKey(ByteData view, int at, int bytes, int shift) {
 
 bool zstdWebSame8(ByteData view, int a, int b) =>
     view.getUint32(a, Endian.little) == view.getUint32(b, Endian.little) &&
-    view.getUint32(a + 4, Endian.little) == view.getUint32(b + 4, Endian.little);
+    view.getUint32(a + 4, Endian.little) ==
+        view.getUint32(b + 4, Endian.little);
 
 int zstdWebMultiply32(int a, int b) {
   final low = (a & 0xffff) * (b & 0xffff);
@@ -91,8 +120,8 @@ class ZstdFseScale {
     _runningHigh = (_pointScale >> 1) - 1;
     _runningMiddle = _base - 1;
     _runningLow = _base - 1;
-    _divide(points * _pointScale + _runningHigh,
-        _runningMiddle, _runningLow, total);
+    _divide(points * _pointScale + _runningHigh, _runningMiddle, _runningLow,
+        total);
   }
 
   // 21-bit limbs keep a limb times a 32-bit count within exact JS integers
@@ -118,8 +147,8 @@ class ZstdFseScale {
       final remainder = _high - points * _pointScale;
       final threshold = roundUpAt[points];
       final high = threshold >> accuracyLog;
-      final middle = (threshold & ((1 << accuracyLog) - 1)) <<
-          (21 - accuracyLog);
+      final middle =
+          (threshold & ((1 << accuracyLog) - 1)) << (21 - accuracyLog);
       if (remainder > high ||
           (remainder == high &&
               (_middle > middle || (_middle == middle && _low != 0)))) {
