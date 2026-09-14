@@ -12,6 +12,15 @@
 * Made CRC32 faster on IO (non-js-web platforms)
 * Slightly reduces amount of RAM for lzma decoder and zlib encoder
 * Added ProgressOutputStream to monitor progress during unpack
+* Fixed ArchiveFile.directory mode (0755 instead of 0644) so that it can be opened after unpacking
+* Slightly improved ram for XZDecoder
+* Fixed a few cases with accepting corrupted file in XZDecoder
+* Fixed file names trimming in TAR
+* ZipEncoder now applies CompressionType.none to entries with no content
+* Replaced ChunkedConversionSink with ZLibOutputSink for gzip and zlib to forward every piece the codec produces instead
+  of holding it to the end
+* Added usage examples of new apis is package readme file
+
 
 # 4.3.0
 

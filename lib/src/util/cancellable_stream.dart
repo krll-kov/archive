@@ -61,6 +61,9 @@ Stream<T> cancellableStream<S, T>(Stream<S> input,
   StreamSubscription<T>? inner;
   late final StreamController<T> controller;
   controller = StreamController<T>(
+    // An async controller delivers a pause a microtask late, by which time the
+    // body is past the event and a tar entry's content is already skipped
+    sync: true,
     onListen: () {
       inner = body(iterator, signal).listen(controller.add,
           onError: controller.addError, onDone: () {
