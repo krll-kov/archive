@@ -67,6 +67,19 @@ class XZStreamDecoder {
 
   // Upper bound on a buffer sized from a length the archive declares
   final int maxPreallocateSize;
+  // A block decodes on its own, so its first chunk has to start the
+  // dictionary: control 1 for an uncompressed chunk, reset 3 for an LZMA one
+  var needDictionaryReset = true;
+  // liblzma lzma2_decoder.c: the LZMA chunk after a dictionary reset must set
+  // new properties
+  var needProperties = true;
+
+  // What [readBlockHeader] read last, for [readBlock] and the streamed decoder
+  int? blockCompressedLength;
+  int? blockUncompressedLength;
+  var blockDictionarySize = 0;
+  var blockHasX86 = false;
+  var blockX86StartOffset = 0;
 
   XZStreamDecoder({this.verify = false, required this.maxPreallocateSize});
 
@@ -191,117 +204,14 @@ class XZStreamDecoder {
   // Reads a data block from [input]
   bool readBlock(InputStream input, OutputStream output, int headerLength) {
     final blockStart = input.position;
-    final header = input.readBytes(headerLength - 4);
-
-    header.skip(1); // Skip length field
-    final blockFlags = header.readByte();
-    if (blockFlags & 0x3c != 0) {
-      return _fail('Reserved bit is set in the block flags');
+    if (!readBlockHeader(input, headerLength)) {
+      return false;
     }
-    final nFilters = (blockFlags & 0x3) + 1;
-    final hasCompressedLength = blockFlags & 0x40 != 0;
-    final hasUncompressedLength = blockFlags & 0x80 != 0;
-
-    int? compressedLength;
-    if (hasCompressedLength) {
-      compressedLength = _readMultibyteInteger(header);
-      if (compressedLength < 0) {
-        return _fail('Invalid compressed length in block header');
-      }
-    }
-    int? uncompressedLength;
-    if (hasUncompressedLength) {
-      uncompressedLength = _readMultibyteInteger(header);
-      if (uncompressedLength < 0) {
-        return _fail('Invalid uncompressed length in block header');
-      }
-    }
-
-    final filters = <int>[];
-    var dictionarySize = 0;
-
-    for (var i = 0; i < nFilters; i++) {
-      final id = _readMultibyteInteger(header);
-      final propertiesLength = _readMultibyteInteger(header);
-      if (id < 0 || propertiesLength < 0) {
-        return _fail('Invalid filter in block header');
-      }
-      final properties = header.readBytes(propertiesLength).toUint8List();
-      if (properties.length != propertiesLength) {
-        return _fail('Invalid filter in block header');
-      }
-      if (id == 0x03) {
-        // delta filter
-        if (propertiesLength != 1) {
-          return _fail('Invalid delta filter distance');
-        }
-        final distance = properties[0];
-        filters.add(id);
-        filters.add(distance);
-      } else if (id == 0x04) {
-        // x86 BCJ filter
-        if (propertiesLength != 0 && propertiesLength != 4) {
-          return _fail('Invalid x86 filter start offset');
-        }
-        var startOffset = 0;
-        if (propertiesLength == 4) {
-          startOffset = properties[0] |
-              properties[1] << 8 |
-              properties[2] << 16 |
-              properties[3] << 24;
-        }
-        filters.add(id);
-        filters.add(startOffset);
-      } else if (id == 0x21) {
-        // lzma2 filter
-        if (propertiesLength != 1) {
-          return _fail('Invalid LZMA dictionary size');
-        }
-        final v = properties[0];
-        if (v > 40) {
-          return _fail('Invalid LZMA dictionary size');
-        } else if (v == 40) {
-          dictionarySize = 0xffffffff;
-        } else {
-          final mantissa = 2 | (v & 0x1);
-          final exponent = (v >> 1) + 11;
-          dictionarySize = mantissa << exponent;
-        }
-        filters.add(id);
-        filters.add(dictionarySize);
-      } else {
-        filters.add(id);
-        filters.add(0);
-      }
-    }
-
-    // A match may not reach further back than the declared dictionary, which
-    // is a tighter bound than the buffer the dictionary is held in
-    decoder.dictionaryLimit = dictionarySize;
-    if (dictionarySize > 0 && dictionarySize < 0x40000000) {
-      decoder.dictionaryCap =
-          dictionarySize + (dictionarySize >> 2) + (2 << 20) + 16;
-    }
-
-    if (_readPadding(header) < 0) {
-      return _fail('Invalid block header padding');
-    }
-    header.reset();
-
-    final crc = input.readUint32();
-    if (getCrc32(header.toUint8List()) != crc) {
-      return _fail('Invalid block header CRC checksum');
-    }
-
-    // Entries are stored as (id, value) pairs. The supported chains are LZMA2
-    // on its own, or the x86 BCJ filter followed by LZMA2
-    final hasX86 =
-        filters.length == 4 && filters[0] == 0x04 && filters[2] == 0x21;
-    if (!hasX86 && (filters.length != 2 || filters.first != 0x21)) {
-      return _fail('Unsupported filter chain; only LZMA2, optionally behind '
-          'the x86 BCJ filter, is supported');
-    }
-    final x86StartOffset = hasX86 ? filters[1] : 0;
+    final compressedLength = blockCompressedLength;
+    int? uncompressedLength = blockUncompressedLength;
+    final dictionarySize = blockDictionarySize;
+    final hasX86 = blockHasX86;
+    final x86StartOffset = blockX86StartOffset;
 
     final startPosition = input.position;
     final startDataLength = output.length;
@@ -458,97 +368,235 @@ class XZStreamDecoder {
     return true;
   }
 
+  // Reads a block header from [input] into the block fields
+  bool readBlockHeader(InputStream input, int headerLength) {
+    final header = input.readBytes(headerLength - 4);
+
+    header.skip(1); // Skip length field
+    final blockFlags = header.readByte();
+    if (blockFlags & 0x3c != 0) {
+      return _fail('Reserved bit is set in the block flags');
+    }
+    final nFilters = (blockFlags & 0x3) + 1;
+    final hasCompressedLength = blockFlags & 0x40 != 0;
+    final hasUncompressedLength = blockFlags & 0x80 != 0;
+
+    int? compressedLength;
+    if (hasCompressedLength) {
+      compressedLength = _readMultibyteInteger(header);
+      if (compressedLength < 0) {
+        return _fail('Invalid compressed length in block header');
+      }
+    }
+    int? uncompressedLength;
+    if (hasUncompressedLength) {
+      uncompressedLength = _readMultibyteInteger(header);
+      if (uncompressedLength < 0) {
+        return _fail('Invalid uncompressed length in block header');
+      }
+    }
+
+    final filters = <int>[];
+    var dictionarySize = 0;
+
+    for (var i = 0; i < nFilters; i++) {
+      final id = _readMultibyteInteger(header);
+      final propertiesLength = _readMultibyteInteger(header);
+      if (id < 0 || propertiesLength < 0) {
+        return _fail('Invalid filter in block header');
+      }
+      final properties = header.readBytes(propertiesLength).toUint8List();
+      if (properties.length != propertiesLength) {
+        return _fail('Invalid filter in block header');
+      }
+      if (id == 0x03) {
+        // delta filter
+        if (propertiesLength != 1) {
+          return _fail('Invalid delta filter distance');
+        }
+        final distance = properties[0];
+        filters.add(id);
+        filters.add(distance);
+      } else if (id == 0x04) {
+        // x86 BCJ filter
+        if (propertiesLength != 0 && propertiesLength != 4) {
+          return _fail('Invalid x86 filter start offset');
+        }
+        var startOffset = 0;
+        if (propertiesLength == 4) {
+          startOffset = properties[0] |
+              properties[1] << 8 |
+              properties[2] << 16 |
+              properties[3] << 24;
+        }
+        filters.add(id);
+        filters.add(startOffset);
+      } else if (id == 0x21) {
+        // lzma2 filter
+        if (propertiesLength != 1) {
+          return _fail('Invalid LZMA dictionary size');
+        }
+        final v = properties[0];
+        if (v > 40) {
+          return _fail('Invalid LZMA dictionary size');
+        } else if (v == 40) {
+          dictionarySize = 0xffffffff;
+        } else {
+          final mantissa = 2 | (v & 0x1);
+          final exponent = (v >> 1) + 11;
+          dictionarySize = mantissa << exponent;
+        }
+        filters.add(id);
+        filters.add(dictionarySize);
+      } else {
+        filters.add(id);
+        filters.add(0);
+      }
+    }
+
+    // A match may not reach further back than the declared dictionary, which
+    // is a tighter bound than the buffer the dictionary is held in
+    decoder.dictionaryLimit = dictionarySize;
+    if (dictionarySize > 0 && dictionarySize < 0x40000000) {
+      decoder.dictionaryCap =
+          dictionarySize + (dictionarySize >> 2) + (2 << 20) + 16;
+    }
+
+    if (_readPadding(header) < 0) {
+      return _fail('Invalid block header padding');
+    }
+    header.reset();
+
+    final crc = input.readUint32();
+    if (getCrc32(header.toUint8List()) != crc) {
+      return _fail('Invalid block header CRC checksum');
+    }
+
+    // Entries are stored as (id, value) pairs. The supported chains are LZMA2
+    // on its own, or the x86 BCJ filter followed by LZMA2
+    final hasX86 =
+        filters.length == 4 && filters[0] == 0x04 && filters[2] == 0x21;
+    if (!hasX86 && (filters.length != 2 || filters.first != 0x21)) {
+      return _fail('Unsupported filter chain; only LZMA2, optionally behind '
+          'the x86 BCJ filter, is supported');
+    }
+    final x86StartOffset = hasX86 ? filters[1] : 0;
+    blockCompressedLength = compressedLength;
+    blockUncompressedLength = uncompressedLength;
+    blockDictionarySize = dictionarySize;
+    blockHasX86 = hasX86;
+    blockX86StartOffset = x86StartOffset;
+    return true;
+  }
+
   // Reads LZMA2 data from [input]
   bool _readLZMA2(InputStream input, OutputStream output, int dictionarySize) {
-    // A block decodes on its own, so its first chunk has to start the
-    // dictionary: control 1 for an uncompressed chunk, reset 3 for an LZMA one
-    var needDictionaryReset = true;
+    needDictionaryReset = true;
+    needProperties = true;
     while (!input.isEOS) {
-      final control = input.readByte();
-      if (control != 0) {
-        final resets =
-            control < 0x80 ? control == 1 : ((control >> 5) & 0x3) == 3;
-        if (needDictionaryReset && !resets) {
-          return _fail('The first LZMA2 chunk does not reset the dictionary');
-        }
-        needDictionaryReset = false;
-      }
-      // Control values:
-      // 00000000 - end marker
-      // 00000001 - reset dictionary and uncompresed data
-      // 00000010 - uncompressed data
-      // 1rrxxxxx - LZMA data with reset (r) and high bits of size field (x)
-      if (control & 0x80 == 0) {
-        if (control == 0) {
-          decoder.reset(resetDictionary: true);
-          return true;
-        } else if (control == 1) {
-          decoder.reset(resetDictionary: true);
-          final length = (input.readByte() << 8 | input.readByte()) + 1;
-          output.writeBytes(
-              decoder.decodeUncompressed(input.readBytes(length), length));
-          decoder.trimDictionary(dictionarySize);
-        } else if (control == 2) {
-          // uncompressed data
-          final length = (input.readByte() << 8 | input.readByte()) + 1;
-          output.writeBytes(
-              decoder.decodeUncompressed(input.readBytes(length), length));
-          decoder.trimDictionary(dictionarySize);
-        } else {
-          return _fail('Unknown LZMA2 control code $control');
-        }
-      } else {
-        // Reset flags:
-        // 0 - reset nothing
-        // 1 - reset state
-        // 2 - reset state, properties
-        // 3 - reset state, properties and dictionary
-        final reset = (control >> 5) & 0x3;
-        final uncompressedLength = ((control & 0x1f) << 16 |
-                input.readByte() << 8 |
-                input.readByte()) +
-            1;
-        final compressedLength = (input.readByte() << 8 | input.readByte()) + 1;
-        int? literalContextBits;
-        int? literalPositionBits;
-        int? positionBits;
-        if (reset >= 2) {
-          // The three LZMA decoder properties are combined into a single number
-          var properties = input.readByte();
-          if (properties > 224) {
-            return _fail('Invalid LZMA properties byte');
-          }
-          positionBits = properties ~/ 45;
-          properties -= positionBits * 45;
-          literalPositionBits = properties ~/ 9;
-          literalContextBits = properties - literalPositionBits * 9;
-          if (literalContextBits + literalPositionBits > 4) {
-            return _fail('Invalid LZMA literal context and position bits');
-          }
-        }
-        if (reset > 0) {
-          decoder.reset(
-              literalContextBits: literalContextBits,
-              literalPositionBits: literalPositionBits,
-              positionBits: positionBits,
-              resetDictionary: reset == 3);
-        }
-
-        decoder.decodeToOutput(
-            input.readBytes(compressedLength), uncompressedLength, output);
-        // Checking this can catch some corrupt files, especially if they don't
-        // have any other integrity check. An end of payload marker is not
-        // allowed in LZMA2, so a chunk that reached its uncompressed size
-        // without emptying the range coder is a data error
-        if (!decoder.isRangeCoderFinished) {
-          return _fail('LZMA data is corrupt');
-        }
-        decoder.trimDictionary(dictionarySize);
+      final done = readLZMA2Chunk(input, output, dictionarySize);
+      if (done != null) {
+        return done;
       }
     }
 
     // 00000000 - end marker, if not reached - there's an issue with file
     return _fail('LZMA2 data ended without an end marker');
+  }
+
+  // Reads one LZMA2 chunk from [input]. Returns true at the end marker, false
+  // on a failure, and null when another chunk follows
+  bool? readLZMA2Chunk(
+      InputStream input, OutputStream output, int dictionarySize) {
+    final control = input.readByte();
+    if (control != 0) {
+      final resets =
+          control < 0x80 ? control == 1 : ((control >> 5) & 0x3) == 3;
+      if (needDictionaryReset && !resets) {
+        return _fail('The first LZMA2 chunk does not reset the dictionary');
+      }
+      needDictionaryReset = false;
+      if (resets) {
+        needProperties = true;
+      }
+    }
+    // Control values:
+    // 00000000 - end marker
+    // 00000001 - reset dictionary and uncompresed data
+    // 00000010 - uncompressed data
+    // 1rrxxxxx - LZMA data with reset (r) and high bits of size field (x)
+    if (control & 0x80 == 0) {
+      if (control == 0) {
+        decoder.reset(resetDictionary: true);
+        return true;
+      } else if (control == 1) {
+        decoder.reset(resetDictionary: true);
+        final length = (input.readByte() << 8 | input.readByte()) + 1;
+        output.writeBytes(
+            decoder.decodeUncompressed(input.readBytes(length), length));
+        decoder.trimDictionary(dictionarySize);
+      } else if (control == 2) {
+        // uncompressed data
+        final length = (input.readByte() << 8 | input.readByte()) + 1;
+        output.writeBytes(
+            decoder.decodeUncompressed(input.readBytes(length), length));
+        decoder.trimDictionary(dictionarySize);
+      } else {
+        return _fail('Unknown LZMA2 control code $control');
+      }
+    } else {
+      // Reset flags:
+      // 0 - reset nothing
+      // 1 - reset state
+      // 2 - reset state, properties
+      // 3 - reset state, properties and dictionary
+      final reset = (control >> 5) & 0x3;
+      if (reset < 2 && needProperties) {
+        return _fail('LZMA2 chunk does not set new properties after a '
+            'dictionary reset');
+      }
+      final uncompressedLength =
+          ((control & 0x1f) << 16 | input.readByte() << 8 | input.readByte()) +
+              1;
+      final compressedLength = (input.readByte() << 8 | input.readByte()) + 1;
+      int? literalContextBits;
+      int? literalPositionBits;
+      int? positionBits;
+      if (reset >= 2) {
+        // The three LZMA decoder properties are combined into a single number
+        var properties = input.readByte();
+        if (properties > 224) {
+          return _fail('Invalid LZMA properties byte');
+        }
+        positionBits = properties ~/ 45;
+        properties -= positionBits * 45;
+        literalPositionBits = properties ~/ 9;
+        literalContextBits = properties - literalPositionBits * 9;
+        if (literalContextBits + literalPositionBits > 4) {
+          return _fail('Invalid LZMA literal context and position bits');
+        }
+        needProperties = false;
+      }
+      if (reset > 0) {
+        decoder.reset(
+            literalContextBits: literalContextBits,
+            literalPositionBits: literalPositionBits,
+            positionBits: positionBits,
+            resetDictionary: reset == 3);
+      }
+
+      decoder.decodeToOutput(
+          input.readBytes(compressedLength), uncompressedLength, output);
+      // Checking this can catch some corrupt files, especially if they don't
+      // have any other integrity check. An end of payload marker is not
+      // allowed in LZMA2, so a chunk that reached its uncompressed size
+      // without emptying the range coder is a data error
+      if (!decoder.isRangeCoderFinished) {
+        return _fail('LZMA data is corrupt');
+      }
+      decoder.trimDictionary(dictionarySize);
+    }
+    return null;
   }
 
   // Reads an XZ stream index from [input].
@@ -631,6 +679,10 @@ class XZStreamDecoder {
       final data = input.readByte();
       value += (data & 0x7f) * multiplier;
       if (data & 0x80 == 0) {
+        // liblzma vli_decoder.c takes only the shortest encoding
+        if (data == 0 && i > 0) {
+          return -1;
+        }
         return value;
       }
       multiplier *= 128;

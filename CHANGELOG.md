@@ -1,35 +1,44 @@
 # 4.4.0
 
+* BREAKING: Added `writeRange` and `reserve` to `OutputStream`, and `readInto` and `viewBytes` to `InputStream`. All four
+  have a default body, so a class that extends them needs no change. A class that implements them
+  has to add these methods
 * Added zstd (Zstandard) support, both decode and encode (lvl 1-22, with custom dictionaries)
-* Added .tar.zst and .tzst to extractArchiveToDisk. Also, extractArchiveToDisk now checks for errors during
+* Added Dart async* `StreamTransformers`/`ByteConversionSink`/`Converter` support
+  (`xzCodec`, `zstdCodec`, `bzip2Codec`, `tarCodec` and `zipCodec`) for decode and encode (decoders for all formats except for zip)
+* Added .tar.zst and .tzst to `extractArchiveToDisk`. Also, `extractArchiveToDisk` now checks for errors during
   unpack/decompress and does not leak temporary TAR files on fail
-* Fixed CRC64 XZEncoder created files created on dart-js failed to decode on native platforms
+* Fixed CRC64 `XZEncoder` created files created on dart-js failed to decode on native platforms
 * Fixed zlib encoder on web
-* Added Dart async* StreamTransformers/ByteConversionSink/Converter support
-  (xzCodec, zstdCodec, bzip2Codec, tarCodec and zipCodec) for decode and encode (decoders for all formats except for zip)
-* Added CodecsRecognizer with ArchiveFormat to recognize compressed file types by with their header bytes
-* Fixed XZEncoder (without compression) for large files
+* Added `CodecsRecognizer` with `ArchiveFormat` to recognize compressed file types by with their header bytes
+* Fixed `XZEncoder` (without compression) for large files
 * Made CRC32 faster on IO (non-js-web platforms)
 * Slightly reduces amount of RAM for lzma decoder and zlib encoder
-* Added ProgressOutputStream to monitor progress during unpack
-* Fixed ArchiveFile.directory mode (0755 instead of 0644) so that it can be opened after unpacking
-* Slightly improved ram for XZDecoder
-* Fixed a few cases with accepting corrupted file in XZDecoder
+* Added `ProgressOutputStream` to monitor progress during unpack
+* Fixed `ArchiveFile.directory` mode (0755 instead of 0644) so that it can be opened after unpacking
+* Slightly improved ram for `XZDecoder`
+* Fixed a few cases with accepting corrupted file in `XZDecoder`
+* Fixed some 7z files failed to decode with `XZDecoder`
+* Fixed invalid bzip2 archive returned true from `decodeStream`
 * Fixed file names trimming in TAR
-* ZipEncoder now applies CompressionType.none to entries with no content
-* Replaced ChunkedConversionSink with ZLibOutputSink for gzip and zlib to forward every piece the codec produces instead
+* `ZipEncoder` now applies CompressionType.none to entries with no content
+* Replaced `ChunkedConversionSink` with `ZLibOutputSink` for gzip and zlib to forward every piece the codec produces instead
   of holding it to the end
-* Added usage examples of new apis is package readme file, shrinked amount of docs for XZDecoder
+* Added usage examples of new apis is package readme file, shrinked amount of docs for `XZDecoder`
 * Fixed tar stream decoder allocating whatever a GNU long name or PAX header declared, before any of
   those bytes arrived. A 512 byte header claiming 2^40 was an out of memory kill; the buffer now
   grows with what actually arrives
-* Fixed ZipEncoder with a password writing a stale MAC into entries that have no content, such as
+* Fixed `ZipEncoder` with a password writing a stale MAC into entries that have no content, such as
   every directory. The local header declared 12 bytes it never wrote, which left every local header
   after it off by 2 and unreachable to a forward-only reader
-* Fixed ZipEncoder central directory always claiming UTF-8 file names. It now carries the same
+* Fixed `ZipEncoder` central directory always claiming UTF-8 file names. It now carries the same
   general purpose flag as the local header, so a non-UTF-8 filenameEncoding is no longer misreported
 * Removed unused localFileSize, centralDirectorySize and endOfCentralDirectorySize from the zip
   encoder, where localFileSize also counted a streamed entry's header twice
+* `XZMultithreadOptions.onDone` is no longer required, since a stream hands back its own result.
+  decodeBytes and decodeStream still throw `ArgumentError` when it is left out
+* Fixed extremely high RAM usage on big files (4GB+) for `ZipEncoder(streamed: true)` (use zip64 format from zip APPNOTE)
+* Fixed decoding zip64 with `ZipDecoder`
 
 # 4.3.0
 

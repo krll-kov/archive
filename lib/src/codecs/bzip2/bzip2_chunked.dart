@@ -148,12 +148,7 @@ class BZip2ChunkedDecoder extends ChunkedSink {
   /// read. Whole bytes behind it are dropped once a block is done
   var _bitAt = 0;
 
-  /// Where the search for the next marker has reached, and the last 48 bits it
-  /// has seen, held as two halves so that the shifts stay inside 32 bits
-  var _scanAt = 0;
-  var _scanHigh = 0;
-  var _scanLow = 0;
-  var _scanFilled = 0;
+  final _scan = Bz2MarkerScan();
 
   var _combinedCrc = 0;
   var _storedBlockCrc = 0;
@@ -273,7 +268,7 @@ class BZip2ChunkedDecoder extends ChunkedSink {
   /// has been found. False while either is still to arrive
   bool _readBlockBody() {
     while (true) {
-      if (!_locate()) {
+      if (!_scan.locate(view(available), available)) {
         return false;
       }
       final held = OutputMemoryStream();
@@ -283,10 +278,9 @@ class BZip2ChunkedDecoder extends ChunkedSink {
         crc = _decodeInto();
       } on _NeedMore {
         // The marker was one the block's own data happened to spell, so the
-        // block runs past it and the next one is the candidate
+        // block runs past it and the next one is the candidate. The window
+        // slides on one bit, so a marker right after it or across it is found
         _sink.divert = null;
-        _scanAt++;
-        _resetRegister();
         continue;
       } finally {
         _sink.divert = null;
@@ -355,7 +349,26 @@ class BZip2ChunkedDecoder extends ChunkedSink {
   }
 
   void _resetScan() {
-    _scanAt = _bitAt;
+    _scan.start(_bitAt);
+  }
+}
+
+/// Finds the marker that ends a bzip2 block or a stream, in bits that arrive in
+/// pieces
+class Bz2MarkerScan {
+  /// Where the search for the next marker has reached, and the last 48 bits it
+  /// has seen, held as two halves so that the shifts stay inside 32 bits
+  var _scanAt = 0;
+  var _scanHigh = 0;
+  var _scanLow = 0;
+  var _scanFilled = 0;
+
+  /// The bit after the last one [locate] read
+  int get position => _scanAt;
+
+  /// Starts the search at bit [at] with nothing seen
+  void start(int at) {
+    _scanAt = at;
     _resetRegister();
   }
 
@@ -367,8 +380,7 @@ class BZip2ChunkedDecoder extends ChunkedSink {
 
   /// Walks the bits from where the last search stopped, looking for either
   /// marker. False while neither has arrived
-  bool _locate() {
-    final bytes = view(available);
+  bool locate(Uint8List bytes, int available) {
     final end = available << 3;
     while (_scanAt < end) {
       final bit = (bytes[_scanAt >> 3] >> (7 - (_scanAt & 7))) & 1;
@@ -377,7 +389,10 @@ class BZip2ChunkedDecoder extends ChunkedSink {
       _scanAt++;
       if (_scanFilled < 48) {
         _scanFilled++;
-        continue;
+        // The 48th bit completes the first window, so that one is compared too
+        if (_scanFilled < 48) {
+          continue;
+        }
       }
       if ((_scanHigh == _compressedHigh && _scanLow == _compressedLow) ||
           (_scanHigh == _eosHigh && _scanLow == _eosLow)) {
@@ -386,12 +401,12 @@ class BZip2ChunkedDecoder extends ChunkedSink {
     }
     return false;
   }
-
-  static const _compressedHigh = 0x314159;
-  static const _compressedLow = 0x265359;
-  static const _eosHigh = 0x177245;
-  static const _eosLow = 0x385090;
 }
+
+const _compressedHigh = 0x314159;
+const _compressedLow = 0x265359;
+const _eosHigh = 0x177245;
+const _eosLow = 0x385090;
 
 /// Raised where the block decoder reads past what has arrived
 class _NeedMore implements Exception {

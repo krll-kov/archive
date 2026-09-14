@@ -28,6 +28,9 @@ class ZstdWindow {
   /// may start over
   int blockReserve = 0;
 
+  /// Where [emit] wrote up to. The bytes before it are out already
+  int emitted = 0;
+
   ZstdWindow(this.windowSize, {this.output});
 
   int get length => flushed + position - origin;
@@ -53,6 +56,7 @@ class ZstdWindow {
       if (origin > 0 && position - origin >= windowSize) {
         buffer.setRange(0, position - origin, buffer, origin);
         position -= origin;
+        emitted = emitted > origin ? emitted - origin : 0;
         origin = 0;
       }
       // `ZSTD_decompressStream` restarts at the head of its buffer rather than
@@ -65,12 +69,13 @@ class ZstdWindow {
       if (origin == 0 &&
           need == blockReserve &&
           position >= windowSize + need) {
-        _flush(sink, 0, position);
+        _flush(sink, emitted, position);
         flushed += position;
         // The span is where the pass ended, not where the buffer does: the
         // bytes past it were never written and no match may name them
         lap = position;
         position = 0;
+        emitted = 0;
         return;
       }
     }
@@ -91,12 +96,24 @@ class ZstdWindow {
     if (sink != null && position > origin) {
       // A whole window handed over at once is a whole window the sink may copy,
       // so the tail goes out in pieces the size of a block
-      _flush(sink, origin, position);
+      _flush(sink, emitted > origin ? emitted : origin, position);
       flushed += position - origin;
       position = 0;
       origin = 0;
       lap = 0;
+      emitted = 0;
     }
+  }
+
+  /// Writes out what was decoded since the last call. The bytes stay where
+  /// they are, since matches still copy from them
+  void emit() {
+    final sink = output;
+    final from = emitted > origin ? emitted : origin;
+    if (sink != null && position > from) {
+      _flush(sink, from, position);
+    }
+    emitted = position;
   }
 
   static const _flushChunk = 1 << 20;

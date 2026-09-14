@@ -6,6 +6,7 @@ import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
 import '../util/output_stream.dart';
+import 'xz/_xz_no_result.dart';
 import 'xz/xz_index.dart';
 import 'xz/xz_multithread_options.dart';
 import 'xz/xz_parallel.dart';
@@ -396,25 +397,25 @@ class XZDecoder {
       if (onError != null) {
         onError(error, stack);
       } else {
-        options.onDone!(onFailure);
+        options.onDone(onFailure);
       }
       return;
     }
-    options.onDone!(result);
+    options.onDone(result);
   }
 
   // As [_report], for work that finishes later
   static void _reportAsync<T>(
       XZMultithreadOptions<T> options, Future<T> Function() work, T onFailure) {
     unawaited(
-        work().then(options.onDone!, onError: (Object error, StackTrace stack) {
+        work().then(options.onDone, onError: (Object error, StackTrace stack) {
       final onError = options.onError;
       if (onError != null) {
         onError(error, stack);
       } else {
         // Nothing would observe an unhandled asynchronous error, so the
         // failure is reported the same way an invalid archive is
-        options.onDone!(onFailure);
+        options.onDone(onFailure);
       }
     }));
   }
@@ -427,7 +428,7 @@ class XZDecoder {
   // function taking Uint8List is not
   static void _checkOptions<T>(
       XZMultithreadOptions<T> options, bool throwOnError) {
-    if (options.onDone == null) {
+    if (identical(options.onDone, xzNoResult)) {
       throw ArgumentError.value(
           null,
           'onDone',

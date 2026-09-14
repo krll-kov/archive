@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../codecs/tar/tar_file.dart';
+
 /// What [CodecsRecognizer.recognize] found at the start of the data
 enum ArchiveFormat {
   gzip,
@@ -115,23 +117,8 @@ abstract final class CodecsRecognizer {
           data[260] == 0x61 && // a
           data[261] == 0x72; //  r
     }
-    var unsigned = 0;
-    var signed = 0;
-    for (var i = 0; i < 512; i++) {
-      final byte = (i >= 148 && i < 156) ? 0x20 : data[i];
-      unsigned += byte;
-      signed += byte > 127 ? byte - 256 : byte;
-    }
-    var at = 148;
-    while (at < 156 && (data[at] == 0x20 || data[at] == 0)) {
-      at++;
-    }
-    final digits = StringBuffer();
-    while (at < 156 && data[at] != 0x20 && data[at] != 0) {
-      digits.writeCharCode(data[at++]);
-    }
-    final stored = int.tryParse(digits.toString(), radix: 8);
-    return stored != null && (stored == unsigned || stored == signed);
+    return tarHeaderChecksumMatches(
+        data is Uint8List ? data : Uint8List.fromList(data.sublist(0, 512)));
   }
 
   /// The format the data starts with, or [ArchiveFormat.unknown].

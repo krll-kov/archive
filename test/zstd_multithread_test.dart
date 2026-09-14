@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:archive/src/codecs/zstd/_zstd_mt_parallel_io.dart'
+    show zstdMtSpawnWorker;
 import 'package:archive/src/codecs/zstd/zstd_mt_frame_encoder.dart';
 import 'package:test/test.dart';
 
@@ -264,6 +267,34 @@ void main() {
       expect(source.hasListener, isFalse, reason: 'after $start bytes');
       await source.close();
     }
+  }, testOn: 'vm');
+
+  test('a spawn that fails kills the worker already started', () async {
+    final exited = ReceivePort();
+    final real = zstdMtSpawnWorker;
+    addTearDown(() {
+      zstdMtSpawnWorker = real;
+      exited.close();
+    });
+    var spawned = 0;
+    zstdMtSpawnWorker = (replies, errors) async {
+      if (spawned++ > 0) {
+        throw StateError('no more isolates');
+      }
+      final isolate = await real(replies, errors);
+      isolate.addOnExitListener(exited.sendPort);
+      return isolate;
+    };
+    final failed = Completer<Object>();
+    Stream<List<int>>.value(Uint8List(1000))
+        .transform(const ZstdCodec(
+          level: 1,
+          multithread: ZstdMultithreadOptions(workers: 2),
+        ).encoder)
+        .listen((_) {}, onError: failed.complete, cancelOnError: true);
+    expect(await failed.future.timeout(const Duration(seconds: 10)),
+        isA<StateError>());
+    await exited.first.timeout(const Duration(seconds: 10));
   }, testOn: 'vm');
 
   test('cancelling the output cancels the input subscription', () async {

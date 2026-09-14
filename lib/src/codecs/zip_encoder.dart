@@ -39,6 +39,10 @@ class _ZipFileData {
   /// data. The central directory has to carry it too, or a reader that
   /// compares the two headers calls the pair broken
   bool deferred = false;
+
+  /// Set on a streamed entry that deflate may grow past 4 GB. Its local header
+  /// carries zip64 and the sizes behind its data take 8 bytes each
+  bool zip64 = false;
   CompressionType compression = CompressionType.deflate;
   String? comment = '';
   int position = 0;
@@ -89,9 +93,9 @@ class ZipEncoder {
   /// it, which is what general purpose bit 3 is for. The peak is then one
   /// deflate buffer rather than the largest entry.
   ///
-  /// It costs a second pass over the source for the check, and an entry of
-  /// 4 GB or more still goes through a buffer, since the lengths behind the
-  /// data would have to be zip64. Off by default: the bytes differ from what
+  /// It costs a second pass over the source for the check. An entry that
+  /// deflate may grow past 4 GB is written with zip64, and its sizes behind
+  /// the data take 8 bytes each. Off by default: the bytes differ from what
   /// [encodeBytes] has always written
   final bool streamed;
 
@@ -294,10 +298,15 @@ class ZipEncoder {
           compressionType = CompressionType.none;
         } else if (streamed &&
             compressionType == CompressionType.deflate &&
-            password == null &&
-            entry.size <= 0xFFFFFFFF) {
+            password == null) {
           fileData.level = chosen;
           fileData.source = file.rawContent?.getStream(decompress: false);
+          // Deflate grows data that does not compress. compressBound in zlib
+          // gives the worst case
+          final size = entry.size;
+          fileData.zip64 =
+              size + (size >> 12) + (size >> 14) + (size >> 25) + 13 >
+                  0xFFFFFFFF;
         } else if (compressionType == CompressionType.deflate) {
           final content = file.rawContent;
           final output = OutputMemoryStream();
@@ -450,9 +459,16 @@ class ZipEncoder {
     final uncompressedSize =
         deferred ? 0 : (needsZip64 ? 0xFFFFFFFF : fileData.uncompressedSize);
 
+    // Info-ZIP writes a streamed zip64 entry this way. The local sizes are
+    // 0xFFFFFFFF and the zip64 field holds two zero sizes
+    final streamed64 = deferred && fileData.zip64;
     final extra = <int>[];
-    if (needsZip64) {
+    if (needsZip64 && !streamed64) {
       extra.addAll(_getZip64ExtraData(fileData));
+    }
+    if (streamed64) {
+      extra.addAll(const [0x01, 0x00, 0x10, 0x00, 0, 0, 0, 0, 0, 0, 0, 0]);
+      extra.addAll(const [0, 0, 0, 0, 0, 0, 0, 0]);
     }
     if (password != null) {
       extra.addAll(_getAexExtraData(fileData));
@@ -463,14 +479,14 @@ class ZipEncoder {
     final encodedFilename = filenameEncoding.encode(filename);
 
     // local file header
-    output.writeUint16(version);
+    output.writeUint16(streamed64 ? 45 : version);
     output.writeUint16(flags);
     output.writeUint16(compressionMethod);
     output.writeUint16(lastModFileTime);
     output.writeUint16(lastModFileDate);
     output.writeUint32(crc32);
-    output.writeUint32(compressedSize);
-    output.writeUint32(uncompressedSize);
+    output.writeUint32(streamed64 ? 0xFFFFFFFF : compressedSize);
+    output.writeUint32(streamed64 ? 0xFFFFFFFF : uncompressedSize);
     output.writeUint16(encodedFilename.length);
     output.writeUint16(extra.length);
     output.writeBytes(encodedFilename);
@@ -529,7 +545,8 @@ class ZipEncoder {
       zipNeedsZip64 |= needsZip64;
 
       final versionMadeBy = (os << 8) | version;
-      final versionNeededToExtract = version;
+      final versionNeededToExtract =
+          fileData.deferred && fileData.zip64 ? 45 : version;
       // Must match the local header. If only this one sets bit 11, a reader
       // decodes a latin1 name as UTF-8
       var generalPurposeBitFlag = 0;
@@ -720,9 +737,16 @@ class ZipEntryBody {
     _data.compressedSize = _output.length - _before;
     _output
       ..writeUint32(ZipEncoder._dataDescriptorSignature)
-      ..writeUint32(_data.crc32)
-      ..writeUint32(_data.compressedSize)
-      ..writeUint32(_data.uncompressedSize);
+      ..writeUint32(_data.crc32);
+    if (_data.zip64) {
+      _output
+        ..writeUint64(_data.compressedSize)
+        ..writeUint64(_data.uncompressedSize);
+    } else {
+      _output
+        ..writeUint32(_data.compressedSize)
+        ..writeUint32(_data.uncompressedSize);
+    }
     _done();
   }
 }

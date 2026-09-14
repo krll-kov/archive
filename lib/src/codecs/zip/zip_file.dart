@@ -146,9 +146,40 @@ class ZipFile extends FileContent {
         crc32 = sigOrCrc;
       }
 
-      compressedSize = input.readUint32();
-      uncompressedSize = input.readUint32();
+      // The sizes are 8 bytes each when the file has a zip64 extra field, in
+      // its local header or in the central directory
+      final central = header;
+      final zip64 = _hasZip64(extraField) || _hasZip64(central?.extraField);
+      final descriptorCompressed =
+          zip64 ? input.readUint64() : input.readUint32();
+      final descriptorUncompressed =
+          zip64 ? input.readUint64() : input.readUint32();
+      // The central directory holds the same sizes. The descriptor fills in
+      // only what the central directory left at zero
+      if (central == null || central.compressedSize == 0) {
+        compressedSize = descriptorCompressed;
+      }
+      if (central == null || central.uncompressedSize == 0) {
+        uncompressedSize = descriptorUncompressed;
+      }
     }
+  }
+
+  /// Whether [extra] holds a zip64 extended information field, id 0x0001
+  static bool _hasZip64(Uint8List? extra) {
+    if (extra == null) {
+      return false;
+    }
+    var at = 0;
+    while (at + 4 <= extra.length) {
+      final id = extra[at] | (extra[at + 1] << 8);
+      final size = extra[at + 2] | (extra[at + 3] << 8);
+      if (id == 0x0001) {
+        return true;
+      }
+      at += 4 + size;
+    }
+    return false;
   }
 
   /// This will decompress the data (if necessary) in order to calculate the

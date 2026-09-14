@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -213,6 +214,52 @@ abstract class ChunkedConverter extends Converter<List<int>, List<int>> {
       ..close();
     return held.bytes;
   }
+
+  /// A stream hears a failure once. The sink throws it again on every later
+  /// call, so the input after it is dropped here, as gzip and zlib in dart:io
+  /// drop it
+  @override
+  Stream<List<int>> bind(Stream<List<int>> stream) =>
+      Stream<List<int>>.eventTransformed(
+          stream, (sink) => _FailOnce(startChunkedConversion(sink), sink));
+}
+
+class _FailOnce implements EventSink<List<int>> {
+  final ByteConversionSink _input;
+  final EventSink<List<int>> _output;
+  var _failed = false;
+
+  _FailOnce(this._input, this._output);
+
+  @override
+  void add(List<int> data) {
+    if (_failed) {
+      return;
+    }
+    try {
+      _input.add(data);
+    } catch (_) {
+      _failed = true;
+      rethrow;
+    }
+  }
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) =>
+      _output.addError(error, stackTrace);
+
+  @override
+  void close() {
+    if (_failed) {
+      return;
+    }
+    try {
+      _input.close();
+    } catch (_) {
+      _failed = true;
+      rethrow;
+    }
+  }
 }
 
 class _Collected implements Sink<List<int>> {
@@ -297,7 +344,23 @@ class SinkOutputStream extends OutputStream {
   }
 
   @override
-  void writeByte(int value) => _emit(Uint8List.fromList([value]));
+  void writeByte(int value) {
+    // bzip2 writes a byte at a time. Two lists per byte made its streamed
+    // decode 24% slower. This does what _emit does with a one byte piece
+    final held = _divert;
+    if (watch != null) {
+      _emit(Uint8List.fromList([value]));
+    } else if (held != null) {
+      written++;
+      held.writeByte(value);
+    } else {
+      written++;
+      _buffer[_queued++] = value;
+      if (_queued == _streamPiece) {
+        _drain();
+      }
+    }
+  }
 
   /// A piece at a time rather than one buffer, since `toUint8List` on a file
   /// reads the whole remainder. The read position ends where it started

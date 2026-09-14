@@ -304,12 +304,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
     }
     _encodeGathered(last: true);
     if (checksum) {
-      final digest = _hash.digestLow;
-      _out
-        ..writeByte(digest & 0xff)
-        ..writeByte((digest >>> 8) & 0xff)
-        ..writeByte((digest >>> 16) & 0xff)
-        ..writeByte((digest >>> 24) & 0xff);
+      writeZstdMtChecksum(_out, _hash.digestLow);
     }
     _out.flush();
   }
@@ -375,11 +370,6 @@ class ZstdChunkedEncoder extends ChunkedSink {
     }
   }
 
-  int get _idFlag {
-    final id = _encodeDictionary?.id ?? 0;
-    return id == 0 ? 0 : (id < 256 ? 1 : (id < 65536 ? 2 : 3));
-  }
-
   /// `ZSTD_writeFrameHeader` for a frame that names no content size: the
   /// descriptor says so, and the window byte says how far back it may reach
   void _writeHeader() {
@@ -387,35 +377,15 @@ class ZstdChunkedEncoder extends ChunkedSink {
       return;
     }
     _started = true;
-    _out
-      ..writeByte(zstdMagic & 0xff)
-      ..writeByte((zstdMagic >>> 8) & 0xff)
-      ..writeByte((zstdMagic >>> 16) & 0xff)
-      ..writeByte((zstdMagic >>> 24) & 0xff)
-      ..writeByte((checksum ? 4 : 0) | _idFlag)
-      ..writeByte((_params.windowLog - 10) << 3);
-    _writeDictionaryId();
+    writeZstdMtStreamHeader(_out, checksum, level, _encodeDictionary?.id ?? 0);
   }
 
   /// The header of a frame whose content turned out to be nothing: the single
   /// segment flag stands in for the window, and the size follows it in one byte
   void _writeEmptyHeader() {
     _started = true;
-    _out
-      ..writeByte(zstdMagic & 0xff)
-      ..writeByte((zstdMagic >>> 8) & 0xff)
-      ..writeByte((zstdMagic >>> 16) & 0xff)
-      ..writeByte((zstdMagic >>> 24) & 0xff)
-      ..writeByte(0x20 | (checksum ? 4 : 0) | _idFlag);
-    _writeDictionaryId();
-    _out.writeByte(0);
-  }
-
-  void _writeDictionaryId() {
-    final id = _encodeDictionary?.id ?? 0;
-    for (var i = 0; i < const [0, 1, 2, 4][_idFlag]; i++) {
-      _out.writeByte((id >>> (i << 3)) & 0xff);
-    }
+    writeZstdMtStreamHeader(
+        _out, checksum, level, _encodeDictionary?.id ?? 0, true);
   }
 }
 
@@ -627,6 +597,10 @@ class ZstdChunkedDecoder extends ChunkedSink {
       _hash.update(window.buffer, from, window.position - from);
     }
     _produced += window.position - from;
+    // Out at the end of every block, as ZSTD_decompressStream does. The input
+    // may pause without closing
+    window.emit();
+    _sink.flush();
     skip(_bodyLength);
     if (!_blocks.isLast) {
       _stage = _Stage.blockHeader;

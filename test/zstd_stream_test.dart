@@ -166,6 +166,30 @@ void main() {
       await source.close();
     });
 
+    // A frame that has not ended still hands out every block that arrived
+    // whole. Only the last block waits for the bytes it lacks
+    test('blocks come out before the frame ends', () async {
+      final source = StreamController<List<int>>();
+      final content =
+          List<int>.generate(1500000, (i) => (i * 7 + (i >> 9)) & 0xff);
+      final frame = ZstdEncoder().encodeBytes(content);
+      final got = <int>[];
+      final arrived = Completer<void>();
+      final subscription =
+          source.stream.transform(zstdCodec.decoder).listen((piece) {
+        got.addAll(piece);
+        if (got.length >= content.length - (128 << 10) &&
+            !arrived.isCompleted) {
+          arrived.complete();
+        }
+      });
+      source.add(Uint8List.sublistView(frame, 0, frame.length - 8));
+      await arrived.future.timeout(const Duration(seconds: 5));
+      expect(got, content.sublist(0, got.length));
+      await subscription.cancel();
+      await source.close();
+    });
+
     for (final junk in [
       [0x27],
       [0x28, 0xb5, 0x2e],

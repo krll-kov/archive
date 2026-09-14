@@ -35,6 +35,7 @@ void main() {
     'crc64.xz',
     'empty.xz',
     'good-1-lzma2-1.xz',
+    'good-1-lzma2-4.xz',
     'hello.xz',
     'hello-hello-hello.xz',
     'long_distance.xz',
@@ -54,6 +55,52 @@ void main() {
         for (final piece in [1, 2, 7, 64, 1024, 1 << 16, src.length + 1]) {
           expect(_decode(src, piece), want, reason: 'piece size $piece');
         }
+      });
+    }
+
+    // 7-Zip writes an uncompressed chunk with control 2, then an LZMA chunk that
+    // resets nothing. That LZMA chunk keeps the state and probabilities from
+    // before the copy. The archive is LZMA with reset 3, control 2, LZMA with
+    // reset 0. It was built by hand and passes xz -t and 7zz t
+    test('an LZMA chunk after an uncompressed chunk keeps its state', () async {
+      final src = _archive('lzma2_copy_keeps_state.xz');
+      final want = List.filled(
+              20, 'the quick brown fox jumps over the lazy dog 0123456789\n')
+          .join()
+          .codeUnits
+          .sublist(0, 900);
+      expect(
+          XZDecoder().decodeBytes(src, verify: true, throwOnError: true), want);
+      expect(xzCodec.decode(src), want);
+      for (final piece in [1, 7, 64]) {
+        expect(_decode(src, piece), want, reason: 'piece size $piece');
+      }
+      final threaded = <int>[];
+      await for (final piece in Stream<List<int>>.value(src).transform(
+          const XzCodec(multithread: XZMultithreadOptions(workers: 2))
+              .decoder)) {
+        threaded.addAll(piece);
+      }
+      expect(threaded, want);
+    });
+
+    // From the xz 5.8.3 test suite, and xz -t rejects every one. The LZMA2 ones
+    // decode an LZMA chunk with no properties set after a dictionary reset.
+    // bad-1-vli-1.xz writes a length in two bytes where one is enough
+    for (final name in [
+      'bad-1-lzma2-4.xz',
+      'bad-1-lzma2-5.xz',
+      'bad-1-lzma2-8.xz',
+      'bad-1-vli-1.xz',
+    ]) {
+      test('$name is rejected on every path', () {
+        final src = _archive(name);
+        expect(
+            () =>
+                XZDecoder().decodeBytes(src, verify: true, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+        expect(() => xzCodec.decode(src), throwsA(isA<ArchiveException>()));
+        expect(() => _decode(src, 7), throwsA(isA<ArchiveException>()));
       });
     }
 

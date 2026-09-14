@@ -18,6 +18,11 @@ import 'zstd_mt_frame_encoder.dart';
 
 const bool zstdIsolatesSupported = true;
 
+/// Starts one worker. A test swaps it to make a spawn fail
+Future<Isolate> Function(SendPort replies, SendPort errors) zstdMtSpawnWorker =
+    (replies, errors) => Isolate.spawn(_zstdMtWorker, replies,
+        onError: errors, errorsAreFatal: true);
+
 /// Compresses every job on an isolate, at most [workers] at a time, and
 /// returns their output in job order. A job carries its own prefix, so nothing
 /// is shared and the bytes do not depend on how many run at once.
@@ -32,7 +37,9 @@ Future<List<Uint8List>> zstdMtCompressJobs(
     required int workers,
     int cap = 0,
     bool firstIsFirstJob = true,
-    int size = 0}) {
+    int size = 0,
+    int paramsSize = 0,
+    ZstdMtLdmPass? ldmPass}) {
   // The job is copied out of the shared input once and then moved rather than
   // copied again: a message holding a Uint8List is serialised on its way to
   // the isolate, a transfer is not
@@ -41,14 +48,19 @@ Future<List<Uint8List>> zstdMtCompressJobs(
         Uint8List.fromList(Uint8List.sublistView(src, start - prefix, end))
       ]);
   final whole = size > 0 ? size : src.length;
-  final pass = ZstdMtLdmPass.forParams(
-      zstdParamsForLevel(level, whole), jobSize > 0 ? jobSize : src.length);
+  // With a dictionary the parameters are sized by more than the content, and
+  // the long distance pass has already run over job zero
+  final sized = paramsSize > 0 ? paramsSize : whole;
+  final pass = ldmPass ??
+      ZstdMtLdmPass.forParams(
+          zstdParamsForLevel(level, sized), jobSize > 0 ? jobSize : src.length);
   return _compress(starts, prefixSize, whole, level, source,
       jobSize: jobSize,
       overlapLog: overlapLog,
       workers: workers,
       cap: cap,
       firstIsFirstJob: firstIsFirstJob,
+      paramsSize: sized,
       ldmFor: pass == null
           ? null
           : (start, end) => zstdMtPackLdm(pass.generate(src, start, end)));
@@ -134,6 +146,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
     required int workers,
     required int cap,
     bool firstIsFirstJob = true,
+    int paramsSize = 0,
     List<Object>? Function(int start, int end)? ldmFor,
     void Function(Uint8List part)? onPart}) async {
   final parts = List<Uint8List?>.filled(starts.length, null);
@@ -169,7 +182,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
       source(start, end, prefix),
       prefix,
       level,
-      size,
+      paramsSize > 0 ? paramsSize : size,
       index == 0 && firstIsFirstJob,
       index == starts.length - 1,
       jobSize,
@@ -253,8 +266,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
     for (var i = 0; i < pool; i++) {
       // A dead isolate must not arrive on the port the replies come in on:
       // `[error, stack]` read as a reply is a cast that hangs the pool
-      isolates.add(await Isolate.spawn(_zstdMtWorker, receive.sendPort,
-          onError: errors.sendPort, errorsAreFatal: true));
+      isolates.add(await zstdMtSpawnWorker(receive.sendPort, errors.sendPort));
     }
     await done.future;
   } finally {
@@ -411,13 +423,6 @@ Stream<Uint8List> _zstdMtCompressStream(
     }
   });
 
-  for (var i = 0; i < pool; i++) {
-    // A dead isolate must not arrive on the port the replies come in on:
-    // `[error, stack]` read as a reply is a cast that hangs the pool
-    isolates.add(await Isolate.spawn(_zstdMtWorker, receive.sendPort,
-        onError: errors.sendPort, errorsAreFatal: true));
-  }
-
   void submit(Uint8List job, int prefix, bool first, bool last) {
     // The dictionary belongs to the first job and does not cross the port, so
     // that one is compressed here and takes its place in the order like any
@@ -463,6 +468,12 @@ Stream<Uint8List> _zstdMtCompressStream(
   }
 
   try {
+    for (var i = 0; i < pool; i++) {
+      // A dead isolate must not arrive on the port the replies come in on:
+      // `[error, stack]` read as a reply is a cast that hangs the pool
+      isolates.add(await zstdMtSpawnWorker(receive.sendPort, errors.sendPort));
+    }
+
     // The reading happens here rather than beside it, so a consumer that pauses
     // pauses the input with it and a consumer that cancels cancels the input:
     // a generator suspended at a yield is not asking its source for anything

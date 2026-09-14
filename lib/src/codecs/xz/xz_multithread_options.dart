@@ -1,3 +1,5 @@
+import '_xz_no_result.dart';
+
 /// Default ceiling on the memory the isolates may hold at once, in bytes
 const xzDefaultMemoryBudget = 1024 * 1024 * 1024;
 
@@ -8,7 +10,7 @@ class XZMultithreadOptions<T> {
   /// Called exactly once. We call it even when the archive was not worth
   /// splitting, and on platforms with no isolates, so you never special case
   /// either
-  final void Function(T result)? onDone;
+  final void Function(T result) onDone;
 
   /// A corrupt or truncated archive reaches this only with `throwOnError`.
   /// Without it that is not an error, and the partial output goes to [onDone].
@@ -46,7 +48,7 @@ class XZMultithreadOptions<T> {
   final int fileReadBufferSize;
 
   const XZMultithreadOptions({
-    this.onDone,
+    this.onDone = xzNoResult,
     this.onError,
     this.workers,
     this.memoryBudget,

@@ -13,6 +13,7 @@ import '../xz_encoder.dart';
 import 'xz_block_dispatch.dart';
 import 'xz_multithread_options.dart';
 import 'xz_parallel.dart';
+import 'xz_stream_decoder.dart';
 
 /// Decodes xz from a `Stream` of pieces into a `Stream` of pieces:
 ///
@@ -141,7 +142,10 @@ class XzChunkedDecoder extends ChunkedSink {
     _sink = SinkOutputStream(output);
   }
 
-  final _decoder = LzmaDecoder();
+  // The LZMA decoder, the block header parse and the LZMA2 chunk rules are the
+  // whole buffer decoder's, so the two cannot drift apart
+  final _xz = XZStreamDecoder(maxPreallocateSize: 0);
+  LzmaDecoder get _decoder => _xz.decoder;
   late final SinkOutputStream _sink;
 
   /// Where the parse is, and what the state it is in still needs
@@ -157,9 +161,6 @@ class XzChunkedDecoder extends ChunkedSink {
   var _blockStart = 0;
   var _blockDataStart = 0;
 
-  /// Whether the block is still waiting for the chunk that starts its
-  /// dictionary, which the format puts first
-  var _needDictionaryReset = true;
   var _blockPadding = 0;
   var _paddingCount = 0;
   int? _declaredCompressedLength;
@@ -171,8 +172,7 @@ class XzChunkedDecoder extends ChunkedSink {
 
   /// The LZMA2 chunk being read
   var _chunkControl = 0;
-  var _chunkCompressedLength = 0;
-  var _chunkUncompressedLength = 0;
+  var _chunkLength = 0;
 
   /// The block's check, folded in as the bytes go past rather than held
   var _blockCrc32 = 0;
@@ -260,7 +260,7 @@ class XzChunkedDecoder extends ChunkedSink {
             return;
           }
         case _Stage.chunkBody:
-          if (available < _chunkCompressedLength) {
+          if (available < _chunkLength) {
             return;
           }
           _readChunkBody();
@@ -388,72 +388,15 @@ class XzChunkedDecoder extends ChunkedSink {
   /// dispatch to go idle before a block it decodes itself
   bool _readBlockHeader(int size) {
     _blockStart = _streamPosition;
-    final header = view(size - 4);
-    final crc = getCrc32(header);
-    final reader = _ByteReader(header, 1);
-    final flags = reader.byte();
-    if (flags & 0x3c != 0) {
-      throw ArchiveException('xz: reserved bit is set in the block flags');
+    _xz.failureReason = null;
+    if (!_xz.readBlockHeader(InputMemoryStream(view(size)), size)) {
+      throw ArchiveException('xz: ${_xz.failureReason}');
     }
-    final filterCount = (flags & 0x3) + 1;
-    _declaredCompressedLength = flags & 0x40 != 0 ? reader.multibyte() : null;
-    _declaredUncompressedLength = flags & 0x80 != 0 ? reader.multibyte() : null;
-
-    var lzma2 = false;
-    _x86Filter = false;
-    _x86StartOffset = 0;
-    _dictionarySize = 0;
-    for (var i = 0; i < filterCount; i++) {
-      final id = reader.multibyte();
-      final length = reader.multibyte();
-      final properties = reader.bytes(length);
-      if (id == 0x21) {
-        if (length != 1) {
-          throw ArchiveException('xz: invalid LZMA dictionary size');
-        }
-        final v = properties[0];
-        if (v > 40) {
-          throw ArchiveException('xz: invalid LZMA dictionary size');
-        } else if (v == 40) {
-          _dictionarySize = 0xffffffff;
-        } else {
-          _dictionarySize = (2 | (v & 0x1)) << ((v >> 1) + 11);
-        }
-        lzma2 = i == filterCount - 1;
-      } else if (id == 0x04 && i == 0 && filterCount == 2) {
-        if (length != 0 && length != 4) {
-          throw ArchiveException('xz: invalid x86 filter start offset');
-        }
-        _x86Filter = true;
-        if (properties.length == 4) {
-          _x86StartOffset = properties[0] |
-              properties[1] << 8 |
-              properties[2] << 16 |
-              properties[3] << 24;
-        }
-      } else {
-        throw ArchiveException('xz: unsupported filter chain; only LZMA2, '
-            'optionally behind the x86 BCJ filter, is supported');
-      }
-    }
-    if (!lzma2) {
-      throw ArchiveException('xz: unsupported filter chain; only LZMA2, '
-          'optionally behind the x86 BCJ filter, is supported');
-    }
-    while (reader.at < header.length) {
-      if (reader.byte() != 0) {
-        throw ArchiveException('xz: invalid block header padding');
-      }
-    }
-
-    final stored = view(size);
-    final storedCrc = stored[size - 4] |
-        (stored[size - 3] << 8) |
-        (stored[size - 2] << 16) |
-        (stored[size - 1] << 24);
-    if (storedCrc != crc) {
-      throw ArchiveException('xz: invalid block header CRC checksum');
-    }
+    _declaredCompressedLength = _xz.blockCompressedLength;
+    _declaredUncompressedLength = _xz.blockUncompressedLength;
+    _dictionarySize = _xz.blockDictionarySize;
+    _x86Filter = _xz.blockHasX86;
+    _x86StartOffset = _xz.blockX86StartOffset;
 
     final dispatch = this.dispatch;
     if (dispatch != null) {
@@ -490,11 +433,6 @@ class XzChunkedDecoder extends ChunkedSink {
       }
     }
 
-    _decoder.dictionaryLimit = _dictionarySize;
-    if (_dictionarySize > 0 && _dictionarySize < 0x40000000) {
-      _decoder.dictionaryCap =
-          _dictionarySize + (_dictionarySize >> 2) + (2 << 20) + 16;
-    }
     skip(size);
 
     // The x86 filter reads the block back, so that block alone is held. Every
@@ -509,101 +447,52 @@ class XzChunkedDecoder extends ChunkedSink {
     _blockCrc64.reset();
     _sink.watch = verify && !_x86Filter ? _foldCheck : null;
     _blockDataStart = _streamPosition;
-    _needDictionaryReset = true;
+    _xz.needDictionaryReset = true;
+    _xz.needProperties = true;
     _stage = _Stage.chunkControl;
     return true;
   }
 
   void _readChunkControl() {
     _chunkControl = view(1)[0];
-    skip(1);
     if (_chunkControl == 0) {
+      skip(1);
       _finishBlockData();
       return;
     }
     if (_chunkControl > 2 && _chunkControl < 0x80) {
       throw ArchiveException('xz: unknown LZMA2 control code $_chunkControl');
     }
-    // A block decodes on its own, so its first chunk has to start the
-    // dictionary: control 1 for an uncompressed chunk, reset 3 for an LZMA one
-    final resets = _chunkControl < 0x80
-        ? _chunkControl == 1
-        : ((_chunkControl >> 5) & 0x3) == 3;
-    if (_needDictionaryReset && !resets) {
-      throw ArchiveException(
-          'xz: the first LZMA2 chunk does not reset the dictionary');
-    }
-    _needDictionaryReset = false;
     _stage = _Stage.chunkHeader;
   }
 
+  /// Waits for the lengths, so the whole chunk goes to
+  /// [XZStreamDecoder.readLZMA2Chunk] at once
   bool _readChunkHeader() {
-    if (_chunkControl < 0x80) {
-      if (available < 2) {
-        return false;
-      }
-      final field = view(2);
-      _chunkUncompressedLength = ((field[0] << 8) | field[1]) + 1;
-      _chunkCompressedLength = _chunkUncompressedLength;
-      skip(2);
-      _decoder.reset(resetDictionary: _chunkControl == 1);
-      _stage = _Stage.chunkBody;
-      return true;
-    }
-    final reset = (_chunkControl >> 5) & 0x3;
-    final need = reset >= 2 ? 5 : 4;
+    final need = _chunkControl < 0x80
+        ? 3
+        : ((_chunkControl >> 5) & 0x3) >= 2
+            ? 6
+            : 5;
     if (available < need) {
       return false;
     }
     final field = view(need);
-    _chunkUncompressedLength =
-        (((_chunkControl & 0x1f) << 16) | (field[0] << 8) | field[1]) + 1;
-    _chunkCompressedLength = ((field[2] << 8) | field[3]) + 1;
-    int? literalContextBits;
-    int? literalPositionBits;
-    int? positionBits;
-    if (reset >= 2) {
-      var properties = field[4];
-      if (properties > 224) {
-        throw ArchiveException('xz: invalid LZMA properties byte');
-      }
-      positionBits = properties ~/ 45;
-      properties -= positionBits * 45;
-      literalPositionBits = properties ~/ 9;
-      literalContextBits = properties - literalPositionBits * 9;
-      if (literalContextBits + literalPositionBits > 4) {
-        throw ArchiveException(
-            'xz: invalid LZMA literal context and position bits');
-      }
-    }
-    skip(need);
-    if (reset > 0) {
-      _decoder.reset(
-          literalContextBits: literalContextBits,
-          literalPositionBits: literalPositionBits,
-          positionBits: positionBits,
-          resetDictionary: reset == 3);
-    }
+    _chunkLength = _chunkControl < 0x80
+        ? need + ((field[1] << 8) | field[2]) + 1
+        : need + ((field[3] << 8) | field[4]) + 1;
     _stage = _Stage.chunkBody;
     return true;
   }
 
   void _readChunkBody() {
-    final body = InputMemoryStream(view(_chunkCompressedLength));
-    if (_chunkControl < 0x80) {
-      // What comes back is a view of the piece that arrived, so it is copied
-      // out like everything else: the caller owns that buffer again the moment
-      // the call returns
-      _sink.writeBytes(
-          _decoder.decodeUncompressed(body, _chunkUncompressedLength));
-    } else {
-      _decoder.decodeToOutput(body, _chunkUncompressedLength, _sink);
-      if (!_decoder.isRangeCoderFinished) {
-        throw ArchiveException('xz: LZMA data is corrupt');
-      }
+    _xz.failureReason = null;
+    final done = _xz.readLZMA2Chunk(
+        InputMemoryStream(view(_chunkLength)), _sink, _dictionarySize);
+    if (done == false) {
+      throw ArchiveException('xz: ${_xz.failureReason}');
     }
-    _decoder.trimDictionary(_dictionarySize);
-    skip(_chunkCompressedLength);
+    skip(_chunkLength);
     _stage = _Stage.chunkControl;
   }
 
@@ -780,23 +669,6 @@ class _ByteReader {
       throw ArchiveException('xz: a header field is truncated');
     }
     return _bytes[at++];
-  }
-
-  Uint8List bytes(int count) {
-    if (at + count > _end) {
-      throw ArchiveException('xz: a header field is truncated');
-    }
-    final view = Uint8List.sublistView(_bytes, at, at + count);
-    at += count;
-    return view;
-  }
-
-  int multibyte() {
-    final value = tryMultibyte();
-    if (value == null) {
-      throw ArchiveException('xz: a header field is truncated');
-    }
-    return value;
   }
 
   /// Null when the bytes for it have not arrived, which is what lets the index

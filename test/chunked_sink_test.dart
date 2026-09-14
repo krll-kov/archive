@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -125,6 +126,82 @@ void main() {
       // A failed conversion hands nothing over and closes nothing
       expect(held.length, 0);
       expect(held.closes, 0);
+    });
+
+    // A stream hears a failure once, as it does from gzip and zlib in dart:io.
+    // A decoder that fails drops the input after it and never closes, as gzip
+    // does. Every other transformer closes on its first failure
+    test('every transformer reports a failure to a stream once', () async {
+      Stream<T> failing<T>(List<T> items) async* {
+        yield* Stream.fromIterable(items);
+        yield* Stream<T>.error(StateError('source failed'));
+        yield* Stream.fromIterable(items);
+      }
+
+      Stream<T> watched<T>(Stream<T> source, Completer<void> fed) =>
+          source.transform(
+              StreamTransformer<T, T>.fromHandlers(handleDone: (sink) {
+            fed.complete();
+            sink.close();
+          }));
+
+      List<List<int>> pieces(List<int> bytes) => [
+            for (var at = 0; at < bytes.length; at += 16)
+              bytes.sublist(
+                  at, at + 16 < bytes.length ? at + 16 : bytes.length),
+          ];
+
+      Stream<List<int>> broken(Codec<List<int>, List<int>> codec) {
+        final archive = Uint8List.fromList(codec.encode(_sample(100000)));
+        archive[0] ^= 0xff;
+        return Stream.fromIterable(pieces(archive));
+      }
+
+      final files = [
+        for (var i = 0; i < 4; i++) ArchiveFile.bytes('f$i.bin', _sample(3000)),
+      ];
+      final tar = TarEncoder().encodeBytes(Archive()..addFile(files[0]));
+      tar[148] ^= 1;
+      final data = pieces(_sample(3000));
+      final cases = <String, Stream<Object?> Function(Completer<void>)>{
+        'xzCodec.decoder': (fed) =>
+            watched(broken(xzCodec), fed).transform(xzCodec.decoder),
+        'zstdCodec.decoder': (fed) =>
+            watched(broken(zstdCodec), fed).transform(zstdCodec.decoder),
+        'bzip2Codec.decoder': (fed) =>
+            watched(broken(bzip2Codec), fed).transform(bzip2Codec.decoder),
+        'xzCodec.encoder': (fed) =>
+            watched(failing(data), fed).transform(xzCodec.encoder),
+        'zstdCodec.encoder': (fed) =>
+            watched(failing(data), fed).transform(zstdCodec.encoder),
+        'bzip2Codec.encoder': (fed) =>
+            watched(failing(data), fed).transform(bzip2Codec.encoder),
+        'tarCodec.decoder': (fed) =>
+            watched(Stream.fromIterable(pieces(tar)), fed)
+                .transform(tarCodec.decoder),
+        'tarCodec.encoder': (fed) =>
+            watched(failing(files), fed).transform(tarCodec.encoder),
+        'zipCodec.encoder': (fed) =>
+            watched(failing(files), fed).transform(zipCodec.encoder),
+        'threaded xz decoder': (fed) => watched(broken(xzCodec), fed).transform(
+            const XzCodec(multithread: XZMultithreadOptions(workers: 2))
+                .decoder),
+        'threaded zstd encoder': (fed) => watched(failing(data), fed).transform(
+            const ZstdCodec(multithread: ZstdMultithreadOptions(workers: 2))
+                .encoder),
+      };
+      for (final entry in cases.entries) {
+        final errors = <Object>[];
+        final fed = Completer<void>();
+        final ended = Completer<void>();
+        entry
+            .value(fed)
+            .listen((_) {}, onError: errors.add, onDone: ended.complete);
+        await Future.any(
+                [ended.future, fed.future.then((_) => pumpEventQueue())])
+            .timeout(const Duration(seconds: 10));
+        expect(errors, hasLength(1), reason: entry.key);
+      }
     });
 
     test('what a codec throws at bad data becomes one kind of failure', () {

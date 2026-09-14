@@ -100,11 +100,7 @@ class ZstdMtFrameEncoder {
     }
 
     if (checksum) {
-      final digest = _hash.digestLow;
-      out.writeByte(digest & 0xff);
-      out.writeByte((digest >>> 8) & 0xff);
-      out.writeByte((digest >>> 16) & 0xff);
-      out.writeByte((digest >>> 24) & 0xff);
+      _writeChecksum(out, _hash.digestLow);
     }
   }
 
@@ -576,30 +572,39 @@ Future<Uint8List> zstdMtCompress(Uint8List src, int level,
     int workers = 1,
     int memoryBudget = 0,
     ZstdDictionary? dictionary}) async {
-  final geometry = ZstdMtFrameEncoder.geometry(level, src.length,
+  // `ZSTD_getCParamsFromCCtxParams` sizes the frame by the content and the
+  // dictionary buffer together, as the single threaded frame does
+  final sized = src.length + (dictionary?.sourceSize ?? 0);
+  final geometry = ZstdMtFrameEncoder.geometry(level, sized,
       jobSize: jobSize, overlapLog: overlapLog);
   final starts = <int>[0];
   for (var at = geometry[0]; at < src.length; at += geometry[0]) {
     starts.add(at);
   }
-  final cap = zstdMtWorkerCap(memoryBudget, level, src.length, geometry);
+  final cap = zstdMtWorkerCap(memoryBudget, level, sized, geometry);
   // The reference gives the dictionary to job zero only, so that one is done
   // here rather than plumbed through the port, and the rest go to the pool
   Uint8List? firstPart;
   var rest = starts;
+  ZstdMtLdmPass? ldmPass;
   if (dictionary != null) {
+    // `ZSTDMT_serialState_genSequences` runs one long distance pass over every
+    // job in order. Job zero is in it, so the pass starts here
+    ldmPass = ZstdMtLdmPass.forParams(
+        zstdParamsForLevel(level, sized), jobSize > 0 ? jobSize : src.length);
     final firstEnd = starts.length > 1 ? starts[1] : src.length;
     final content = dictionary.content;
     final held = Uint8List(content.length + firstEnd)
       ..setRange(0, content.length, content)
       ..setRange(content.length, content.length + firstEnd, src);
     final out0 = OutputMemoryStream();
-    ZstdMtFrameEncoder.encodeJob(held, content.length, out0, level, src.length,
+    ZstdMtFrameEncoder.encodeJob(held, content.length, out0, level, sized,
         firstJob: true,
         lastJob: starts.length == 1,
         jobSize: jobSize,
         overlapLog: overlapLog,
-        dictionary: dictionary);
+        dictionary: dictionary,
+        ldmSequences: ldmPass?.generate(src, 0, firstEnd));
     firstPart = out0.getBytes();
     rest = starts.sublist(1);
   }
@@ -611,10 +616,12 @@ Future<Uint8List> zstdMtCompress(Uint8List src, int level,
           workers: workers,
           cap: cap,
           firstIsFirstJob: dictionary == null,
-          size: src.length);
+          size: src.length,
+          paramsSize: sized,
+          ldmPass: ldmPass);
 
   final out = OutputMemoryStream();
-  final params = zstdParamsForLevel(level, src.length);
+  final params = zstdParamsForLevel(level, sized);
   ZstdMtFrameEncoder._writeHeader(
       out,
       src.length,
@@ -631,11 +638,7 @@ Future<Uint8List> zstdMtCompress(Uint8List src, int level,
   if (checksum) {
     final hash = Xxh64()..reset();
     hash.update(src, 0, src.length);
-    final digest = hash.digestLow;
-    out.writeByte(digest & 0xff);
-    out.writeByte((digest >>> 8) & 0xff);
-    out.writeByte((digest >>> 16) & 0xff);
-    out.writeByte((digest >>> 24) & 0xff);
+    _writeChecksum(out, hash.digestLow);
   }
   return out.getBytes();
 }

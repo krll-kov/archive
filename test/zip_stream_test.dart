@@ -113,6 +113,66 @@ void main() {
       });
     }
 
+    // Deflate grows data that does not compress. 4293656835 bytes is the
+    // largest entry whose worst case still fits 32 bits. One byte more is
+    // written the way Info-ZIP writes a zip64 entry to a pipe
+    test('an entry deflate may grow past 4 GB is written with zip64', () {
+      ByteData written(int size) {
+        final output = OutputMemoryStream();
+        ZipEncoder(streamed: true)
+          ..startEncode(output)
+          ..addHeader(ArchiveFile.file('a', size, FileContentMemory([1, 2, 3])))
+              ?.finish();
+        return ByteData.sublistView(output.getBytes());
+      }
+
+      final plain = written(4293656835);
+      expect(plain.getUint16(4, Endian.little), 20);
+      expect(plain.getUint32(18, Endian.little), 0);
+      expect(plain.getUint16(28, Endian.little), 0);
+      final plainEnd = plain.lengthInBytes;
+      expect(plain.getUint32(plainEnd - 16, Endian.little), 0x08074b50);
+      expect(plain.getUint32(plainEnd - 4, Endian.little), 4293656835);
+
+      final wide = written(4293656836);
+      expect(wide.getUint16(4, Endian.little), 45);
+      expect(wide.getUint32(18, Endian.little), 0xFFFFFFFF);
+      expect(wide.getUint32(22, Endian.little), 0xFFFFFFFF);
+      expect(wide.getUint16(28, Endian.little), 20);
+      expect(wide.getUint16(31, Endian.little), 1);
+      final wideEnd = wide.lengthInBytes;
+      expect(wide.getUint32(wideEnd - 24, Endian.little), 0x08074b50);
+      expect(wide.getUint64(wideEnd - 8, Endian.little), 4293656836);
+    });
+
+    // An entry over 4 GB is streamed too, not held in memory
+    test('an entry over 4 GB is streamed with zip64', () {
+      final output = OutputMemoryStream();
+      final encoder = ZipEncoder(streamed: true)..startEncode(output);
+      final body = encoder.addHeader(
+          ArchiveFile.file('a', 5000000000, FileContentMemory([1, 2, 3])));
+      expect(body, isNotNull);
+      body!.finish();
+      encoder.endEncode();
+      final view = ByteData.sublistView(output.getBytes());
+      expect(view.getUint16(4, Endian.little), 45);
+      expect(view.getUint32(22, Endian.little), 0xFFFFFFFF);
+      expect(view.getUint16(28, Endian.little), 20);
+
+      var central = 0;
+      while (view.getUint32(central, Endian.little) != 0x02014b50) {
+        central++;
+      }
+      expect(view.getUint32(central - 24, Endian.little), 0x08074b50);
+      expect(view.getUint64(central - 8, Endian.little), 5000000000);
+      expect(view.getUint16(central + 6, Endian.little), 45);
+      expect(view.getUint32(central + 24, Endian.little), 0xFFFFFFFF);
+      final nameLength = view.getUint16(central + 28, Endian.little);
+      final zip64 = central + 46 + nameLength;
+      expect(view.getUint16(zip64, Endian.little), 1);
+      expect(view.getUint64(zip64 + 4, Endian.little), 5000000000);
+    });
+
     test('it emits before the compression pass reads an entire entry', () {
       final bytes = _source(1024 * 1024, 17);
       final input = _ObservedInput(bytes);

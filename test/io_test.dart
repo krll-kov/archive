@@ -699,6 +699,36 @@ void main() {
         throwsA(isA<ArchiveException>()));
   });
 
+  // pbzip2 writes one bzip2 stream per block and bzip2 -d reads them all
+  test('extractFileToDisk reads every tar.bz2 stream and rejects a cut one',
+      () async {
+    final directory = Directory.systemTemp.createTempSync('archive-extract-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final archive = Archive()
+      ..add(ArchiveFile('first.bin', 3, [1, 2, 3]))
+      ..add(ArchiveFile('second.bin', 3, [4, 5, 6]));
+    final tar = TarEncoder().encodeBytes(archive);
+    final first =
+        BZip2Encoder().encodeBytes(Uint8List.sublistView(tar, 0, 1024));
+    final last = BZip2Encoder().encodeBytes(Uint8List.sublistView(tar, 1024));
+    final input = File('${directory.path}/input.tar.bz2')
+      ..writeAsBytesSync([...first, ...last]);
+    final validOutput = '${directory.path}/valid';
+    await extractFileToDisk(input.path, validOutput);
+    expect(File('$validOutput/first.bin').readAsBytesSync(), [1, 2, 3]);
+    expect(File('$validOutput/second.bin').readAsBytesSync(), [4, 5, 6]);
+
+    final truncated = [...first, ...last.sublist(0, last.length - 1)];
+    expect(
+        BZip2Decoder()
+            .decodeStream(InputMemoryStream(truncated), OutputMemoryStream()),
+        isFalse);
+    input.writeAsBytesSync(truncated);
+    await expectLater(
+        extractFileToDisk(input.path, '${directory.path}/truncated'),
+        throwsA(isA<ArchiveException>()));
+  });
+
   test('extractFileToDisk removes temporary tar files after rejection',
       () async {
     final directory = Directory.systemTemp.createTempSync('archive-cleanup-');

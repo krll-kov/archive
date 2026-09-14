@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:archive/src/codecs/bzip2/bzip2_chunked.dart' show Bz2MarkerScan;
 import 'package:test/test.dart';
 
 // bzip2 is a bit stream: a block starts wherever the last one ended, not on a
@@ -47,6 +48,39 @@ Uint8List _decode(Uint8List archive, int piece, {bool verify = true}) {
 
 void main() {
   final small = File('test/_data/bzip2/test.bz2').readAsBytesSync();
+
+  // A real archive with a marker inside its data takes about 2^48 tries, so the
+  // scan is tested on bits built here
+  group('bzip2 marker scan', () {
+    Uint8List bits(Map<int, int> markers) {
+      final out = Uint8List(64);
+      markers.forEach((at, marker) {
+        for (var i = 0; i < 48; i++) {
+          final bit = at + i;
+          out[bit >> 3] |= ((marker >> (47 - i)) & 1) << (7 - (bit & 7));
+        }
+      });
+      return out;
+    }
+
+    const block = 0x314159265359;
+    const end = 0x177245385090;
+
+    test('finds a marker that starts where the scan starts', () {
+      final scan = Bz2MarkerScan()..start(10);
+      expect(scan.locate(bits({10: end}), 64), isTrue);
+      expect(scan.position, 58);
+    });
+
+    test('finds the marker right after one it already found', () {
+      final scan = Bz2MarkerScan()..start(10);
+      final bytes = bits({10: block, 58: end});
+      expect(scan.locate(bytes, 64), isTrue);
+      expect(scan.position, 58);
+      expect(scan.locate(bytes, 64), isTrue);
+      expect(scan.position, 106);
+    });
+  });
 
   group('bzip2 chunked decoder', () {
     test('an archive decodes the same whatever the pieces', () {

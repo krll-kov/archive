@@ -638,6 +638,28 @@ void main() async {
       expect(archive[0].size, equals(3136));
     });
 
+    // Info-ZIP writes this to a pipe. The sizes behind the data are 8 bytes
+    // each with zip64. unzip and Python take the sizes from the central
+    // directory and never read these
+    test('zip64 sizes behind the data', () async {
+      final text =
+          List.filled(10, 'the quick brown fox jumps over the lazy dog\n')
+              .join()
+              .codeUnits;
+      final path = p.join('test/_data/zip/zip64_descriptor.zip');
+      final input = InputFileStream(path);
+      for (final archive in [
+        ZipDecoder().decodeBytes(File(path).readAsBytesSync(), verify: true),
+        ZipDecoder().decodeStream(input, verify: true),
+      ]) {
+        final file = archive.files.single;
+        expect(file.name, '-');
+        expect(file.size, 440);
+        expect(file.content, text);
+      }
+      await input.close();
+    });
+
     test('data types', () {
       final archive = Archive();
       archive.add(ArchiveFile.bytes('uint8list', Uint8List(2)));

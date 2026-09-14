@@ -19,6 +19,28 @@ class BZip2Decoder {
 
   bool decodeStream(InputStream input, OutputStream output,
       {bool verify = false}) {
+    // bzip2 -d reads streams written back to back, and pbzip2 writes one per
+    // block. What follows the last stream and does not start one is ignored,
+    // as it always was
+    while (true) {
+      if (!_decodeStream(input, output, verify: verify)) {
+        return false;
+      }
+      if (input.isEOS) {
+        return true;
+      }
+      final next = input.peekBytes(3).toUint8List();
+      if (next.length < 3 ||
+          next[0] != BZip2.bzhSignature[0] ||
+          next[1] != BZip2.bzhSignature[1] ||
+          next[2] != BZip2.bzhSignature[2]) {
+        return true;
+      }
+    }
+  }
+
+  bool _decodeStream(InputStream input, OutputStream output,
+      {bool verify = false}) {
     final br = Bz2BitReader(input);
 
     _groupPos = 0;
@@ -68,6 +90,11 @@ class BZip2Decoder {
         combinedCrc = ((combinedCrc << 1) | (combinedCrc >> 31)) & 0xffffffff;
         combinedCrc ^= blockCrc;
       } else if (type == blockEos) {
+        // A file reads zeros past its end, so a cut inside the stream check is
+        // only seen by counting the bits that are left
+        if (br.bitsLeft + input.length * 8 < 32) {
+          return false;
+        }
         var storedCrc = 0;
         storedCrc = (storedCrc << 8) | br.readByte();
         storedCrc = (storedCrc << 8) | br.readByte();
@@ -84,7 +111,8 @@ class BZip2Decoder {
         return true;
       }
     }
-    return true;
+    // The input ran out before the end of stream marker
+    return false;
   }
 
   /// Allocates what one stream's blocks need.

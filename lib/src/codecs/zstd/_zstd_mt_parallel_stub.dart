@@ -19,11 +19,17 @@ Future<List<Uint8List>> zstdMtCompressJobs(
     required int workers,
     int cap = 0,
     bool firstIsFirstJob = true,
-    int size = 0}) {
+    int size = 0,
+    int paramsSize = 0,
+    ZstdMtLdmPass? ldmPass}) {
   final parts = <Uint8List>[];
   final whole = size > 0 ? size : src.length;
-  final pass = ZstdMtLdmPass.forParams(
-      zstdParamsForLevel(level, whole), jobSize > 0 ? jobSize : src.length);
+  // With a dictionary the parameters are sized by more than the content, and
+  // the long distance pass has already run over job zero
+  final sized = paramsSize > 0 ? paramsSize : whole;
+  final pass = ldmPass ??
+      ZstdMtLdmPass.forParams(
+          zstdParamsForLevel(level, sized), jobSize > 0 ? jobSize : src.length);
   for (var i = 0; i < starts.length; i++) {
     final start = starts[i];
     final end = i + 1 < starts.length ? starts[i + 1] : src.length;
@@ -34,7 +40,7 @@ Future<List<Uint8List>> zstdMtCompressJobs(
         prefix,
         out,
         level,
-        src.length,
+        sized,
         firstJob: i == 0 && firstIsFirstJob,
         lastJob: i == starts.length - 1,
         jobSize: jobSize,

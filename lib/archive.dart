@@ -7,7 +7,7 @@ export 'src/archive/encryption_type.dart';
 export 'src/codecs/bzip2/bz2_bit_reader.dart';
 export 'src/codecs/bzip2/bz2_bit_writer.dart';
 export 'src/codecs/bzip2/bzip2.dart';
-export 'src/codecs/bzip2/bzip2_chunked.dart';
+export 'src/codecs/bzip2/bzip2_chunked.dart' hide Bz2MarkerScan;
 export 'src/codecs/bzip2_decoder.dart';
 export 'src/codecs/bzip2_encoder.dart';
 export 'src/codecs/gzip_decoder.dart';
