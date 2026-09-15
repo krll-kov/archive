@@ -31,7 +31,7 @@ class ZstdEncoder {
 
   /// With [multithread] the frame is the one `zstd -T` writes, not the one the
   /// single threaded encoder writes, and it arrives through `onDone` rather
-  /// than as the return value, which is then empty.
+  /// than as the return value. The return value is then empty.
   ///
   /// A setting that cannot be honoured throws [ArgumentError] here, while the
   /// caller is still on the stack; only a failure of the work itself reaches
@@ -86,7 +86,7 @@ class ZstdEncoder {
           null,
           'onDone',
           'Must be given here, since this call has nowhere else to put the '
-              'result; only a stream carries its own end');
+              'result; only the converter carries its own end');
     }
     checkZstdMultithreadOptions(options);
   }

@@ -6,7 +6,7 @@ const zstdDefaultMemoryBudget = 1024 * 1024 * 1024;
 /// [workers] does not change those bytes, [jobSize] and [overlapLog] do
 class ZstdMultithreadOptions<T> {
   /// Where the result goes when the call has nowhere else to put it. A stream
-  /// carries its own end, so `transform` leaves this null
+  /// converter carries its own end, so `transform` leaves this null
   final void Function(T result)? onDone;
 
   /// Where a failure of the work goes. A field below that cannot be honoured
@@ -22,13 +22,24 @@ class ZstdMultithreadOptions<T> {
   final int overlapLog;
 
   const ZstdMultithreadOptions({
-    this.onDone,
+    required this.onDone,
     this.onError,
     this.workers,
     this.memoryBudget,
     this.jobSize = 0,
     this.overlapLog = 0,
   });
+
+  /// The options a `Converter` takes, the `zstdCodec` transform. A stream
+  /// carries its own end, so there is no result to hand anywhere and [onDone]
+  /// stays null. encodeBytes and encodeStream refuse these options
+  const ZstdMultithreadOptions.converter({
+    this.onError,
+    this.workers,
+    this.memoryBudget,
+    this.jobSize = 0,
+    this.overlapLog = 0,
+  }) : onDone = null;
 }
 
 /// The four fields that describe the work, checked the same way wherever the

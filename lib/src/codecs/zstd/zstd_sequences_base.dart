@@ -19,10 +19,10 @@ const _holdsPredefined = 1;
 const _holdsBuilt = 2;
 
 /// Everything about a sequences section except the table rows and the loop that
-/// reads them, which are written once per bit container width.
+/// reads them. Those two are written once per bit container width.
 ///
-/// The three tables persist across the blocks of a frame, which is what a
-/// repeat mode block refers back to, so one instance lives for one frame
+/// The three tables persist across the blocks of a frame. A repeat mode block
+/// refers back to them, so one instance lives for one frame
 abstract class ZstdSequencesBase {
   static const builtBases = [
     zstdLiteralsLengthTableBase,

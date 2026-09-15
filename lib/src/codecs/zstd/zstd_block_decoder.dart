@@ -14,7 +14,7 @@ class ZstdBlockException implements Exception {
 }
 
 /// Decodes the blocks of one frame. The entropy tables it holds persist from
-/// one block to the next, which is what repeat modes refer back to
+/// one block to the next. Repeat modes refer back to them
 class ZstdBlockDecoder {
   final ZstdLiterals _literals = ZstdLiterals();
   final ZstdSequences _sequences = ZstdSequences();

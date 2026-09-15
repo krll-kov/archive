@@ -160,7 +160,15 @@ Decoding is synchronous, so in Flutter run it in `Isolate.run` and send the prog
 ### Dart async* StreamTransformers/ByteConversionSink/Converter support
 
 Codecs that take data as it arrives expose a `Codec` with a converter for each
-direction, the shape `dart:io` uses for `gzip`.
+direction, the shape `dart:io` uses for `gzip`. Everything named `...Converter`
+takes bytes and writes bytes, the way `dart:convert` means it. tar and zip carry
+entries on one side, so their two sides are `StreamTransformer`s instead,
+`TarDecoderTransformer`, `TarEncoderTransformer` and `ZipEncoderTransformer`.
+Both shapes are used the same way, through `.transform`.
+
+None of this is `decodeStream` or `encodeStream`: those take an `InputStream`
+and an `OutputStream`, read the whole archive in one call, and are not fed by a
+Dart `Stream`.
 
 | codec | decoding                             | encoding                                     |
 |-------|--------------------------------------|----------------------------------------------|
@@ -277,8 +285,8 @@ Both directions also take a whole buffer: `xzCodec.decode(bytes)` and
 `xzCodec.encode(bytes)`, or the sinks directly through
 `startChunkedConversion` for code that pushes rather than awaits.
 
-The block checks are verified by default when decoding a stream, unlike the
-other entry points: the compressed bytes are handed back as they pass, so there
+The block checks are verified by default when decoding through a converter,
+unlike `decodeBytes` and `decodeStream`: the compressed bytes are handed back as they pass, so there
 is no second chance at the check. `XzCodec(verify: false)` skips them, which is
 worth about 6% of the decode.
 
@@ -434,11 +442,15 @@ switch (CodecsRecognizer.recognize(head)) {
 Each format is also its own check: `isGZip`, `isZLib`, `isBZip2`, `isXZ`,
 `isZstd`, `isZip`, `isTar`.
 
-How much of the file is needed depends on the format: two bytes for zlib, three
-for gzip, four for bzip2, zstd and zip, six for xz. Only tar needs more, since a
-header written before the ustar versions carries no magic at all and is
-identified by the checksum over its whole 512 byte block. 263 bytes are enough
-for a ustar tar, `CodecsRecognizer.headerBytes` for any of them.
+How much of the file is needed depends on the format. A check gives an answer
+from 2 bytes for zlib **(if withZLib is set to true, by default it's false because zlib can give false positives)**,
+3 for gzip, 4 for bzip2, zstd and zip, and 6 for xz. With more bytes passed this check also refuses reserved flag
+bits and broken fields: 7 bytes for zlib, 4 for gzip, 5 for zstd, 10 for bzip2 and 12 for xz. With fewer bytes a check
+skips the fields it has not reached. So it can pass data that a whole header
+would fail. Only tar needs more, since a header written before the ustar versions carries no magic
+at all and is identified by the checksum over its whole 512 byte block. 263
+bytes are enough for a ustar tar, `CodecsRecognizer.headerBytes` for any of
+them.
 
 Formats with no header of their own, raw LZMA and raw deflate among them, cannot
 be recognized this way.

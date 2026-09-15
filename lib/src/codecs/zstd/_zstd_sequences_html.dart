@@ -9,8 +9,8 @@ import 'zstd_window.dart';
 /// Decodes and executes the sequences of one block, holding the bitstream in a
 /// 32 bit container.
 ///
-/// The native form packs a whole row into one 64 bit integer, which is not
-/// available where an int is a JavaScript number, so the four fields sit in
+/// The native form packs a whole row into one 64 bit integer. An int is a
+/// JavaScript number here and cannot hold that, so the four fields sit in
 /// four arrays and the loop pays four loads. A 32 bit container also holds too
 /// few bits to serve a read of more than 24, so it is refilled between fields
 class ZstdSequences extends ZstdSequencesBase {

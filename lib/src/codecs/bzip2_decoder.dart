@@ -55,8 +55,10 @@ class BZip2Decoder {
       //throw ArchiveException('Invalid Signature');
     }
 
+    // The format has block sizes one to nine. bzip2 itself calls BZh0 a bad
+    // magic number, and a zero here would give us an empty _tt to index
     _blockSize100k = br.readByte() - BZip2.hdr0;
-    if (_blockSize100k < 0 || _blockSize100k > 9) {
+    if (_blockSize100k < 1 || _blockSize100k > 9) {
       return false;
       //throw ArchiveException('Invalid BlockSize');
     }
@@ -78,7 +80,7 @@ class BZip2Decoder {
         storedBlockCrc = (storedBlockCrc << 8) | br.readByte();
 
         var blockCrc = _readCompressed(br, output);
-        if (blockCrc < 0) {
+        if (blockCrc < 0 || br.overrun) {
           return false;
         }
         blockCrc = BZip2.finalizeCrc(blockCrc);
@@ -101,7 +103,7 @@ class BZip2Decoder {
         storedCrc = (storedCrc << 8) | br.readByte();
         storedCrc = (storedCrc << 8) | br.readByte();
 
-        if (verify && storedCrc != combinedCrc) {
+        if (br.overrun || (verify && storedCrc != combinedCrc)) {
           return false;
           //throw ArchiveException(
           //    'Invalid combined checksum: $combinedCrc : $storedCrc');

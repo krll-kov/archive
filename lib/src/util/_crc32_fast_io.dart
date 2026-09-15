@@ -4,8 +4,8 @@ bool isCrc32FastSupported_() => true;
 
 /// Slice-by-eight tables built from the byte at a time one. Table k holds the
 /// contribution of a byte sitting k places from the end of the eight byte
-/// window, which is what makes the eight lookups independent and lets the loop
-/// fold eight bytes at once
+/// window. The eight lookups are independent that way, and the loop folds eight
+/// bytes at once
 Uint32List? _tables;
 
 Uint32List _buildTables(List<int> base) {

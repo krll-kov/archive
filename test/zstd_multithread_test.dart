@@ -134,7 +134,8 @@ void main() {
     await for (final piece in Stream.fromIterable(pieces).transform(ZstdCodec(
       level: 6,
       frameChecksum: false,
-      multithread: ZstdMultithreadOptions(workers: workers, jobSize: jobSize),
+      multithread:
+          ZstdMultithreadOptions.converter(workers: workers, jobSize: jobSize),
     ).encoder)) {
       out.addAll(piece);
     }
@@ -166,8 +167,8 @@ void main() {
         .transform(const ZstdCodec(
       level: 22,
       frameChecksum: false,
-      multithread:
-          ZstdMultithreadOptions(workers: 1, jobSize: 524288, overlapLog: 1),
+      multithread: ZstdMultithreadOptions.converter(
+          workers: 1, jobSize: 524288, overlapLog: 1),
     ).encoder)
         .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
     // ZSTD_compressStream2 enables LDM when the content size is unknown at level 22
@@ -179,7 +180,7 @@ void main() {
         .transform(const ZstdCodec(
       level: 1,
       frameChecksum: false,
-      multithread: ZstdMultithreadOptions(workers: 1),
+      multithread: ZstdMultithreadOptions.converter(workers: 1),
     ).encoder)
         .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
     expect(frame, [0x28, 0xb5, 0x2f, 0xfd, 0x20, 0, 1, 0, 0]);
@@ -201,7 +202,8 @@ void main() {
           .transform(ZstdCodec(
         level: 6,
         frameChecksum: false,
-        multithread: ZstdMultithreadOptions(workers: workers, jobSize: 524288),
+        multithread:
+            ZstdMultithreadOptions.converter(workers: workers, jobSize: 524288),
       ).encoder)
           .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk)).timeout(
               const Duration(seconds: 60));
@@ -235,7 +237,8 @@ void main() {
         final output = source.stream
             .transform(const ZstdCodec(
               level: 6,
-              multithread: ZstdMultithreadOptions(workers: 4, jobSize: 524288),
+              multithread:
+                  ZstdMultithreadOptions.converter(workers: 4, jobSize: 524288),
             ).encoder)
             .toList()
             .timeout(const Duration(seconds: 60));
@@ -256,7 +259,8 @@ void main() {
       final subscription = source.stream
           .transform(const ZstdCodec(
             level: 1,
-            multithread: ZstdMultithreadOptions(workers: 2, jobSize: 524288),
+            multithread:
+                ZstdMultithreadOptions.converter(workers: 2, jobSize: 524288),
           ).encoder)
           .listen((_) {});
       if (start > 0) {
@@ -289,7 +293,7 @@ void main() {
     Stream<List<int>>.value(Uint8List(1000))
         .transform(const ZstdCodec(
           level: 1,
-          multithread: ZstdMultithreadOptions(workers: 2),
+          multithread: ZstdMultithreadOptions.converter(workers: 2),
         ).encoder)
         .listen((_) {}, onError: failed.complete, cancelOnError: true);
     expect(await failed.future.timeout(const Duration(seconds: 10)),
@@ -302,7 +306,8 @@ void main() {
     final firstBody = Completer<void>();
     final output = input.stream.transform(const ZstdCodec(
       level: 1,
-      multithread: ZstdMultithreadOptions(workers: 1, jobSize: 524288),
+      multithread:
+          ZstdMultithreadOptions.converter(workers: 1, jobSize: 524288),
     ).encoder);
     var events = 0;
     final subscription = output.listen((_) {
@@ -334,7 +339,8 @@ void main() {
     subscription = source()
         .transform(const ZstdCodec(
       level: 1,
-      multithread: ZstdMultithreadOptions(workers: 1, jobSize: 524288),
+      multithread:
+          ZstdMultithreadOptions.converter(workers: 1, jobSize: 524288),
     ).encoder)
         .listen((_) {
       if (++events == 2) {
@@ -354,7 +360,8 @@ void main() {
     final output = Stream<List<int>>.value([1, 2, 3]).transform(
       const ZstdCodec(
         level: 1,
-        multithread: ZstdMultithreadOptions(workers: 1, memoryBudget: 0),
+        multithread:
+            ZstdMultithreadOptions.converter(workers: 1, memoryBudget: 0),
       ).encoder,
     );
     await expectLater(output.toList(), throwsArgumentError);
@@ -404,7 +411,7 @@ void main() {
             in Stream<List<int>>.value(input).transform(ZstdCodec(
           level: 1,
           frameChecksum: false,
-          multithread: ZstdMultithreadOptions(
+          multithread: ZstdMultithreadOptions.converter(
               workers: 4, memoryBudget: budget, jobSize: 524288),
         ).encoder)) {
           parts.addAll(part);
@@ -437,7 +444,7 @@ void main() {
         expected);
     final parallel = await encode(const ZstdCodec(
       level: 1,
-      multithread: ZstdMultithreadOptions(workers: 1),
+      multithread: ZstdMultithreadOptions.converter(workers: 1),
     ));
     expect(
         ZstdDecoder().decodeBytes(parallel, verify: true, throwOnError: true),
@@ -494,9 +501,10 @@ void main() {
 
   test('a sink refuses the options, since it cannot wait for a worker', () {
     expect(
-        () => ZstdCodec(multithread: ZstdMultithreadOptions(workers: 2))
-            .encoder
-            .startChunkedConversion(_Held()),
+        () =>
+            ZstdCodec(multithread: ZstdMultithreadOptions.converter(workers: 2))
+                .encoder
+                .startChunkedConversion(_Held()),
         throwsArgumentError);
   });
 

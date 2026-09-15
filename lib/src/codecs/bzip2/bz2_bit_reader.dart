@@ -8,9 +8,23 @@ class Bz2BitReader {
 
   int readByte() => readBits(8);
 
-  /// Bits still unread in the byte being taken apart, which is what a caller
-  /// resuming at a bit that is not on a byte boundary has to account for
+  /// Bits still unread in the byte being taken apart. A caller resuming at a
+  /// bit that is not on a byte boundary accounts for them
   int get bitsLeft => _bitPos;
+
+  /// Set once a read went past the end of the input. An archive cut inside a
+  /// block asks for bytes that are not there, and the two input streams answer
+  /// differently: a file reads zeros past its end, memory throws. So we stop
+  /// here instead and the decoder returns a failure either way
+  bool get overrun => _overrun;
+
+  int _nextByte() {
+    if (input.isEOS) {
+      _overrun = true;
+      return 0;
+    }
+    return input.readByte();
+  }
 
   /// Read a number of bits from the input stream.
   int readBits(int numBits) {
@@ -20,7 +34,7 @@ class Bz2BitReader {
 
     if (_bitPos == 0) {
       _bitPos = 8;
-      _bitBuffer = input.readByte();
+      _bitBuffer = _nextByte();
     }
 
     var value = 0;
@@ -29,13 +43,13 @@ class Bz2BitReader {
       value = (value << _bitPos) + (_bitBuffer & _bitMask[_bitPos]);
       numBits -= _bitPos;
       _bitPos = 8;
-      _bitBuffer = input.readByte();
+      _bitBuffer = _nextByte();
     }
 
     if (numBits > 0) {
       if (_bitPos == 0) {
         _bitPos = 8;
-        _bitBuffer = input.readByte();
+        _bitBuffer = _nextByte();
       }
 
       value = (value << numBits) +
@@ -49,6 +63,7 @@ class Bz2BitReader {
 
   int _bitBuffer = 0;
   int _bitPos = 0;
+  var _overrun = false;
 
   static const List<int> _bitMask = [0, 1, 3, 7, 15, 31, 63, 127, 255];
 }

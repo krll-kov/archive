@@ -86,8 +86,8 @@ class XZLayout {
 
 /// The size in bytes of the check field for [checkType].
 ///
-/// The check types are grouped in threes by size, which is what lets an
-/// unrecognised check still be skipped over
+/// The check types are grouped in threes by size. An unrecognised check is
+/// still skipped over that way
 int xzCheckSize(int checkType) {
   if (checkType == 0) {
     return 0;

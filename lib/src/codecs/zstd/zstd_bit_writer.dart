@@ -2,7 +2,7 @@ import 'dart:typed_data';
 import 'zstd_web.dart';
 
 /// Writes the bitstreams the format reads backwards. At most 63 bits stand
-/// unflushed, which is what makes the shift masks below no-ops
+/// unflushed. The shift masks below are no-ops because of it
 class ZstdBitWriter {
   final ByteData view;
 

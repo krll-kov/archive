@@ -117,8 +117,8 @@ class ZstdFrameEncoder {
     if (size == 0) {
       blocks.encode(buffer, at, at, base, out, true, _rep);
     }
-    // Everything a block saved so far, which is what stops the splitter from
-    // cutting up data that does not compress
+    // Everything a block saved so far. It stops the splitter from cutting up
+    // data that does not compress
     var savings = 0;
     var filled = src == null ? at : at + size;
     var read = src == null ? 0 : size;

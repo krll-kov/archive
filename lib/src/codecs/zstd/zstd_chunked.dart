@@ -17,7 +17,7 @@ import 'zstd_mt_parallel.dart';
 import 'zstd_multithread_options.dart';
 import 'zstd_window.dart';
 
-/// zstd for data that arrives in pieces, which is what a `Stream` gives.
+/// zstd for data that arrives in pieces, the way a `Stream` gives it.
 ///
 /// A frame written this way names no content size, since a stream does not know
 /// it, and takes its parameters from the row the reference picks when the size
@@ -30,8 +30,8 @@ class ZstdCodec extends Codec<List<int>, List<int>> {
   /// What a frame may name to reach back into
   final ZstdDictionary? dictionary;
 
-  /// Refuses a frame whose window is wider than this, which is what stops an
-  /// archive from naming an allocation
+  /// Refuses a frame whose window is wider than this. It stops an archive from
+  /// naming an allocation
   final int windowSizeLimit;
 
   const ZstdCodec(
@@ -119,7 +119,8 @@ class ZstdEncoderConverter extends ChunkedConverter {
       throw ArgumentError.value(
           multithread,
           'multithread',
-          'Works through a stream only, since a sink owes its output before '
+          'Works through the converter bound to a stream only, since a sink owes '
+              'its output before '
               'it returns');
     }
     return ZstdChunkedEncoder(
@@ -186,7 +187,7 @@ class ZstdEncoderConverter extends ChunkedConverter {
 /// Writes one zstd frame over data that arrives in pieces.
 ///
 /// `ZSTD_compressStream2` hands its own buffer one block of input at a time and
-/// lets the block splitter cut inside that one block, which is what makes a
+/// lets the block splitter cut inside that one block. That is what makes a
 /// streamed archive differ from the one the whole input would give. This does
 /// the same: it gathers a block, then encodes what has gathered
 class ZstdChunkedEncoder extends ChunkedSink {
@@ -214,13 +215,13 @@ class ZstdChunkedEncoder extends ChunkedSink {
   late final ZstdBlockEncoder _blocks =
       ZstdBlockEncoder(_blockSizeMax, _params);
   final _splitter = ZstdBlockSplitter();
-  // The header is written on the first block, which is after the first bytes
-  // have gone through the checksum, so neither may be set up there
+  // The header is written on the first block. The first bytes have gone
+  // through the checksum by then, so neither may be set up there
   final _rep = Uint32List(3)..setAll(0, zstdInitialRepeatOffsets);
   final _hash = Xxh64();
 
-  /// The window and what a block needs beside it, which is all this holds of
-  /// the content
+  /// The window and what a block needs beside it. It holds no more of the
+  /// content than that
   late final Uint8List _buffer = _makeBuffer();
   var _at = 0;
   var _filled = 0;
@@ -228,8 +229,8 @@ class ZstdChunkedEncoder extends ChunkedSink {
   var _savings = 0;
   var _started = false;
 
-  /// How much of the content has been taken in, which is what says where the
-  /// reference's input ring is
+  /// How much of the content has been taken in. It says where the reference's
+  /// input ring is
   var _content = 0;
 
   /// `inBuffSize`, the ring the reference gathers into. It hands one
@@ -237,11 +238,11 @@ class ZstdChunkedEncoder extends ChunkedSink {
   /// one would not fit, so it wraps on every multiple of this
   late final int _ring = _matchWindow + _blockSizeMax;
 
-  /// What the reference reads for a size it does not know, which is the row it
-  /// picks and the window it leaves unclamped
+  /// What the reference reads for a size it does not know. It picks the level
+  /// row from this and leaves the window unclamped
   static const _sizeUnknown = 1099511627776;
 
-  /// The dictionary as the reference sees it here, which is none where it is
+  /// The dictionary as the reference sees it here. There is none where it is
   /// too short for `ZSTD_compress_insertDictionary` to take
   ZstdDictionary? get _encodeDictionary {
     final dict = dictionary;
@@ -341,7 +342,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
   }
 
   /// Encodes everything gathered and not yet written. The splitter runs inside
-  /// this one gathering, never across two, which is the whole difference
+  /// this one gathering, never across two. That is the whole difference
   void _encodeGathered({required bool last}) {
     _writeHeader();
     var left = _filled - _at;

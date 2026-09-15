@@ -857,7 +857,7 @@ class _QueueSink implements Sink<List<int>> {
   void close() {}
 }
 
-/// Reads the check field, which is the tail of a block.
+/// Reads the check field, the tail of a block.
 ///
 /// The block padding sits in front of it and every check size is a multiple of
 /// four, so the check is always the last [checkSize] bytes

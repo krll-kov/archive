@@ -36,7 +36,7 @@ class TarDecoder {
     // TarFile paxHeader = null;
     while (!input.isEOS) {
       // The end of the archive is a block of zeros; two of them can't be told
-      // from a damaged header, which is what verify is there to catch
+      // from a damaged header, the thing verify is there to catch
       final endCheck = input.peekBytes(verify ? 512 : 2).toUint8List();
       if (verify
           ? !endCheck.any((b) => b != 0)

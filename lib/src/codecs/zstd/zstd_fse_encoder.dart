@@ -229,8 +229,8 @@ int zstdWriteNCount(
       if (symbol > maxSymbol) {
         break;
       }
-      // Runs of 24 are written as three escapes in a row, which is what lets a
-      // long gap cost two bytes rather than one pair per three symbols
+      // Runs of 24 are written as three escapes in a row. A long gap costs two
+      // bytes that way rather than one pair per three symbols
       while (symbol >= start + 24) {
         start += 24;
         stream |= 0xffff << bits;
@@ -292,8 +292,8 @@ int zstdWriteNCount(
 
 /// The encoding side of an FSE table: where each state goes and what it costs.
 ///
-/// `nbBits` out of a state is `(state + deltaNbBits) >> 16`, which is the trick
-/// that turns a comparison into an add, and the next state is
+/// `nbBits` out of a state is `(state + deltaNbBits) >> 16`. That trick turns a
+/// comparison into an add. The next state is
 /// `nextState[(state >> nbBits) + deltaFindState]`
 class ZstdFseCTable {
   final Uint16List nextState;
@@ -388,8 +388,8 @@ class ZstdFseCTable {
   }
 
   /// What [symbol] costs here in 256ths of a bit. A symbol the table gives no
-  /// probability at all reads as one bit past the accuracy, which is the value
-  /// the caller compares against to reject a table it cannot use
+  /// probability at all reads as one bit past the accuracy. The caller compares
+  /// against that value to reject a table it cannot use
   int bitCost(int symbol) {
     final delta = zstdUse64Bit
         ? (symbolTT as Int64List)[symbol] >> 32

@@ -43,6 +43,12 @@ class _ZipFileData {
   /// Set on a streamed entry that deflate may grow past 4 GB. Its local header
   /// carries zip64 and the sizes behind its data take 8 bytes each
   bool zip64 = false;
+
+  /// A streamed entry whose central record gets a zip64 extra field, for its
+  /// sizes or for a local header past 4 GB. A reader takes the sizes behind the
+  /// data as 8 bytes each once that field is there, so both halves agree on it
+  bool get streamedZip64 => deferred && (zip64 || position > 0xFFFFFFFF);
+
   CompressionType compression = CompressionType.deflate;
   String? comment = '';
   int position = 0;
@@ -85,12 +91,14 @@ class ZipEncoder {
   late _ZipEncoderData _data;
   OutputStream? _output;
   final Encoding filenameEncoding;
-  final Random _random = Random.secure();
+  // Lazy, since only a password needs it. Eager, dart2js and Node cannot even
+  // build a ZipEncoder: Random.secure() throws there
+  late final Random _random = Random.secure();
   final String? password;
 
   /// Deflates an entry straight into the output instead of into a buffer, and
   /// writes its check and its sizes behind the data rather than in front of
-  /// it, which is what general purpose bit 3 is for. The peak is then one
+  /// it. That is what general purpose bit 3 is for. The peak is then one
   /// deflate buffer rather than the largest entry.
   ///
   /// It costs a second pass over the source for the check. An entry that
@@ -218,7 +226,7 @@ class ZipEncoder {
           ?.finish();
 
   /// Writes [entry]'s local header and returns its body. Null if the entry is
-  /// already written whole, which is everything but a streamed deflate
+  /// already written whole, everything but a streamed deflate
   ZipEntryBody? addHeader(ArchiveFile entry,
       {bool autoClose = true, ArchiveCallback? callback, int? level}) {
     final fileData = _ZipFileData();
@@ -461,7 +469,7 @@ class ZipEncoder {
 
     // Info-ZIP writes a streamed zip64 entry this way. The local sizes are
     // 0xFFFFFFFF and the zip64 field holds two zero sizes
-    final streamed64 = deferred && fileData.zip64;
+    final streamed64 = fileData.streamedZip64;
     final extra = <int>[];
     if (needsZip64 && !streamed64) {
       extra.addAll(_getZip64ExtraData(fileData));
@@ -545,8 +553,7 @@ class ZipEncoder {
       zipNeedsZip64 |= needsZip64;
 
       final versionMadeBy = (os << 8) | version;
-      final versionNeededToExtract =
-          fileData.deferred && fileData.zip64 ? 45 : version;
+      final versionNeededToExtract = fileData.streamedZip64 ? 45 : version;
       // Must match the local header. If only this one sets bit 11, a reader
       // decodes a latin1 name as UTF-8
       var generalPurposeBitFlag = 0;
@@ -702,6 +709,11 @@ class ZipEntryBody {
     var left = _piece;
     while (left > 0 && !_source.isEOS) {
       final take = _source.length < 1024 ? _source.length : 1024;
+      // A caller's own InputStream may report a length that its isEOS does not
+      // agree with. Without this the loop takes nothing and never ends
+      if (take <= 0) {
+        break;
+      }
       sink.add(_source.readBytes(take).toUint8List());
       left -= take;
     }

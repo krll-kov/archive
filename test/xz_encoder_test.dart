@@ -115,7 +115,8 @@ void main() {
       final decoded =
           await Stream<List<int>>.value(XZEncoder().encodeBytes(source))
               .transform(const XzCodec(
-                      multithread: XZMultithreadOptions<Object?>(workers: 2))
+                      multithread:
+                          XZMultithreadOptions<Object?>.converter(workers: 2))
                   .decoder)
               .fold<List<int>>(<int>[], (all, piece) => all..addAll(piece));
       expect(decoded, source);

@@ -20,7 +20,7 @@ class ZstdLevelParams {
 
   final int searchLog;
 
-  /// The reference's `TL` column, which is the step for the fast parse and the
+  /// The reference's `TL` column, the step for the fast parse and the
   /// length that satisfies the optimal one. The greedy and lazy rows carry
   /// instead a length that ends their search at once, which the reference does
   /// not do: measured byte identical on 312 MB and 1% faster

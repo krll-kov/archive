@@ -77,8 +77,8 @@ class ZstdBlockEncoder {
     _finder.reset();
   }
 
-  /// Loads a dictionary's content into the tables the parse searches, which is
-  /// what lets the first block reach into it
+  /// Loads a dictionary's content into the tables the parse searches. The first
+  /// block reaches into it that way
   void prime(Uint8List src, int start, int end, ZstdDictionary dictionary) {
     _finder.prefixStart = end;
     _finder.prime(src, start, end);
@@ -95,8 +95,8 @@ class ZstdBlockEncoder {
     }
   }
 
-  /// Loads a raw prefix into the tables, which is what a job of the threaded
-  /// encoder starts from. The bytes stay ordinary contiguous input: no outside
+  /// Loads a raw prefix into the tables. A job of the threaded encoder starts
+  /// from it. The bytes stay ordinary contiguous input: no outside
   /// segment, nothing to keep whole, no entropy to repeat
   void primeRawPrefix(Uint8List src, int start, int end) =>
       _finder.primeRaw(src, start, end);

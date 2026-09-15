@@ -58,8 +58,8 @@ class _GZipDecoder extends ZLibDecoderBase {
     // The decoder underneath checks the CRC and the length of every member
     // whose trailer it reaches, and rejects trailing bytes that do not begin
     // another member. What it does not reject is a member cut short before its
-    // trailer: that decodes to a short result and reports success, which is a
-    // truncated archive silently losing files.
+    // trailer: that decodes to a short result and reports success. A truncated
+    // archive then loses files without a word.
     //
     // A member's last four bytes are its uncompressed length modulo 2^32, so
     // for a whole stream it cannot exceed what was written: equal for the one

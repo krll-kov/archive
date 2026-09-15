@@ -48,10 +48,21 @@ class XZMultithreadOptions<T> {
   final int fileReadBufferSize;
 
   const XZMultithreadOptions({
-    this.onDone = xzNoResult,
+    required this.onDone,
     this.onError,
     this.workers,
     this.memoryBudget,
     this.fileReadBufferSize = 8 * 1024 * 1024,
   });
+
+  /// The options a `Converter` takes, the `xzCodec` transform. A stream ends
+  /// by itself and carries its own bytes, so there is no result to hand
+  /// anywhere and [onDone] is never called. decodeBytes and decodeStream refuse
+  /// these options, they have nowhere to put the result
+  const XZMultithreadOptions.converter({
+    this.onError,
+    this.workers,
+    this.memoryBudget,
+    this.fileReadBufferSize = 8 * 1024 * 1024,
+  }) : onDone = xzNoResult;
 }

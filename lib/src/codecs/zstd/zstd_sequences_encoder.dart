@@ -238,7 +238,7 @@ class _TableSlot {
 /// described, those descriptions, and the interleaved bitstream
 class ZstdSequencesEncoder {
   /// Sized to the mask the counting loop indexes them by, not to the codes
-  /// they hold, which is what lets the bound check go
+  /// they hold. The bound check goes away that way
   final Uint32List _llCounts = Uint32List(64);
   final Uint32List _ofCounts = Uint32List(32);
   final Uint32List _mlCounts = Uint32List(64);
@@ -300,7 +300,7 @@ class ZstdSequencesEncoder {
   /// `ZSTD_estimateBlockSize_sequences`: what this section would cost, tables
   /// and all, without writing the bitstream. The splitter weighs partitions
   /// with this, so it has to be the reference's estimate rather than the real
-  /// encode, which is what decides where the block is cut
+  /// encode. It decides where the block is cut
   int estimate(Uint8List scratch, ZstdSequenceStore store, int from, int to) {
     final count = to - from;
     final header = 2 + (count >= 128 ? 1 : 0) + (count >= 0x7f00 ? 1 : 0);
@@ -335,7 +335,7 @@ class ZstdSequencesEncoder {
 
   /// `ZSTD_estimateBlockSize_symbolType`, in bytes: the codes through whichever
   /// table was chosen for them, plus the extra bits they carry. An offset code
-  /// is itself the count of its extra bits, which is why [extraBits] may be null
+  /// is itself the count of its extra bits, so [extraBits] may be null
   static int _symbolCost(
       int mode,
       Uint32List counts,
@@ -519,7 +519,7 @@ class ZstdSequencesEncoder {
     }
 
     if (strategy < zstdStrategyLazy) {
-      // Only a table a dictionary handed over is taken unweighed here, which is
+      // Only a table a dictionary handed over is taken unweighed here. That is
       // what `FSE_repeat_valid` means
       if (allowed && slot.trusted && count < _staticRepeatMax) {
         slot.nextReady = true;
@@ -570,8 +570,8 @@ class ZstdSequencesEncoder {
   /// any other rather than taken outright
   static const _staticRepeatMax = 1000;
 
-  /// `ZSTD_NCountCost`: what describing these counts would take, which is not
-  /// what the description finally written takes, since that one leaves out the
+  /// `ZSTD_NCountCost`: what describing these counts would take. The
+  /// description finally written takes less, since that one leaves out the
   /// last sequence's symbol
   int _ncountCost(Uint32List counts, int count, int top, int log) {
     zstdNormalizeCount(_normalized, counts, count, top, log,

@@ -243,6 +243,7 @@ class InputFileStream extends InputStream {
     return got;
   }
 
+  @override
   Uint8List toUint8List([Uint8List? bytes]) {
     if (isEOS) {
       return Uint8List(0);

@@ -46,7 +46,8 @@ class XzDecoderConverter extends ChunkedConverter {
       throw ArgumentError.value(
           multithread,
           'multithread',
-          'Works through a stream only, since a sink owes its output before '
+          'Works through the converter bound to a stream only, since a sink owes '
+              'its output before '
               'it returns');
     }
     return XzChunkedDecoder(
@@ -129,8 +130,8 @@ class XzChunkedDecoder extends ChunkedSink {
   /// default for the reason [XzDecoderConverter.verify] gives
   final bool verify;
 
-  /// Takes the blocks that can be decoded elsewhere, which is how the threaded
-  /// stream decoder shares this parse rather than repeating it
+  /// Takes the blocks that can be decoded elsewhere. The threaded stream
+  /// decoder shares this parse through it rather than repeating it
   final XzBlockDispatch? dispatch;
 
   /// Set while the parse waits for [dispatch] to go idle before a block it has
@@ -151,8 +152,8 @@ class XzChunkedDecoder extends ChunkedSink {
   /// Where the parse is, and what the state it is in still needs
   _Stage _stage = _Stage.streamHeader;
 
-  /// Position within the current stream, which is what block and index padding
-  /// is aligned to
+  /// Position within the current stream. Block and index padding is aligned to
+  /// it
   var _streamStart = 0;
   var _streamFlags = 0;
   final _blocks = <_BlockSize>[];
@@ -671,8 +672,8 @@ class _ByteReader {
     return _bytes[at++];
   }
 
-  /// Null when the bytes for it have not arrived, which is what lets the index
-  /// be read out of whatever has been handed over so far
+  /// Null when the bytes for it have not arrived. The index is read out of
+  /// whatever has been handed over so far
   int? tryMultibyte() {
     var value = 0;
     var multiplier = 1;
@@ -830,8 +831,8 @@ class XzChunkedEncoder extends ChunkedSink {
       ..writeUint32(getCrc32(header));
   }
 
-  /// The header names no lengths, which is what lets a block be written before
-  /// its size is known
+  /// The header names no lengths. A block is written before its size is known
+  /// that way
   void _writeBlockHeader() {
     if (_blockStarted) {
       return;

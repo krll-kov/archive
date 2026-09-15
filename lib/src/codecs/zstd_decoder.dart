@@ -154,8 +154,8 @@ class ZstdDecoder {
       if (dictionary != null && dictionary.content.isNotEmpty) {
         window.prime(dictionary.content);
       }
-      // One block of compressed bytes plus its header, which is all the
-      // decoder ever needs of the input at once
+      // One block of compressed bytes plus its header. The decoder never needs
+      // more of the input at once
       scratch ??= Uint8List(zstdBlockMaximumSize + 3);
       if (scratch.length < header.blockSizeMax + 3) {
         scratch = Uint8List(header.blockSizeMax + 3);
@@ -165,8 +165,8 @@ class ZstdDecoder {
       window.finish();
       frames++;
     }
-    // An archive of nothing but skippable frames decodes to nothing, which is
-    // what the reference does with one, so only an empty input is a failure
+    // An archive of nothing but skippable frames decodes to nothing, the way
+    // the reference reads one. So only an empty input is a failure
     if (frames == 0 && skipped == 0) {
       throw ZstdFrameException('No frame: the input is empty');
     }

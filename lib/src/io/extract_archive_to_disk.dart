@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as path;
 
@@ -11,6 +12,7 @@ import '../codecs/xz_decoder.dart';
 import '../codecs/zip_decoder.dart';
 import '../codecs/zstd_decoder.dart';
 import '../util/archive_exception.dart';
+import '../util/codecs_recognizer.dart';
 import '../util/input_file_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_file_stream.dart';
@@ -175,8 +177,36 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
 
   // get the extension of the input file with up to 2 components
   // e.g. for file.tar.gz, it will return '.tar.gz'
-  var archiveExt = getInputExtension(archivePath);
-  if (archiveExt.isEmpty) {
+  final archiveExt = getInputExtension(archivePath);
+
+  // Check header to avoid attempts for all formats
+  RandomAccessFile? raf;
+  Uint8List headerBytes;
+  try {
+    raf = await File(inputPath).open(mode: FileMode.read);
+    headerBytes = await raf.read(CodecsRecognizer.headerBytes);
+  } catch (_) {
+    headerBytes = Uint8List(0);
+  } finally {
+    await raf?.close();
+  }
+
+  ArchiveFormat recognized = CodecsRecognizer.recognize(headerBytes);
+  if (recognized == ArchiveFormat.unknown) {
+    for (final ArchiveFormat format in ArchiveFormat.values) {
+      final ArchiveExtension? aExt = CodecsRecognizer.extensionOf(format);
+      if (aExt == null) continue;
+
+      if (archiveExt == '.${aExt.defaultName}' ||
+          (aExt.tar != null && archiveExt == '.${aExt.tar}') ||
+          (aExt.tarShort != null && archiveExt == '.${aExt.tarShort}')) {
+        recognized = format;
+        break;
+      }
+    }
+  }
+
+  if (recognized == ArchiveFormat.unknown) {
     throw ArgumentError.value(
       inputPath,
       'inputPath',
@@ -206,36 +236,37 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
     if (!ok) {
       throw ArchiveException('Could not read the whole $what archive');
     }
-    archiveExt = '.tar';
+    recognized = ArchiveFormat.tar;
   }
 
   InputStream? toClose;
   try {
-    if (archiveExt == '.tar.gz' || archiveExt == '.tgz') {
+    if (recognized == ArchiveFormat.gzip) {
       await unwrap(
           (input, output) => GZipDecoder().decodeStream(input, output), 'gzip');
-    } else if (archiveExt == '.tar.bz2' || archiveExt == '.tbz') {
+    } else if (recognized == ArchiveFormat.bzip2) {
       await unwrap(
           (input, output) => BZip2Decoder().decodeStream(input, output),
           'bzip2');
-    } else if (archiveExt == '.tar.xz' || archiveExt == '.txz') {
+    } else if (recognized == ArchiveFormat.xz) {
       await unwrap(
           (input, output) => XZDecoder().decodeStream(input, output), 'xz');
-    } else if (archiveExt == '.tar.zst' || archiveExt == '.tzst') {
+    } else if (recognized == ArchiveFormat.zstd) {
       await unwrap(
           (input, output) => ZstdDecoder().decodeStream(input, output), 'zstd');
     }
 
     Archive archive;
-    if (archiveExt == '.tar') {
+    if (recognized == ArchiveFormat.tar) {
       final input = InputFileStream(archivePath);
-      archive = TarDecoder().decodeStream(input, callback: callback);
       toClose = input;
-    } else if (archiveExt == '.zip') {
+      archive = TarDecoder().decodeStream(input, callback: callback);
+
+    } else if (recognized == ArchiveFormat.zip) {
       final input = InputFileStream(archivePath);
+      toClose = input;
       archive = ZipDecoder()
           .decodeStream(input, password: password, callback: callback);
-      toClose = input;
     } else {
       throw ArgumentError.value(
           inputPath, 'inputPath', 'Must end $extensionMsg');

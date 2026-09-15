@@ -118,8 +118,8 @@ class ZstdHuffmanEncoder {
     return log;
   }
 
-  /// `FSE_optimalTableLog_internal` with a minus of one, which is what
-  /// `HUF_optimalTableLog` falls back to below `btultra`
+  /// `FSE_optimalTableLog_internal` with a minus of one.
+  /// `HUF_optimalTableLog` falls back to it below `btultra`
   int _optimalLog(int total) {
     var log = zstdHuffmanLogMax;
     final fromSize = zstdHighestBit(total - 1) - 1;
@@ -471,8 +471,8 @@ class ZstdHuffmanEncoder {
     return ((maxSymbol + 1) >> 1) + 1;
   }
 
-  /// The weights are themselves FSE coded, two states interleaved, which is
-  /// what the reader expects. Returns 0 when that is not worth doing
+  /// The weights are themselves FSE coded, two states interleaved, the way the
+  /// reader expects. Returns 0 when that is not worth doing
   int _compressWeights(Uint8List out, int at, Uint8List weights) {
     final size = weights.length;
     if (size <= 2) {

@@ -174,7 +174,7 @@ void _buildFromWeights(ZstdHuffmanTable table, Uint8List weights,
   }
   // `HUF_readStats_body`: weight one is the longest code, so a complete tree
   // pairs them off and cannot hold fewer than two. The rank holds one slot per
-  // such symbol, which is the count
+  // such symbol, so it is the count
   final ones = rankStart[1];
   if (ones < 2 || ones & 1 != 0) {
     _weightOnesDoNotPair(ones);

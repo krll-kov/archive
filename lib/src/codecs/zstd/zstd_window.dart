@@ -15,17 +15,17 @@ class ZstdWindow {
   int flushed = 0;
 
   /// The span a match's source wraps around once the buffer has been written
-  /// through once, which is what lets a streamed frame keep its history without
-  /// ever moving it. Zero while the buffer is still on its first pass
+  /// through once. A streamed frame keeps its history that way without ever
+  /// moving it. Zero while the buffer is still on its first pass
   int lap = 0;
 
-  /// Dictionary content held at the start of [buffer], which is never written
-  /// out and is dropped only once no match can reach it
+  /// Dictionary content held at the start of [buffer]. It is never written out
+  /// and is dropped only once no match can reach it
   int origin = 0;
 
   /// What one block asks for above the position it starts at. Only a request
-  /// this size stands at a block boundary, which is the one place the buffer
-  /// may start over
+  /// this size stands at a block boundary. The buffer may start over only
+  /// there
   int blockReserve = 0;
 
   /// Where [emit] wrote up to. The bytes before it are out already
@@ -64,8 +64,8 @@ class ZstdWindow {
       // match reaches back into, so nothing is ever moved. What is overwritten
       // from here on is only what has fallen out of the window
       // The pass has to end far enough in that a match at the widest offset
-      // still lands above what this pass will overwrite, which is why the
-      // buffer carries two blocks' room rather than one
+      // still lands above what this pass will overwrite. So the buffer carries
+      // two blocks' room rather than one
       if (origin == 0 &&
           need == blockReserve &&
           position >= windowSize + need) {
@@ -127,7 +127,7 @@ class ZstdWindow {
     var size = capacity == 0 ? wanted : capacity;
     // Slack above the window, so sliding the history down happens once per
     // slack bytes rather than once per block. Without it a wide window is moved
-    // whole for every block, which is what the output costs, not the decode
+    // whole for every block. That is what the output costs, not the decode
     final ceiling = bounded ? origin + windowSize + 2 * need : 0;
     while (size < wanted) {
       size <<= 1;

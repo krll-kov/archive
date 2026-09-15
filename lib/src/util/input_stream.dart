@@ -44,7 +44,7 @@ abstract class InputStream {
   void skip(int length);
 
   /// Reads [count] bytes into [into] at [at] and moves the read position on.
-  /// Returns how many were read, which is short only at the end of the stream.
+  /// Returns how many were read. It is short only at the end of the stream.
   /// A caller that reuses one buffer leaves no garbage behind
   int readInto(Uint8List into, int at, int count) {
     final bytes = readBytes(count).toUint8List();

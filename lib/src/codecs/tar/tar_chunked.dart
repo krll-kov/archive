@@ -16,7 +16,7 @@ import 'tar_file.dart';
 class TarChunkedEncoder {
   final Sink<List<int>> output;
 
-  /// What a name is written as, the same field [TarStreamDecoder] reads it back
+  /// What a name is written as, the same field [TarDecoderTransformer] reads it back
   /// through
   final Encoding filenameEncoding;
 
@@ -58,29 +58,32 @@ class TarChunkedEncoder {
   }
 }
 
-/// tar as a `Stream` both ways, the shape the other codecs use. Not a
+/// tar through `transform` both ways, the shape the other codecs use. Its two
+/// sides are `StreamTransformer`s rather than `Converter`s, and this is not a
 /// `dart:convert` `Codec`, since neither side is bytes to bytes
 class TarCodec {
   final Encoding filenameEncoding;
 
-  /// See [TarStreamEncoder.autoClose]
+  /// See [TarEncoderTransformer.autoClose]
   final bool autoClose;
 
   const TarCodec(
       {this.filenameEncoding = const Utf8Codec(), this.autoClose = false});
 
-  TarStreamDecoder get decoder =>
-      TarStreamDecoder(filenameEncoding: filenameEncoding);
+  TarDecoderTransformer get decoder =>
+      TarDecoderTransformer(filenameEncoding: filenameEncoding);
 
-  TarStreamEncoder get encoder => TarStreamEncoder(
+  TarEncoderTransformer get encoder => TarEncoderTransformer(
       filenameEncoding: filenameEncoding, autoClose: autoClose);
 }
 
 /// The codec with its defaults, for `stream.transform(tarCodec.decoder)`
 const tarCodec = TarCodec();
 
-/// [TarChunkedEncoder] behind the shape the other codecs use
-class TarStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
+/// [TarChunkedEncoder] behind `tarCodec.encoder`. It takes entries and writes
+/// bytes, so it is a `StreamTransformer` and not a `Converter`
+class TarEncoderTransformer
+    extends StreamTransformerBase<ArchiveFile, List<int>> {
   final Encoding filenameEncoding;
 
   /// Closes each entry once it is written, the way `ZipEncoder.add` does. Off
@@ -88,7 +91,7 @@ class TarStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
   /// caller's, and whoever opened a file closes it
   final bool autoClose;
 
-  const TarStreamEncoder(
+  const TarEncoderTransformer(
       {this.filenameEncoding = const Utf8Codec(), this.autoClose = false});
 
   /// What an entry's content is handed out in. An entry is not held whole, so
@@ -131,7 +134,7 @@ class TarStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
           yield Uint8List(pad);
         }
       } finally {
-        // A cancel lands on a yield above, which is why this is a finally
+        // A cancel lands on a yield above, so this is a finally
         if (autoClose) {
           entry.closeSync();
         }
@@ -159,14 +162,15 @@ class _Pieces implements Sink<List<int>> {
   void close() {}
 }
 
-/// Reads a tar out of a `Stream`, one entry at a time, holding one entry's
-/// header rather than the archive. [TarEntry.content] has to be read before
-/// the loop moves on, since the bytes are gone by then; what is left unread is
+/// `tarCodec.decoder`, a `StreamTransformer` and not a `Converter`, since it
+/// hands back entries and not bytes. It reads one entry at a time and holds one
+/// entry's header rather than the archive. [TarEntry.content] has to be read
+/// before the loop moves on, the bytes are gone by then. What is left unread is
 /// skipped. Over a source that can seek, `TarDecoder` is already lazy
-class TarStreamDecoder extends StreamTransformerBase<List<int>, TarEntry> {
+class TarDecoderTransformer extends StreamTransformerBase<List<int>, TarEntry> {
   final Encoding filenameEncoding;
 
-  const TarStreamDecoder({this.filenameEncoding = const Utf8Codec()});
+  const TarDecoderTransformer({this.filenameEncoding = const Utf8Codec()});
 
   @override
   Stream<TarEntry> bind(Stream<List<int>> stream) =>
@@ -175,7 +179,7 @@ class TarStreamDecoder extends StreamTransformerBase<List<int>, TarEntry> {
 }
 
 /// What an entry is, as the header's type flag names it. Old archives leave
-/// the field empty for a plain file, which is why that is not only `'0'`
+/// the field empty for a plain file, so that flag is not only `'0'`
 enum TarEntryType {
   file,
   hardLink,
@@ -206,7 +210,7 @@ enum TarEntryType {
 class TarEntry {
   final String name;
 
-  /// What the header says the entry holds, which is what [content] carries
+  /// What the header says the entry holds. [content] carries that much
   final int size;
   final int mode;
   final int ownerId;
@@ -328,7 +332,7 @@ Stream<TarEntry> _read(_Reader reader, Encoding encoding) async* {
         throw ArchiveException('tar: invalid header checksum');
       }
       // A header describing the next entry is read again with its content
-      // behind it, which is where `TarMetadata` looks for it
+      // behind it, where `TarMetadata` looks for it
       var file = TarFile.read(InputMemoryStream(header),
           storeData: false, encoding: encoding, size: metadata.size);
       if (TarMetadata.describesNext(file)) {

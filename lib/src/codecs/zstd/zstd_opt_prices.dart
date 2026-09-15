@@ -6,8 +6,8 @@ import 'zstd_huffman_encoder.dart';
 import 'zstd_match_finder.dart';
 import 'zstd_sequences_encoder.dart';
 
-/// A price is in 256ths of a bit, which is enough resolution to choose between
-/// two parses that differ by a fraction of a bit per symbol
+/// A price is in 256ths of a bit. That resolution chooses between two parses
+/// differing by a fraction of a bit per symbol
 const zstdPriceBits = 8;
 const zstdPriceOne = 1 << zstdPriceBits;
 const zstdPriceMax = 1 << 30;
@@ -44,7 +44,7 @@ class ZstdOptPrices {
   int _matchLengthBase = 0;
   int _offCodeBase = 0;
 
-  /// Zero weighs a symbol in whole bits, which is what `btopt` uses. One and
+  /// Zero weighs a symbol in whole bits, the way `btopt` does. One and
   /// above interpolate between them, for `btultra` and `btultra2`
   int level = 0;
   bool _predef = false;

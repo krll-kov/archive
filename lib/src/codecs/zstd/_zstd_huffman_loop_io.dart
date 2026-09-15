@@ -57,8 +57,8 @@ void decodeHuffmanStream(ZstdHuffmanTable table, Uint8List src, int start,
   }
 }
 
-/// Decodes four streams at once, which is what the format shapes them for: the
-/// chains are independent and keep the pipeline fed
+/// Decodes four streams at once, the way the format shapes them. The chains are
+/// independent and keep the pipeline fed
 void decodeHuffman4Streams(
     ZstdHuffmanTable table,
     Uint8List src,

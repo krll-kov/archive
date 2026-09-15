@@ -262,8 +262,8 @@ class ZstdSequences extends ZstdSequencesBase {
         // Matches run to thirty two bytes in 98% of sequences, so those cost a
         // second pair of stores and no loop. What is left goes thirty two bytes
         // an iteration the way `ZSTD_wildcopy` does. Either may write past the
-        // match, which is what `zstdCopySlack` is there for, and the stores stay
-        // in program order so a short offset still repeats the way it should
+        // match. `zstdCopySlack` is there for that, and the stores stay in
+        // program order so a short offset still repeats the way it should
         if (matchLength > 16) {
           dstView.setUint64(out + 16,
               dstView.getUint64(from + 16, Endian.little), Endian.little);
@@ -319,7 +319,7 @@ class ZstdSequences extends ZstdSequencesBase {
 }
 
 /// Copies a match whose source is on the pass before this one. It may run to
-/// the end of the buffer and go on at its head, which is where this pass began
+/// the end of the buffer and go on at its head, where this pass began
 int _wrapped(Uint8List dst, int out, int from, int length, int lap) {
   var left = length;
   var read = from;

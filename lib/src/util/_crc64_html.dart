@@ -10,8 +10,8 @@ int getCrc64_(List<int> array, [int crc = 0]) {
 const _polynomialHigh = 0xc96c5795;
 const _polynomialLow = 0xd7870f42;
 
-/// Built rather than written out: the sixty-four bit literals the other backend
-/// holds cannot be spelled where an int stops at fifty-three
+/// Built rather than written out. A web int stops at 53 bits and cannot spell
+/// the 64 bit literals the other backend holds
 final Uint32List _tableHigh = _buildTable(true);
 final Uint32List _tableLow = _buildTable(false);
 
@@ -34,8 +34,8 @@ Uint32List _buildTable(bool wantHigh) {
   return out;
 }
 
-/// A running CRC-64 held as two thirty-two bit halves, which is the only shape
-/// that survives a backend whose int is not sixty-four bits wide
+/// A running CRC-64 held as two 32 bit halves. No other shape survives a
+/// backend whose int is not 64 bits wide
 class Crc64Core {
   var _high = 0;
   var _low = 0;

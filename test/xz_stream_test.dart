@@ -77,7 +77,7 @@ void main() {
       }
       final threaded = <int>[];
       await for (final piece in Stream<List<int>>.value(src).transform(
-          const XzCodec(multithread: XZMultithreadOptions(workers: 2))
+          const XzCodec(multithread: XZMultithreadOptions.converter(workers: 2))
               .decoder)) {
         threaded.addAll(piece);
       }

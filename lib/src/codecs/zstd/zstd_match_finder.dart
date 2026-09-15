@@ -31,8 +31,8 @@ const _primes = [
 /// The key of the double parse's long table, always over eight bytes
 const _longPrime = (0xcf1bbcdc << 32) | 0xb7a56463;
 
-/// The optimal parse's own three byte table, which is what lets a level with a
-/// minimum match of three find one
+/// The optimal parse's own three byte table. A level with a minimum match of
+/// three finds one through it
 const _shortPrime = 506832829;
 
 /// `ZSTD_HASHLOG3_MAX`, which a narrow window cuts down
@@ -211,7 +211,7 @@ class ZstdMatchFinder {
   final Uint32List _repHere = Uint32List(3);
 
   /// The parse's table, one entry a byte of lookahead. An entry is a stretch,
-  /// a match followed by literals, which is the reverse of a sequence
+  /// a match followed by literals, the reverse of a sequence
   static const _optSize = _optMax + 3;
   final Int32List _optPrice = Int32List(_optSize);
   final Uint32List _optMlen = Uint32List(_optSize);
@@ -396,8 +396,8 @@ class ZstdMatchFinder {
     return _usesChainSearch(params) ? 1 << params.chainLog : 1;
   }
 
-  /// How many entries a slide has to walk, which is what the bytes it frees
-  /// have to pay for
+  /// How many entries a slide has to walk. The bytes it frees pay for that
+  /// walk
   int get slideCost =>
       _hashTable.length + _chain.length + _rows.length + _short.length;
 
@@ -429,7 +429,7 @@ class ZstdMatchFinder {
   }
 
   /// `ZSTD_reduceTable_btlazy2`: the tree raises a position by [_lift] and
-  /// keeps [_unsorted] as a mark of its own, which is not a position
+  /// keeps [_unsorted] as a mark of its own. That mark is not a position
   static void _reduceTree(Uint32List table, int delta) {
     for (var at = 0; at < table.length; at++) {
       final held = table[at];
@@ -574,8 +574,8 @@ class ZstdMatchFinder {
     final floor = _lowestFrom(end, lowLimit, maxDistance);
     final stepSize =
         params.targetLength + (params.targetLength == 0 ? 1 : 0) + 1;
-    // The step widens once every `kStepIncr` bytes without a match, which is
-    // what keeps incompressible input from costing a lookup a byte
+    // The step widens once every `kStepIncr` bytes without a match. It keeps
+    // incompressible input from costing a lookup a byte
     const stepIncr = 1 << (8 - 1);
     var anchor = start;
     var ip0 =
@@ -617,8 +617,8 @@ class ZstdMatchFinder {
       var match = -1;
       var length = 0;
       var code = 0;
-      // The position the table last took, which is the one the fill below
-      // starts from. A repeat moves `ip0` on before that fill runs
+      // The position the table last took. The fill below starts from it, and a
+      // repeat moves `ip0` on before that fill runs
       var current0 = ip0;
 
       do {
@@ -755,7 +755,7 @@ class ZstdMatchFinder {
     var rep1 = rep[1];
     var saved0 = 0;
     var saved1 = 0;
-    // Held aside on `>=` rather than `>`, which is what the plain loop uses
+    // Held aside on `>=` rather than the `>` the plain loop uses
     final maxRep = ip0 - floor;
     if (rep1 >= maxRep) {
       saved1 = rep1;
@@ -850,7 +850,7 @@ class ZstdMatchFinder {
         rep0 = current0 - match;
         code = rep0 + 3;
         length = zstdMinMatch;
-        // `dictStart`, which is the window as the end of the block leaves it
+        // `dictStart`, the window as the end of the block leaves it
         final low = match < prefix ? floor : prefix;
         while (ip0 > anchor && match > low && src[ip0 - 1] == src[match - 1]) {
           ip0--;
@@ -941,7 +941,7 @@ class ZstdMatchFinder {
         length = 8 + _extend(src, view, ip + 8, longHit + 8, end);
         var match = longHit;
         // `dictStart` is `ZSTD_getLowestMatchIndex` taken at the end of the
-        // block, which is `floor`. The lazy loops catch up to `window.lowLimit`
+        // block, so it is `floor`. The lazy loops catch up to `window.lowLimit`
         // instead, and that one is not the same number once the window has
         // moved past a segment boundary
         final low = match < prefix ? floor : prefix;
@@ -1755,7 +1755,8 @@ class ZstdMatchFinder {
   }
 
   /// `ZSTD_insertBt1`: puts one position in the tree and returns how many
-  /// positions that covers, which is how a fill skips a repetitive stretch.
+  /// positions that covers. A fill skips a repetitive stretch through that
+  /// count.
   ///
   /// Every candidate compared becomes a child of the new node on the side it
   /// sorts to, so the descent is the insertion

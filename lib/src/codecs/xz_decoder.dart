@@ -433,7 +433,7 @@ class XZDecoder {
           null,
           'onDone',
           'Must be given here, since this call has nowhere else to put the '
-              'result; only a stream carries its own end');
+              'result; only the converter carries its own end');
     }
     // Asking to be told about failures while leaving nowhere to tell would put
     // the failure back where it started, so it is refused here, while the

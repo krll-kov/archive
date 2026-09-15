@@ -2,16 +2,16 @@
 // hold it, so it exists only on the backends where an int is a real 64 bit
 // integer. Everywhere else [isCrc64Supported] reports false. [Crc64] carries
 // the same check on every backend by keeping two halves and handing them back
-// as bytes, which is what xz wants of it anyway.
+// as bytes. xz wants it as bytes anyway.
 //
 // The condition asks about integer width, not about dart:io: the
 // implementation below imports nothing but dart:typed_data. dart:isolate is
-// available on exactly the VM and wasm, which are exactly the backends whose
-// ints are 64 bit, so that is what selects it. The unsupported stub is the
+// available on exactly the VM and wasm, and those are exactly the backends
+// whose ints are 64 bit, so it selects them. The unsupported stub is the
 // default, so an unrecognised backend loses the one int form rather than
 // miscompiling.
 //
-// This used to key off dart.library.html, which is false on JavaScript targets
+// This used to key off dart.library.html. That is false on JavaScript targets
 // that have no dart:html, such as dart2js targeting Node. Those ended up with
 // the 64 bit table and failed to compile at all, on literals like
 // 0xb32e4cbe03a75f6f that JavaScript cannot represent.

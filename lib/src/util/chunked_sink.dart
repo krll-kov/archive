@@ -38,8 +38,8 @@ abstract class ChunkedSink extends ByteConversionSink {
   var _closed = false;
   Object? _failure;
 
-  /// Bytes read so far, which is what a format measures its padding and its
-  /// own lengths against
+  /// Bytes read so far. A format measures its padding and its own lengths
+  /// against this
   var consumed = 0;
 
   /// Reads what has arrived and returns at the first field that is not all
@@ -95,7 +95,7 @@ abstract class ChunkedSink extends ByteConversionSink {
     if (_at == _end) {
       // Nothing is held, so the parse reads out of what arrived rather than
       // out of a copy of it. The caller owns its buffer again the moment this
-      // returns, which is why whatever the parse did not reach is kept
+      // returns. So we keep whatever the parse did not reach
       _carry = bytes;
       _at = 0;
       _end = bytes.length;
@@ -125,8 +125,9 @@ abstract class ChunkedSink extends ByteConversionSink {
 
   /// Closes [output] only if the input ended cleanly. On a failed parse it
   /// stays open, the same as `gzip.decoder` and `zlib.decoder` in `dart:io`,
-  /// so the caller has to close its own file or socket. Calling close again
-  /// does not help: the failure is remembered and every call reports it
+  /// so the caller has to close its own file or socket. The first close after a
+  /// failure reports it, and a close after that returns without doing anything,
+  /// as `dart:io` does. `add` after a failure reports it every time
   @override
   void close() {
     if (_closed) {
@@ -198,8 +199,8 @@ abstract class ChunkedSink extends ByteConversionSink {
 }
 
 /// A `Converter` over a [ChunkedSink]. Whole input conversion goes through the
-/// chunked path, which is what `ZLibDecoder` does too, so there is one
-/// behaviour rather than two
+/// chunked path. `ZLibDecoder` does the same, so there is one behaviour rather
+/// than two
 abstract class ChunkedConverter extends Converter<List<int>, List<int>> {
   const ChunkedConverter();
 
@@ -299,8 +300,8 @@ class SinkOutputStream extends OutputStream {
 
   SinkOutputStream(this.sink) : super(byteOrder: ByteOrder.littleEndian);
 
-  /// Written since the last [reset], which is what a format compares against
-  /// the length it declared
+  /// Written since the last [reset]. A format compares this against the length
+  /// it declared
   var written = 0;
 
   /// Where the bytes go instead of the sink, for the stretch a filter has to
@@ -320,7 +321,7 @@ class SinkOutputStream extends OutputStream {
   final Uint8List _buffer = Uint8List(_streamPiece);
   int _queued = 0;
 
-  /// Folded in as the bytes go past, which is how a check is computed without
+  /// Folded in as the bytes go past. A check is computed that way without
   /// holding what it covers
   void Function(Uint8List piece)? watch;
 
@@ -428,7 +429,13 @@ class SinkOutputStream extends OutputStream {
       throw UnsupportedError('a streamed result cannot be read back');
 
   /// Drops the count and anything still buffered. Bytes already sent to the
-  /// sink cannot be taken back
+  /// sink cannot be taken back.
+  ///
+  /// Dropping is what the other outputs do: `OutputMemoryStream.clear` sets its
+  /// length to zero and `OutputFileStream.clear` closes the file. `dart:io` has
+  /// no such method to follow. Nothing in the package calls this on a sink:
+  /// `Inflate` clears only an [OutputMemoryStream], and `Deflate` clears from
+  /// `takeBytes`, which no streamed path reaches
   @override
   void clear() {
     written = 0;

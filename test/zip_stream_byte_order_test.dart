@@ -33,7 +33,7 @@ List<ArchiveFile> _entries() => [
           Uint8List.fromList(utf8.encode('second entry payload\n' * 50))),
     ];
 
-Future<Uint8List> _encode(ZipStreamEncoder encoder) async {
+Future<Uint8List> _encode(ZipEncoderTransformer encoder) async {
   final out = <int>[];
   await for (final piece
       in Stream<ArchiveFile>.fromIterable(_entries()).transform(encoder)) {

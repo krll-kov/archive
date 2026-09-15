@@ -14,8 +14,8 @@ class ZstdDictionaryException implements Exception {
 /// A parsed zstd dictionary, ready to be handed to a decoder.
 ///
 /// Parsing is done once here rather than once per frame. Anything that is not a
-/// formatted dictionary is taken as raw content, which is what the reference
-/// decoder does
+/// formatted dictionary is taken as raw content, the way the reference decoder
+/// takes it
 class ZstdDictionary {
   /// Zero for a raw content dictionary, which no frame can name
   final int id;
@@ -36,7 +36,7 @@ class ZstdDictionary {
 
   final ZstdHuffmanTable huffman;
 
-  /// The tree as it was described, which is what an encoder builds from
+  /// The tree as it was described. An encoder builds from it
   final Uint8List huffmanWeights;
 
   /// The three sequence distributions, by slot. These are kept rather than the

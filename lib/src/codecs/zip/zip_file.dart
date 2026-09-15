@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../../archive/compression_type.dart';
 import '../../util/aes.dart';
+import '../../util/archive_exception.dart';
 import '../../util/crc32.dart';
 import '../../util/encryption.dart';
 import '../../util/file_content.dart';
@@ -146,16 +147,20 @@ class ZipFile extends FileContent {
         crc32 = sigOrCrc;
       }
 
-      // The sizes are 8 bytes each when the file has a zip64 extra field, in
-      // its local header or in the central directory
+      // APPNOTE 4.3.9.2: the sizes are 8 bytes each when a zip64 extra field is
+      // present for the file. Only the local field says that. A central one can
+      // carry an offset past 4 GB while the sizes here stay 4 bytes, and an
+      // entry whose central field holds the sizes needs nothing from here
       final central = header;
-      final zip64 = _hasZip64(extraField) || _hasZip64(central?.extraField);
+      final zip64 = _hasZip64(extraField);
       final descriptorCompressed =
           zip64 ? input.readUint64() : input.readUint32();
       final descriptorUncompressed =
           zip64 ? input.readUint64() : input.readUint32();
-      // The central directory holds the same sizes. The descriptor fills in
-      // only what the central directory left at zero
+      // APPNOTE 4.4.8: the correct sizes go in both the descriptor and the
+      // central directory, so the central ones win and these fill in only what
+      // it left at zero. Do not drop the read: an archive whose central
+      // directory carries no sizes has them nowhere else
       if (central == null || central.compressedSize == 0) {
         compressedSize = descriptorCompressed;
       }
@@ -216,8 +221,11 @@ class ZipFile extends FileContent {
       _rawContent!.setPosition(savePos);
     } else if (compressionMethod == CompressionType.bzip2) {
       final savePos = _rawContent!.position;
-      BZip2Decoder().decodeStream(_rawContent!, output);
+      final ok = BZip2Decoder().decodeStream(_rawContent!, output);
       _rawContent!.setPosition(savePos);
+      if (!ok) {
+        throw ArchiveException('Invalid bzip2 data for $filename');
+      }
     } else {
       output.writeStream(_rawContent!);
     }
@@ -268,9 +276,12 @@ class ZipFile extends FileContent {
     } else if (compressionMethod == CompressionType.bzip2) {
       final output = OutputMemoryStream();
       final savePos = _rawContent!.position;
-      BZip2Decoder().decodeStream(_rawContent!, output);
+      final ok = BZip2Decoder().decodeStream(_rawContent!, output);
       final content = output.getBytes();
       _rawContent!.setPosition(savePos);
+      if (!ok) {
+        throw ArchiveException('Invalid bzip2 data for $filename');
+      }
       return InputMemoryStream(content);
     } else {
       final content = _rawContent!.toUint8List();

@@ -14,8 +14,9 @@ const _hashLogMin = 6;
 const _hashLogMax = 30;
 const _minMatchBase = 64;
 
-/// `ZSTD_strategy` as the reference numbers it, one to nine, which is what
-/// [ZstdLevelParams.refStrategy] carries. The six the parse has are not these
+/// `ZSTD_strategy` as the reference numbers it, one to nine.
+/// [ZstdLevelParams.refStrategy] carries that number. The six the parse has are
+/// not these
 const _btopt = 7;
 const _btultra = 8;
 
@@ -45,7 +46,7 @@ class ZstdLdmSequences {
   }
 
   /// `ZSTD_ldm_skipRawSeqStoreBytes`: moves the cursor past [bytes] of the
-  /// input the store covers, which is what a block leaves behind it
+  /// input the store covers. A block leaves that much behind it
   void skipBytes(int bytes) {
     var at = inSequence + bytes;
     while (at != 0 && pos < size) {
@@ -208,8 +209,8 @@ class ZstdLdm {
   int _rolling = 0;
   int _rollingHigh = 0;
 
-  /// `window.dictLimit` in the reference's index space, which is a file
-  /// position raised by one. Nothing at or below it may be matched
+  /// `window.dictLimit` in the reference's index space, a file position raised
+  /// by one. Nothing at or below it may be matched
   int _dictLimit = 1;
 
   ZstdLdm(this.minMatch, this.bucketLog, this.hashBits, this.windowLog,
@@ -323,8 +324,8 @@ class ZstdLdm {
     }
   }
 
-  /// Returns the literals left over after the last match it found, which is
-  /// what `ZSTD_ldm_generateSequences_internal` reports
+  /// Returns the literals left over after the last match it found.
+  /// `ZSTD_ldm_generateSequences_internal` reports the same
   int _generate(
       Uint8List src, ByteData view, int start, int end, ZstdLdmSequences out) {
     final capacity = out.litLength.length;

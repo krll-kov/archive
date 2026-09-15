@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 /// Reads backwards from the last byte towards the first, most significant bit
 /// first, ending on a marker 1 bit. Cold paths only: the hot loops hold the
-/// same three values in locals, which is why they are public fields here
+/// same three values in locals, so they are public fields here
 class ZstdBitReader {
   int container = 0;
   int consumed = 0;

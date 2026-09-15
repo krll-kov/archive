@@ -12,8 +12,8 @@ import 'zstd_level_params.dart';
 import 'zstd_mt_parallel.dart';
 
 /// `4*ZSTD_BLOCKSIZE_MAX`, the piece a job's input reaches the compressor in.
-/// Every piece ends a block, which is what makes a threaded frame differ from
-/// a single threaded one
+/// Every piece ends a block. That is what makes a threaded frame differ from a
+/// single threaded one
 const zstdMtChunkSize = 4 * zstdBlockMaximumSize;
 
 /// `ZSTDMT_JOBSIZE_MIN`: at or below this the reference drops its workers, so
@@ -28,8 +28,8 @@ bool zstdMtLongRange(ZstdLevelParams params) =>
 /// `ZSTDMT_JOBLOG_MAX`
 const _jobLogMax = 29;
 
-/// What the reference reads for a size it has not been told, which is the row
-/// it picks and the window it leaves unclamped
+/// What the reference reads for a size it has not been told. It picks the level
+/// row from this and leaves the window unclamped
 const zstdMtSizeUnknown = 1099511627776;
 
 /// Writes the frame `ZSTD_compress2` writes with `nbWorkers` above zero: the
@@ -105,8 +105,8 @@ class ZstdMtFrameEncoder {
   }
 
   /// One job, its input handed to the block loop in [zstdMtChunkSize] pieces.
-  /// The splitter sees a piece as the whole of what is left, which is what
-  /// cuts a block short at every piece boundary
+  /// The splitter sees a piece as the whole of what is left. That cuts a block
+  /// short at every piece boundary
   void _encodeJob(
       Uint8List src,
       int base,
@@ -287,8 +287,8 @@ class ZstdMtFrameEncoder {
     }
   }
 
-  /// The span of one job and the prefix before it, which is what a caller
-  /// needs to cut the input up before handing the pieces out
+  /// The span of one job and the prefix before it. A caller cuts the input up
+  /// by these before handing the pieces out
   static List<int> geometry(int level, int size,
       {int jobSize = 0, int overlapLog = 0}) {
     final params = zstdParamsForLevel(level, size);
@@ -359,7 +359,7 @@ ZstdLdmSequences? zstdMtUnpackLdm(Object? packed) {
 class ZstdMtLdmPass {
   final ZstdLdm _ldm;
 
-  /// The frame's window, which is what the reference's round buffer holds
+  /// The frame's window. The reference's round buffer holds the same
   final int _windowSize;
   final int _capacity;
   Uint8List _held = Uint8List(0);
@@ -446,7 +446,7 @@ class ZstdMtRing {
     return out;
   }
 
-  /// The last job, which is whatever is left and may be empty
+  /// The last job, whatever is left. It may be empty
   Uint8List close() => _cut(_held.takeBytes());
 
   Uint8List _cut(Uint8List body) {

@@ -96,7 +96,7 @@ class ZstdLiteralsEncoder {
     // compressible, and two samples say so for a sixteenth of the counting
     if (suspect && size >= _probeFrom) {
       // Two counts, not one over both samples: the reference takes the largest
-      // of each end and adds them, which is not the largest of their sum
+      // of each end and adds them. That is not the largest of their sum
       final seen = _probe(src, start) + _probe(src, end - _probeSize);
       if (seen <= ((2 * _probeSize) >> 7) + 4) {
         return _writeStored(out, at, src, start, size, zstdLiteralsRaw);

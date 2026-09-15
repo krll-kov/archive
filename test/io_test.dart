@@ -671,6 +671,20 @@ void main() {
     expect(files.length, 4);
   });
 
+  // The header picks the format. The name counts only when the header is
+  // unknown
+  test('extractFileToDisk reads the header before the name', () async {
+    final directory = Directory.systemTemp.createTempSync('archive-extract-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final gz = File('test/_data/test2.tar.gz').readAsBytesSync();
+    for (final name in ['misnamed.zip', 'noextension']) {
+      final input = File('${directory.path}/$name')..writeAsBytesSync(gz);
+      final output = '${directory.path}/out_$name';
+      await extractFileToDisk(input.path, output);
+      expect(Directory(output).listSync(recursive: true).length, 4);
+    }
+  });
+
   test('extractFileToDisk rejects a truncated tar.zst frame', () async {
     final directory = Directory.systemTemp.createTempSync('archive-extract-');
     addTearDown(() => directory.deleteSync(recursive: true));

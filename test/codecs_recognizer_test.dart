@@ -34,7 +34,7 @@ void main() {
   group('codecs recognizer', () {
     archives.forEach((format, bytes) {
       test('$format is recognised', () {
-        expect(CodecsRecognizer.recognize(bytes), format);
+        expect(CodecsRecognizer.recognize(bytes, withZLib: true), format);
       });
 
       test('$format is not taken for anything else', () {
@@ -60,38 +60,85 @@ void main() {
         1, 2, 3, 4,
       ]);
       expect(CodecsRecognizer.isZstd(frame), isTrue);
-      expect(CodecsRecognizer.recognize(frame), ArchiveFormat.zstd);
+      expect(CodecsRecognizer.recognize(frame, withZLib: true),
+          ArchiveFormat.zstd);
     });
 
     test('an empty zip archive is recognised', () {
-      expect(CodecsRecognizer.recognize(ZipEncoder().encodeBytes(Archive())),
+      expect(
+          CodecsRecognizer.recognize(ZipEncoder().encodeBytes(Archive()),
+              withZLib: true),
           ArchiveFormat.zip);
     });
 
     test('the archives in the test data are recognised', () {
       expect(
           CodecsRecognizer.recognize(
-              File(p.join('test/_data/xz/cat.jpg.xz')).readAsBytesSync()),
+              File(p.join('test/_data/xz/cat.jpg.xz')).readAsBytesSync(),
+              withZLib: true),
           ArchiveFormat.xz);
       expect(
           CodecsRecognizer.recognize(
-              File(p.join('test/_data/cat.jpg.gz')).readAsBytesSync()),
+              File(p.join('test/_data/cat.jpg.gz')).readAsBytesSync(),
+              withZLib: true),
           ArchiveFormat.gzip);
       expect(
           CodecsRecognizer.recognize(
-              File(p.join('test/_data/folder.zip')).readAsBytesSync()),
+              File(p.join('test/_data/folder.zip')).readAsBytesSync(),
+              withZLib: true),
           ArchiveFormat.zip);
       expect(
           CodecsRecognizer.recognize(
-              File(p.join('test/_data/example.tar')).readAsBytesSync()),
+              File(p.join('test/_data/example.tar')).readAsBytesSync(),
+              withZLib: true),
           ArchiveFormat.tar);
     });
 
     test('what is none of them is unknown', () {
-      expect(CodecsRecognizer.recognize(Uint8List(0)), ArchiveFormat.unknown);
-      expect(CodecsRecognizer.recognize(Uint8List.fromList([1, 2, 3])),
+      expect(CodecsRecognizer.recognize(Uint8List(0), withZLib: true),
           ArchiveFormat.unknown);
-      expect(CodecsRecognizer.recognize(sample), ArchiveFormat.unknown);
+      expect(
+          CodecsRecognizer.recognize(Uint8List.fromList([1, 2, 3]),
+              withZLib: true),
+          ArchiveFormat.unknown);
+      expect(CodecsRecognizer.recognize(sample, withZLib: true),
+          ArchiveFormat.unknown);
+    });
+
+    test('zlib needs a deflate block header that could be real', () {
+      // A git ref passes the two byte check. Its "0" sets the preset
+      // dictionary bit
+      expect(CodecsRecognizer.isZLib('80cc39b4'.codeUnits), isFalse);
+      // Type 3 is reserved
+      expect(CodecsRecognizer.isZLib([0x78, 0x01, 0x06]), isFalse);
+      // NLEN is not the inverse of LEN in this stored block
+      expect(CodecsRecognizer.isZLib([0x78, 0x01, 0x01, 5, 0, 0, 0]), isFalse);
+      for (var level = 0; level <= 9; level++) {
+        for (final input in [sample, Uint8List(0)]) {
+          expect(
+              CodecsRecognizer.isZLib(
+                  ZLibEncoder().encodeBytes(input, level: level)),
+              isTrue,
+              reason: 'level $level, ${input.length} bytes');
+        }
+      }
+    });
+
+    test('reserved header bits and a missing bzip2 block are refused', () {
+      final gzip = Uint8List.fromList(archives[ArchiveFormat.gzip]!)
+        ..[3] |= 0x20;
+      expect(CodecsRecognizer.isGZip(gzip), isFalse);
+      final zstd = Uint8List.fromList(archives[ArchiveFormat.zstd]!)
+        ..[4] |= 0x08;
+      expect(CodecsRecognizer.isZstd(zstd), isFalse);
+      // We change the check type. The stream flags no longer match their CRC32
+      final xz = Uint8List.fromList(archives[ArchiveFormat.xz]!)..[7] ^= 0x01;
+      expect(CodecsRecognizer.isXZ(xz), isFalse);
+      // This text starts with the bzip2 magic. The next six bytes are not a
+      // block magic
+      expect(
+          CodecsRecognizer.isBZip2('BZh9 is not a block'.codeUnits), isFalse);
+      expect(CodecsRecognizer.isBZip2(BZip2Encoder().encodeBytes([])), isTrue);
     });
 
     test('a header shorter than the check needs is not a match', () {
@@ -108,7 +155,7 @@ void main() {
           return;
         }
         final head = Uint8List.sublistView(bytes, 0, 6);
-        expect(CodecsRecognizer.recognize(head), format,
+        expect(CodecsRecognizer.recognize(head, withZLib: true), format,
             reason: '$format from ${6} bytes');
       });
     });
@@ -119,7 +166,8 @@ void main() {
       final tar = File(p.join('test/_data/example.tar')).readAsBytesSync();
       final head = Uint8List.sublistView(tar, 0, 263);
       expect(CodecsRecognizer.isTar(head), isTrue);
-      expect(CodecsRecognizer.recognize(head), ArchiveFormat.tar);
+      expect(
+          CodecsRecognizer.recognize(head, withZLib: true), ArchiveFormat.tar);
     });
 
     test('a tar this package wrote needs its whole header', () {
@@ -138,7 +186,8 @@ void main() {
     });
 
     test('every format names the extension it is written with', () {
-      expect(CodecsRecognizer.extensionOf(ArchiveFormat.zstd), 'zst');
+      expect(
+          CodecsRecognizer.extensionOf(ArchiveFormat.zstd).toString(), 'zst');
       expect(CodecsRecognizer.extensionOf(ArchiveFormat.unknown), isNull);
     });
   });

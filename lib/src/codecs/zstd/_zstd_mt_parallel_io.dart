@@ -28,8 +28,8 @@ Future<Isolate> Function(SendPort replies, SendPort errors) zstdMtSpawnWorker =
 /// is shared and the bytes do not depend on how many run at once.
 ///
 /// The workers are spawned once and fed job after job: a fresh isolate per job
-/// costs a heap and a set of tables each time, which is what made the memory
-/// grow with the job count rather than with the pool
+/// costs a heap and a set of tables each time. That made the memory grow with
+/// the job count rather than with the pool
 Future<List<Uint8List>> zstdMtCompressJobs(
     Uint8List src, List<int> starts, int prefixSize, int level,
     {required int jobSize,
@@ -187,8 +187,8 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
       index == starts.length - 1,
       jobSize,
       overlapLog,
-      // In job order, which is what the one long distance pass over the frame
-      // needs: `give` hands the jobs out in that order whatever finishes first
+      // In job order, the order the one long distance pass over the frame
+      // needs. `give` hands the jobs out that way whatever finishes first
       ldmFor?.call(start, end),
     ]);
   }
@@ -333,8 +333,8 @@ Stream<Uint8List> _zstdMtCompressStream(
   final held = <int, Uint8List>{};
 
   /// Parts whose turn has come, waiting for the consumer to take them. The
-  /// generator below is the only thing that empties it, which is what makes the
-  /// reading follow the consumer's pace
+  /// generator below is the only thing that empties it. The reading follows the
+  /// consumer's pace that way
   final ready = <Uint8List>[];
   var written = 0;
   var sent = 0;

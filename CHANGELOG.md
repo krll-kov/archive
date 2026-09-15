@@ -4,13 +4,17 @@
   have a default body, so a class that extends them needs no change. A class that implements them
   has to add these methods
 * Added zstd (Zstandard) support, both decode and encode (lvl 1-22, with custom dictionaries)
-* Added Dart async* `StreamTransformers`/`ByteConversionSink`/`Converter` support
-  (`xzCodec`, `zstdCodec`, `bzip2Codec`, `tarCodec` and `zipCodec`) for decode and encode (decoders for all formats except for zip)
-* Added .tar.zst and .tzst to `extractArchiveToDisk`. Also, `extractArchiveToDisk` now checks for errors during
+* Added Dart async* `StreamTransformer`/`ByteConversionSink`/`Converter` support
+  (`xzCodec`, `zstdCodec`, `bzip2Codec`, `tarCodec` and `zipCodec`) for decode and encode (decoders for
+  all formats except for zip). xz, zstd and bzip2 are `Converter`s, bytes to bytes; tar and zip are
+  `StreamTransformer`s: `TarDecoderTransformer`, `TarEncoderTransformer` and `ZipEncoderTransformer`
+* `extractFileToDisk` now detects files not only by extension but also by their header bytes. If detection by headers 
+  fails it uses old file extension format instead
+* Added .tar.zst and .tzst to `extractFileToDisk`. Also, `extractFileToDisk` now checks for errors during
   unpack/decompress and does not leak temporary TAR files on fail
 * Fixed CRC64 `XZEncoder` created files created on dart-js failed to decode on native platforms
 * Fixed zlib encoder on web
-* Added `CodecsRecognizer` with `ArchiveFormat` to recognize compressed file types by with their header bytes
+* Added `CodecsRecognizer` with `ArchiveFormat` to recognize compressed file types with their header bytes
 * Fixed `XZEncoder` (without compression) for large files
 * Made CRC32 faster on IO (non-js-web platforms)
 * Slightly reduces amount of RAM for lzma decoder and zlib encoder
@@ -20,6 +24,10 @@
 * Fixed a few cases with accepting corrupted file in `XZDecoder`
 * Fixed some 7z files failed to decode with `XZDecoder`
 * Fixed invalid bzip2 archive returned true from `decodeStream`
+* Fixed `BZip2Decoder` throwing `RangeError` on an archive cut inside a block when it read from an
+  `InputMemoryStream`. Both memory and file streams return false now, without inconsistency.
+* Fixed a zip entry compressed with bzip2 handing back short data with no error when the entry is
+  damaged. It throws `ArchiveException` now, the way a damaged deflate entry already did
 * Fixed file names trimming in TAR
 * `ZipEncoder` now applies CompressionType.none to entries with no content
 * Replaced `ChunkedConversionSink` with `ZLibOutputSink` for gzip and zlib to forward every piece the codec produces instead
@@ -35,8 +43,8 @@
   general purpose flag as the local header, so a non-UTF-8 filenameEncoding is no longer misreported
 * Removed unused localFileSize, centralDirectorySize and endOfCentralDirectorySize from the zip
   encoder, where localFileSize also counted a streamed entry's header twice
-* `XZMultithreadOptions.onDone` is no longer required, since a stream hands back its own result.
-  decodeBytes and decodeStream still throw `ArgumentError` when it is left out
+* Added `XZMultithreadOptions.converter` and `ZstdMultithreadOptions.converter`, the options a
+  `Converter` takes for multithreaded decoding/encoding via converter.
 * Fixed extremely high RAM usage on big files (4GB+) for `ZipEncoder(streamed: true)` (use zip64 format from zip APPNOTE)
 * Fixed decoding zip64 with `ZipDecoder`
 

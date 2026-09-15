@@ -10,8 +10,8 @@ import 'zstd_mt_frame_encoder.dart';
 
 const bool zstdIsolatesSupported = false;
 
-/// Compresses the jobs in the calling isolate, which is what a target without
-/// [Isolate] can do. The bytes are the ones the workers would have produced
+/// Compresses the jobs in the calling isolate, all a target without [Isolate]
+/// can do. The bytes are the ones the workers would have produced
 Future<List<Uint8List>> zstdMtCompressJobs(
     Uint8List src, List<int> starts, int prefixSize, int level,
     {required int jobSize,
@@ -52,7 +52,7 @@ Future<List<Uint8List>> zstdMtCompressJobs(
 }
 
 /// The same jobs, cut out of the arriving bytes and compressed in the calling
-/// isolate, which is what a target without [Isolate] can do
+/// isolate, all a target without [Isolate] can do
 Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
         {required int jobSize,
         required int overlapLog,

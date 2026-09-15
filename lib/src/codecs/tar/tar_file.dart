@@ -516,8 +516,8 @@ class TarMetadata {
           linkName = value;
           break;
         case 'size':
-          // A pax size record overrides the header's own field, which is
-          // how a file of 8GB or more is stored in this format.
+          // A pax size record overrides the header's own field. A file of 8GB
+          // or more is stored that way in this format.
           size = int.tryParse(value);
           break;
         case 'mtime':

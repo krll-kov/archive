@@ -82,7 +82,7 @@ int _mul32(int a, int b) =>
 
 /// Streaming XXH64, the checksum zstd frames carry.
 ///
-/// The seed is taken as a 32 bit value, which is all any caller here uses
+/// The seed is taken as a 32 bit value, all any caller here uses
 class Xxh64 {
   final int _seed;
   final _U64 _v1 = _U64(0, 0);

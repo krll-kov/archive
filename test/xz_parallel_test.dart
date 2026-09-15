@@ -1045,7 +1045,7 @@ void main() {
   // writes, and on a failure no more than the whole blocks before it
   group('xz stream decoder on isolates', () {
     final expected = sampleData(1200000);
-    const options = XZMultithreadOptions<Object?>(workers: 4);
+    const options = XZMultithreadOptions<Object?>.converter(workers: 4);
 
     Stream<List<int>> pieces(Uint8List bytes, int size) async* {
       for (var at = 0; at < bytes.length; at += size) {
@@ -1143,8 +1143,10 @@ void main() {
 
     test('a budget that affords one worker writes the same bytes', () async {
       final bytes = fixture('blocks');
-      final many = await threaded(pieces(bytes, 1 << 16),
-          const XZMultithreadOptions(workers: 4, memoryBudget: 10 << 20));
+      final many = await threaded(
+          pieces(bytes, 1 << 16),
+          const XZMultithreadOptions.converter(
+              workers: 4, memoryBudget: 10 << 20));
       expect(many.error, isNull);
       expect(many.bytes, expected);
     });
@@ -1297,8 +1299,8 @@ void main() {
 
     test('settings that cannot be honoured are refused', () async {
       for (final bad in [
-        const XZMultithreadOptions<Object?>(workers: 0),
-        const XZMultithreadOptions<Object?>(memoryBudget: 0),
+        const XZMultithreadOptions<Object?>.converter(workers: 0),
+        const XZMultithreadOptions<Object?>.converter(memoryBudget: 0),
       ]) {
         final outcome = await threaded(pieces(fixture('whole'), 4096), bad);
         expect(outcome.error, isA<ArgumentError>());
@@ -1308,7 +1310,8 @@ void main() {
     test('decodeBytes still needs onDone', () {
       expect(
           () => XZDecoder().decodeBytes(fixture('whole'),
-              multithread: const XZMultithreadOptions<Uint8List>(workers: 2)),
+              multithread:
+                  const XZMultithreadOptions<Uint8List>.converter(workers: 2)),
           throwsArgumentError);
     });
   });

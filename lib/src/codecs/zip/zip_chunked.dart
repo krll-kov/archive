@@ -7,8 +7,10 @@ import '../../util/chunked_sink.dart';
 import '../zip_encoder.dart';
 import '../zlib/deflate.dart';
 
-/// zip as a `Stream`, writing only. Reading needs the central directory, which
-/// sits at the end of the archive, so a forward-only source cannot be read
+/// zip through `transform`, writing only. The encoder is a `StreamTransformer`
+/// rather than a `Converter`, since its input is entries and not bytes. There is
+/// no decoder: reading needs the central directory, which sits at the end of the
+/// archive, so a forward-only source cannot be read
 class ZipCodec {
   final int level;
   final String? password;
@@ -17,7 +19,7 @@ class ZipCodec {
   /// See [ZipChunkedEncoder.streamed]
   final bool streamed;
 
-  /// See [ZipStreamEncoder.autoClose]
+  /// See [ZipEncoderTransformer.autoClose]
   final bool autoClose;
 
   const ZipCodec(
@@ -27,7 +29,7 @@ class ZipCodec {
       this.streamed = true,
       this.autoClose = false});
 
-  ZipStreamEncoder get encoder => ZipStreamEncoder(
+  ZipEncoderTransformer get encoder => ZipEncoderTransformer(
       level: level,
       password: password,
       filenameEncoding: filenameEncoding,
@@ -38,8 +40,10 @@ class ZipCodec {
 /// The codec with its defaults, for `entries.transform(zipCodec.encoder)`
 const zipCodec = ZipCodec();
 
-/// [ZipChunkedEncoder] behind the shape the other codecs use
-class ZipStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
+/// [ZipChunkedEncoder] behind `zipCodec.encoder`. It takes entries and writes
+/// bytes, so it is a `StreamTransformer` and not a `Converter`
+class ZipEncoderTransformer
+    extends StreamTransformerBase<ArchiveFile, List<int>> {
   final int level;
   final String? password;
   final Encoding filenameEncoding;
@@ -50,7 +54,7 @@ class ZipStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
   /// caller's, and whoever opened a file closes it
   final bool autoClose;
 
-  const ZipStreamEncoder(
+  const ZipEncoderTransformer(
       {this.level = DeflateLevel.bestSpeed,
       this.password,
       this.filenameEncoding = const Utf8Codec(),
@@ -98,7 +102,7 @@ class ZipStreamEncoder extends StreamTransformerBase<ArchiveFile, List<int>> {
           body.cancel();
         }
       } finally {
-        // A cancel lands on a yield above, which is why this is a finally
+        // A cancel lands on a yield above, so this is a finally
         if (autoClose) {
           entry.closeSync();
         }

@@ -10,7 +10,7 @@ import '../bzip2_encoder.dart';
 import 'bz2_bit_reader.dart';
 import 'bzip2.dart';
 
-/// bzip2 for data that arrives in pieces, which is what a `Stream` gives. The
+/// bzip2 for data that arrives in pieces, the way a `Stream` gives it. The
 /// shape is the one `dart:io` uses for gzip, one converter per direction
 class BZip2Codec extends Codec<List<int>, List<int>> {
   /// Checks the CRC of every block and of the stream. On by default: a caller
@@ -62,8 +62,8 @@ class BZip2EncoderConverter extends ChunkedConverter {
 
 /// Writes a bzip2 archive over data that arrives in pieces.
 ///
-/// A block is filled a byte at a time and coded once it is full, which is what
-/// [BZip2Encoder] does with the bytes it pulls, so the archive this writes is
+/// A block is filled a byte at a time and coded once it is full. [BZip2Encoder]
+/// does the same with the bytes it pulls, so the archive this writes is
 /// the one `encodeBytes` writes for the same input. What it holds is one
 /// block, whatever the input weighs
 class BZip2ChunkedEncoder extends ChunkedSink {
@@ -132,8 +132,8 @@ class BZip2ChunkedEncoder extends ChunkedSink {
 /// holds, whatever the archive weighs.
 ///
 /// A marker can also turn up inside a block by chance. The decode of that block
-/// then runs out of input, and the scan carries on to the next marker, which is
-/// why the block's output is held back until it is whole
+/// then runs out of input, and the scan carries on to the next marker. So the
+/// block's output is held back until it is whole
 class BZip2ChunkedDecoder extends ChunkedSink {
   final bool verify;
 
@@ -180,8 +180,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
             return;
           }
           _storedBlockCrc = _readBits(32);
-          // The block runs from here to the next marker, so that is where the
-          // search for one starts
+          // The block runs from here to the next marker. The search for one
+          // starts here too
           _resetScan();
           _stage = _Stage.blockBody;
         case _Stage.blockBody:
@@ -194,8 +194,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
           }
           _readStreamCrc();
         case _Stage.streamEnd:
-          // Another archive may follow this one, which is what `bzip2 -d` does
-          // with two files concatenated. Only the end of the input says so
+          // Another archive may follow this one. `bzip2 -d` reads two files
+          // concatenated that way. Only the end of the input says so
           if (available == 0) {
             return;
           }
@@ -425,7 +425,7 @@ class _BitInput extends InputMemoryStream {
   }
 }
 
-/// What one hand over carries, which is what gzip and xz hand over too
+/// What one hand over carries. gzip and xz hand over the same
 const _piece = 1 << 16;
 
 enum _Stage {

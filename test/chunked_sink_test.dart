@@ -184,10 +184,12 @@ void main() {
         'zipCodec.encoder': (fed) =>
             watched(failing(files), fed).transform(zipCodec.encoder),
         'threaded xz decoder': (fed) => watched(broken(xzCodec), fed).transform(
-            const XzCodec(multithread: XZMultithreadOptions(workers: 2))
+            const XzCodec(
+                    multithread: XZMultithreadOptions.converter(workers: 2))
                 .decoder),
         'threaded zstd encoder': (fed) => watched(failing(data), fed).transform(
-            const ZstdCodec(multithread: ZstdMultithreadOptions(workers: 2))
+            const ZstdCodec(
+                    multithread: ZstdMultithreadOptions.converter(workers: 2))
                 .encoder),
       };
       for (final entry in cases.entries) {

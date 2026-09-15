@@ -45,7 +45,7 @@ int _pow2(int exponent) {
   return value;
 }
 
-/// Reads the header at [start], which is the byte after the magic number
+/// Reads the header at [start], the byte after the magic number
 ZstdFrameHeader readFrameHeader(
     Uint8List src, int start, int end, int windowSizeLimit) {
   if (start >= end) {
@@ -233,7 +233,7 @@ class ZstdFrameDecoder {
     var at = start;
     while (true) {
       // Reserving here rather than leaving it to the block keeps the range the
-      // block wrote contiguous and known, which is what the checksum needs
+      // block wrote contiguous and known. The checksum needs it that way
       window.reserve(reserve);
       final from = window.position;
       at += _blocks.decode(src, at, end, window, _rep, blockSizeMax);

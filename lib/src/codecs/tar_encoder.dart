@@ -61,8 +61,8 @@ class TarEncoder {
     }
 
     // GNU tar files store extra long file names in a separate file. Long in
-    // bytes as encoded, which is what the header field holds, and the size
-    // of the separate file
+    // bytes as encoded, the number the header field holds, and the size of the
+    // separate file
     final name = filenameEncoding.encode(entry.name);
     if (name.length > 100) {
       final ts = TarFile();
@@ -78,7 +78,7 @@ class TarEncoder {
       ts.write(_outputStream!, filenameEncoder: filenameEncoding);
     }
 
-    // After the name, which is the order GNU writes the two in
+    // After the name, the order GNU writes the two in
     if (entry.isSymbolicLink) {
       final link = filenameEncoding.encode(entry.symbolicLink!);
       if (link.length > 100) {

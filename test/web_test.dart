@@ -142,4 +142,17 @@ void main() {
       expect(decoder.files[0].fileSize, equals(9437184000));
     });
   });
+
+  group('zip web', () {
+    test('an encoder is built without secure randomness', () {
+      // Random.secure() throws on dart2js and Node, and the field used to be
+      // eager, so no ZipEncoder and no zipCodec could be built at all there
+      expect(ZipEncoder.new, returnsNormally);
+      expect(() => const ZipCodec().encoder, returnsNormally);
+      final zip = ZipEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
+      expect(ZipDecoder().decodeBytes(zip).files.single.readBytes(),
+          'hello'.codeUnits);
+    });
+  });
 }
