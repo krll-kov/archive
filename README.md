@@ -300,11 +300,9 @@ unlike `decodeBytes` and `decodeStream`: the compressed bytes are handed back as
 is no second chance at the check. `XzCodec(verify: false)` skips them, which is
 worth about 6% of the decode.
 
-A failure reaches the stream as an error, and a sink that has failed reports the
-same failure rather than reading what follows it. It does not close the sink it
-was given. `dart:io` behaves the same way: `gzip.decoder` and `zlib.decoder`
-throw a `FormatException` out of `add` and leave the output open. So if your
-sink holds a file or a socket, you have to close it yourself:
+Through a sink, a failure is thrown out of `add` or `close`, and the input
+after it is not read. The sink you passed in stays open, as it does with
+`gzip.decoder` in `dart:io`. If it holds a file or a socket, close it yourself:
 
 ```dart
 final file = File('out.bin').openWrite();
@@ -317,12 +315,12 @@ try {
 }
 ```
 
-The `Stream` and `Converter` paths do not need this. After a failure the
-`xzCodec`, `zstdCodec` and `bzip2Codec` converters do not close their stream,
-the same as `gzip.decoder` and `gzip.encoder`. `tarCodec`, `zipCodec` and the
-threaded converters close it after the error. Treat the first error as the end
-either way. `await for`, `pipe` and `toList` stop there on their own. A `listen`
-that waits for `onDone` has to cancel the subscription in `onError`.
+Through a `Stream`, a failure arrives as an error event. The `xzCodec`,
+`zstdCodec` and `bzip2Codec` converters then leave the stream open, as
+`gzip.decoder` and `gzip.encoder` do. `tarCodec`, `zipCodec` and the threaded
+converters close it. Treat the first error as the end either way. `await for`,
+`pipe` and `toList` stop there on their own. A `listen` that waits for `onDone`
+has to cancel the subscription in `onError`.
 
 ### Running a codec off the UI isolate
 
