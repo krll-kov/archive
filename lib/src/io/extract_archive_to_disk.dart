@@ -261,7 +261,6 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
       final input = InputFileStream(archivePath);
       toClose = input;
       archive = TarDecoder().decodeStream(input, callback: callback);
-
     } else if (recognized == ArchiveFormat.zip) {
       final input = InputFileStream(archivePath);
       toClose = input;

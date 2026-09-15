@@ -130,7 +130,9 @@ void main() {
 
     // A stream hears a failure once, as it does from gzip and zlib in dart:io.
     // A decoder that fails drops the input after it and never closes, as gzip
-    // does. Every other transformer closes on its first failure
+    // does. The xz, zstd and bzip2 encoders stay open after a source error, as
+    // gzip.encoder does. tar, zip and the threaded codecs close on their first
+    // failure
     test('every transformer reports a failure to a stream once', () async {
       Stream<T> failing<T>(List<T> items) async* {
         yield* Stream.fromIterable(items);
@@ -204,6 +206,134 @@ void main() {
             .timeout(const Duration(seconds: 10));
         expect(errors, hasLength(1), reason: entry.key);
       }
+    });
+
+    // We behave like gzip.decoder in dart:io. After a failure a decoder drops
+    // the rest of the input and never closes the stream. The listener ends it.
+    // await for, pipe and toList cancel at the first error on their own. A
+    // listen that waits for onDone has to cancel in onError. gzip.decoder is
+    // checked here too, so a change on the dart:io side shows up as well
+    test('a failed decoder stream stays open, as gzip.decoder does', () async {
+      Future<void> expectOpen(String reason,
+          Converter<List<int>, List<int>> decoder, List<int> bytes) async {
+        final errors = <Object>[];
+        var closed = false;
+        final failed = Completer<void>();
+        final subscription = Stream<List<int>>.fromIterable([bytes])
+            .transform(decoder)
+            .listen((_) {},
+                onError: (Object error) {
+                  errors.add(error);
+                  if (!failed.isCompleted) {
+                    failed.complete();
+                  }
+                },
+                onDone: () => closed = true);
+        await failed.future.timeout(const Duration(seconds: 10));
+        // The source has closed by now, so a stream that ends would have
+        await pumpEventQueue();
+        await subscription.cancel();
+        expect(errors, hasLength(1), reason: reason);
+        expect(errors.single, isA<FormatException>(), reason: reason);
+        expect(closed, isFalse, reason: reason);
+      }
+
+      final gz = Uint8List.fromList(gzip.encode(_sample(100000)))..[0] ^= 0xff;
+      await expectOpen('gzip.decoder, broken header', gzip.decoder, gz);
+
+      final codecs = <String, Codec<List<int>, List<int>>>{
+        'xz': xzCodec,
+        'zstd': zstdCodec,
+        'bzip2': bzip2Codec,
+      };
+      for (final codec in codecs.entries) {
+        final archive = Uint8List.fromList(codec.value.encode(_sample(100000)));
+        // A broken header fails in add. A cut archive fails in close
+        final broken = Uint8List.fromList(archive)..[0] ^= 0xff;
+        final cut = archive.sublist(0, archive.length - 5);
+        await expectOpen(
+            '${codec.key}, broken header', codec.value.decoder, broken);
+        await expectOpen('${codec.key}, cut', codec.value.decoder, cut);
+      }
+    });
+
+    // Encoders follow gzip.encoder in dart:io. An error from the source reaches
+    // the stream once, and the stream stays open
+    test('a failed encoder stream stays open, as gzip.encoder does', () async {
+      final data = [for (var i = 0; i < 4; i++) _sample(3000)];
+      void failSource(StreamController<List<int>> source) {
+        data.forEach(source.add);
+        source.addError(StateError('source failed'));
+      }
+
+      final encoders = <String, Converter<List<int>, List<int>>>{
+        'gzip.encoder': gzip.encoder,
+        'xzCodec.encoder': xzCodec.encoder,
+        'zstdCodec.encoder': zstdCodec.encoder,
+        'bzip2Codec.encoder': bzip2Codec.encoder,
+      };
+      for (final encoder in encoders.entries) {
+        await _expectEndAfterFailure<List<int>>(encoder.key,
+            (source) => source.transform(encoder.value), failSource,
+            closes: false);
+      }
+    });
+
+    // tar, zip and the threaded codecs have no dart:io counterpart. They end the
+    // stream on their first failure
+    test('tar, zip and threaded transformers close on their first failure',
+        () async {
+      void feedBytes(StreamController<List<int>> source, List<int> bytes) {
+        for (var at = 0; at < bytes.length; at += 16) {
+          source.add(bytes.sublist(
+              at, at + 16 < bytes.length ? at + 16 : bytes.length));
+        }
+      }
+
+      final files = [
+        for (var i = 0; i < 4; i++) ArchiveFile.bytes('f$i.bin', _sample(3000)),
+      ];
+      void failFiles(StreamController<ArchiveFile> source) {
+        files.forEach(source.add);
+        source.addError(StateError('source failed'));
+      }
+
+      final data = [for (var i = 0; i < 4; i++) _sample(3000)];
+      void failData(StreamController<List<int>> source) {
+        data.forEach(source.add);
+        source.addError(StateError('source failed'));
+      }
+
+      final tar = TarEncoder().encodeBytes(Archive()..addFile(files[0]));
+      tar[148] ^= 1;
+      final xz = Uint8List.fromList(xzCodec.encode(_sample(100000)))
+        ..[0] ^= 0xff;
+
+      await _expectEndAfterFailure<List<int>>(
+          'tarCodec.decoder',
+          (source) => source.transform(tarCodec.decoder),
+          (source) => feedBytes(source, tar),
+          closes: true);
+      await _expectEndAfterFailure<ArchiveFile>('tarCodec.encoder',
+          (source) => source.transform(tarCodec.encoder), failFiles,
+          closes: true);
+      await _expectEndAfterFailure<ArchiveFile>('zipCodec.encoder',
+          (source) => source.transform(zipCodec.encoder), failFiles,
+          closes: true);
+      await _expectEndAfterFailure<List<int>>(
+          'threaded xz decoder',
+          (source) => source.transform(const XzCodec(
+                  multithread: XZMultithreadOptions.converter(workers: 2))
+              .decoder),
+          (source) => feedBytes(source, xz),
+          closes: true);
+      await _expectEndAfterFailure<List<int>>(
+          'threaded zstd encoder',
+          (source) => source.transform(const ZstdCodec(
+                  multithread: ZstdMultithreadOptions.converter(workers: 2))
+              .encoder),
+          failData,
+          closes: true);
     });
 
     test('what a codec throws at bad data becomes one kind of failure', () {
@@ -330,6 +460,37 @@ void main() {
       });
     }
   });
+}
+
+/// Feeds a source that never closes, so only the transformer can end the
+/// stream. We expect one error, then a stream that ended or stayed open
+Future<void> _expectEndAfterFailure<T>(
+    String reason,
+    Stream<Object?> Function(Stream<T> source) transform,
+    void Function(StreamController<T> source) feed,
+    {required bool closes}) async {
+  final source = StreamController<T>();
+  final errors = <Object>[];
+  final failed = Completer<void>();
+  final ended = Completer<void>();
+  final subscription =
+      transform(source.stream).listen((_) {}, onError: (Object error) {
+    errors.add(error);
+    if (!failed.isCompleted) {
+      failed.complete();
+    }
+  }, onDone: ended.complete);
+  feed(source);
+  await failed.future.timeout(const Duration(seconds: 10));
+  if (closes) {
+    await ended.future.timeout(const Duration(seconds: 10));
+  } else {
+    // A stream that ends would have ended by now
+    await pumpEventQueue();
+    expect(ended.isCompleted, isFalse, reason: reason);
+  }
+  await subscription.cancel();
+  expect(errors, hasLength(1), reason: reason);
 }
 
 Uint8List _cut(List<int> bytes, int off) =>

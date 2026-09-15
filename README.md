@@ -55,8 +55,8 @@ void main() {
   final archive = ZipDecoder().decodeBytes(bytes);
   for (final entry in archive) {
     if (entry.isFile) {
-      final fileBytes = file.readBytes();
-      File('out/${file.fullPathName}')
+      final fileBytes = entry.content;
+      File('out/${entry.name}')
         ..createSync(recursive: true)
         ..writeAsBytesSync(fileBytes);
     }
@@ -76,7 +76,7 @@ void main() {
   // Decode the zip from the InputFileStream. The archive will have the contents of the
   // zip, without having stored the data in memory. 
   final archive = ZipDecoder().decodeStream(inputStream);
-  final symbolicLinks = []; // keep a list of the symbolic link entities, if any.
+  final symbolicLinks = <ArchiveFile>[]; // keep a list of the symbolic link entities, if any.
   // For all of the entries in the archive
   for (final file in archive) {
     // You should create symbolic links **after** the rest of the archive has been
@@ -93,7 +93,7 @@ void main() {
       final outputStream = OutputFileStream('out/${file.name}');
       // The writeContent method will decompress the file content directly to disk without
       // storing the decompressed data in memory. 
-      entity.writeContent(outputStream);
+      file.writeContent(outputStream);
       // Make sure to close the output stream so the File is closed.
       outputStream.closeSync();
     } else {
@@ -108,9 +108,10 @@ void main() {
   for (final entity in symbolicLinks) {
     // Before using this in production code, you should ensure the symbolicLink path
     // points to a file within the archive, otherwise it could be a security issue.
-    final link = Link('out/${entity.fullPathName}');
+    final link = Link('out/${entity.name}');
     link.createSync(entity.symbolicLink!, recursive: true);
   }
+  inputStream.closeSync();
 }
 ```
 
@@ -123,7 +124,8 @@ Extracting a zip, with progress over the whole archive:
 import 'package:archive/archive.dart';
 
 void main() async {
-  final archive = ZipDecoder().decodeStream(InputFileStream('test.zip'));
+  final input = InputFileStream('test.zip');
+  final archive = ZipDecoder().decodeStream(input);
   // The zip directory records every file's unpacked size
   final total = archive.fold<int>(0, (sum, f) => sum + (f.isFile ? f.size : 0));
   var done = 0;
@@ -135,6 +137,7 @@ void main() async {
     await out.close();
     done += file.size;
   }
+  await input.close();
 }
 ```
 
@@ -148,9 +151,10 @@ void main() async {
   final total = input.length;
   final out = ProgressOutputStream(OutputFileStream('data.tar'),
       (_) => print('${input.position * 100 ~/ total}%'));
-  const GZipDecoder().decodeStream(input, out);
+  final ok = const GZipDecoder().decodeStream(input, out);
   await out.close();
   await input.close();
+  if (!ok) throw ArchiveException('data.tar.gz is damaged or cut short');
 }
 ```
 
@@ -201,6 +205,8 @@ await for (final piece
 A `.tar.zst` downloaded and unpacked as it arrives, without holding the body:
 
 ```dart
+import 'package:archive/archive.dart';
+import 'dart:io';
 import 'package:path/path.dart' as p;
 
 final request =
@@ -236,6 +242,10 @@ await File('data')
     .transform(xzCodec.encoder)
     .pipe(out);
 ```
+
+If reading or encoding fails, `pipe` throws and `out` is closed, but `data.xz`
+stays on disk. It is empty when the failure comes before the first output, and
+cut short when it comes later. Delete it if a partial file is of no use to you.
 
 A `.tar.zst` packed straight into an upload, with no temporary file:
 
@@ -307,8 +317,12 @@ try {
 }
 ```
 
-The `Stream` and `Converter` paths do not need this. `dart:convert` closes its
-own event sink however the conversion ends.
+The `Stream` and `Converter` paths do not need this. After a failure the
+`xzCodec`, `zstdCodec` and `bzip2Codec` converters do not close their stream,
+the same as `gzip.decoder` and `gzip.encoder`. `tarCodec`, `zipCodec` and the
+threaded converters close it after the error. Treat the first error as the end
+either way. `await for`, `pipe` and `toList` stop there on their own. A `listen`
+that waits for `onDone` has to cancel the subscription in `onError`.
 
 ### Running a codec off the UI isolate
 
@@ -377,6 +391,8 @@ xz over a whole buffer, one block to a worker:
 ```dart
 final completer = Completer<Uint8List>();
 XZDecoder().decodeBytes(compressed,
+    verify: true,
+    throwOnError: true,
     multithread: XZMultithreadOptions(
       onDone: completer.complete,
       onError: (error, _) => completer.completeError(error),
@@ -396,7 +412,7 @@ await File('data.bin')
     .openRead()
     .transform(ZstdCodec(
       level: 6,
-      multithread: ZstdMultithreadOptions(workers: 4),
+      multithread: ZstdMultithreadOptions.converter(workers: 4),
     ).encoder)
     .pipe(File('data.bin.zst').openWrite());
 ```
@@ -431,9 +447,9 @@ final head = await File('data.bin').openRead(0, CodecsRecognizer.headerBytes)
 
 switch (CodecsRecognizer.recognize(head)) {
   case ArchiveFormat.zstd:
-    // ...
+    print('zstd');
   case ArchiveFormat.xz:
-    // ...
+    print('xz');
   default:
     // ArchiveFormat.unknown
 }
@@ -458,11 +474,11 @@ be recognized this way.
 #### extractFileToDisk
 `extractFileToDisk` is a convenience function to extract the contents of
 an archive file directory to an output directory.
-The type of archive it is will be determined by the file extension.
+The type of archive is read from its header, or from the file extension when the header is not recognised.
 ```dart
 import 'package:archive/archive_io.dart';
 // ...
-extractFileToDisk('test.zip', 'out');
+await extractFileToDisk('test.zip', 'out');
 ```
 #### extractArchiveToDisk
 `extractArchiveToDisk` is a convenience function to write the contents of an Archive
@@ -475,7 +491,8 @@ final inputStream = InputFileStream('test.zip');
 // Decode the zip from the InputFileStream. The archive will have the contents of the
 // zip, without having stored the data in memory. 
 final archive = ZipDecoder().decodeStream(inputStream);
-extractArchiveToDisk(archive, 'out');
+await extractArchiveToDisk(archive, 'out');
+await inputStream.close();
 ```
 #### Zstandard
 
