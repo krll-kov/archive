@@ -30,7 +30,7 @@ void main() {
     });
 
     test('decode hello', () {
-      // hello.xz has no LZMA compression due to its simplicity
+      // hello.xz is too small for LZMA. It holds stored data
       final file = File(p.join('test/_data/xz/hello.xz'));
       final compressed = file.readAsBytesSync();
       final data = XZDecoder().decodeBytes(compressed);
@@ -38,7 +38,7 @@ void main() {
     });
 
     test('decode crc32', () {
-      // Uses a CRC-32 checksum
+      // Uses a CRC-32 checksum.
       final file = File(p.join('test/_data/xz/crc32.xz'));
       final compressed = file.readAsBytesSync();
       final data = XZDecoder().decodeBytes(compressed, verify: true);
@@ -46,7 +46,7 @@ void main() {
     });
 
     test('decode crc64', () {
-      // Uses a CRC-64 checksum
+      // Uses a CRC-64 checksum.
       final file = File(p.join('test/_data/xz/crc64.xz'));
       final compressed = file.readAsBytesSync();
       final data = XZDecoder().decodeBytes(compressed, verify: true);
@@ -54,7 +54,7 @@ void main() {
     });
 
     test('decode sha256', () {
-      // Uses a SHA-256 checksum
+      // Uses a SHA-256 checksum.
       final file = File(p.join('test/_data/xz/sha256.xz'));
       final compressed = file.readAsBytesSync();
       final data = XZDecoder().decodeBytes(compressed, verify: true);
@@ -70,7 +70,7 @@ void main() {
     });
 
     test('decode hello repeated', () {
-      // Simple file with a small amount of compression due to repeated data
+      // A small file that repeats itself. LZMA finds a few matches
       final file = File(p.join('test/_data/xz/hello-hello-hello.xz'));
       final compressed = file.readAsBytesSync();
       final data = XZDecoder().decodeBytes(compressed);
@@ -94,7 +94,7 @@ void main() {
     });
 
     test('encode hello', () {
-      // hello.xz has no LZMA compression due to its simplicity
+      // hello.xz is too small for LZMA. It holds stored data
       final file = File(p.join('test/_data/xz/hello.xz'));
       final expected = file.readAsBytesSync();
       final data = XZEncoder().encodeBytes(utf8.encode('hello\n'));
@@ -102,7 +102,7 @@ void main() {
     });
 
     test('encode crc32', () {
-      // Uses a CRC-32 checksum
+      // Uses a CRC-32 checksum.
       final file = File(p.join('test/_data/xz/crc32.xz'));
       final expected = file.readAsBytesSync();
       final data =
@@ -111,7 +111,7 @@ void main() {
     });
 
     test('encode crc64', () {
-      // Uses a CRC-64 checksum
+      // Uses a CRC-64 checksum.
       final file = File(p.join('test/_data/xz/crc64.xz'));
       final expected = file.readAsBytesSync();
       final data =
@@ -120,7 +120,7 @@ void main() {
     });
 
     test('encode sha256', () {
-      // Uses a SHA-256 checksum
+      // Uses a SHA-256 checksum.
       final file = File(p.join('test/_data/xz/sha256.xz'));
       final expected = file.readAsBytesSync();
       final data = XZEncoder()

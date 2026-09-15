@@ -83,8 +83,8 @@ class XZDecoder {
     _checkOptions(multithread, throwOnError);
 
     if (!xzIsolatesSupported) {
-      // No isolates here, so this blocks the caller, but the result is still
-      // delivered the way the caller asked for it
+      // No isolates here. The call blocks until the decode is done. The result
+      // still arrives through the options
       _report(multithread, () => _decodeBytes(bytes, verify, throwOnError),
           Uint8List(0));
       return Uint8List(0);
@@ -214,14 +214,13 @@ class XZDecoder {
     final layout = parseXZLayout(XZMemorySource(bytes));
 
     if (layout == null || layout.uncompressedSize > maxPreallocateSize) {
-      // Either there is no readable index, or it claims an output too large
-      // to trust. The index comes from the archive, so a hostile one can claim
-      // any size. We grow the buffer as the bytes arrive, which makes that
-      // harmless.
+      // There is no readable index here, or it claims more output than is safe
+      // to trust. The archive supplies the index and a hostile one can claim
+      // any size. The buffer grows as the bytes arrive instead
       //
       // Blocks still decode in parallel when we know the layout. They finish
-      // out of order, and an OutputMemoryStream only appends, so the ones that
-      // run ahead wait their turn in the ordered writer
+      // out of order. An OutputMemoryStream only appends. The ordered writer
+      // holds a block that ran ahead
       final output = OutputMemoryStream();
       final writer = layout == null ? null : _OrderedWriter(output);
       String? reason;
@@ -354,13 +353,13 @@ class XZDecoder {
       bytes = input.toUint8List();
       layout = parseXZLayout(XZMemorySource(bytes));
     } else {
-      // Any other stream has no random access to give the workers, so it is
-      // decoded on the calling isolate
+      // Any other stream gives the workers no random access. It decodes on
+      // the calling isolate
       return _decodeStream(input, output, verify, throwOnError);
     }
 
-    // An OutputStream can only be appended to, so blocks that finish early are
-    // held back until the blocks in front of them have been written
+    // An OutputStream only appends. A block that finishes early waits for the
+    // blocks in front of it
     final writer = _OrderedWriter(output);
     String? reason;
 
@@ -385,8 +384,8 @@ class XZDecoder {
     return ok;
   }
 
-  // Runs [work] now and hands the result to [options.onDone], routing a
-  // failure to [options.onError]
+  // Runs [work] now. The result goes to [options.onDone] and a failure goes
+  // to [options.onError]
   static void _report<T>(
       XZMultithreadOptions<T> options, T Function() work, T onFailure) {
     T result;
@@ -404,7 +403,7 @@ class XZDecoder {
     options.onDone(result);
   }
 
-  // As [_report], for work that finishes later
+  // As [_report], for work that finishes later.
   static void _reportAsync<T>(
       XZMultithreadOptions<T> options, Future<T> Function() work, T onFailure) {
     unawaited(
@@ -413,8 +412,8 @@ class XZDecoder {
       if (onError != null) {
         onError(error, stack);
       } else {
-        // Nothing would observe an unhandled asynchronous error, so the
-        // failure is reported the same way an invalid archive is
+        // Nothing would observe an unhandled asynchronous error. This failure
+        // is reported the way an invalid archive is
         options.onDone(onFailure);
       }
     }));
@@ -435,9 +434,8 @@ class XZDecoder {
           'Must be given here, since this call has nowhere else to put the '
               'result; only the converter carries its own end');
     }
-    // Asking to be told about failures while leaving nowhere to tell would put
-    // the failure back where it started, so it is refused here, while the
-    // caller is still on the stack to hear about it
+    // Asking to hear about failures with nowhere to tell would send the
+    // failure back where it started. It is refused before the call returns
     if (throwOnError && options.onError == null) {
       throw ArgumentError.value(
           null,
@@ -460,7 +458,7 @@ class XZDecoder {
   }
 }
 
-/// Writes chunks to an append-only [OutputStream] in offset order
+/// Writes chunks to an append-only [OutputStream] in offset order.
 class _OrderedWriter {
   final OutputStream _output;
   final _waiting = <int, Uint8List>{};
@@ -477,7 +475,7 @@ class _OrderedWriter {
     _output.writeBytes(chunk);
     _written += chunk.length;
 
-    // Writing this chunk may have joined up chunks that arrived before it
+    // Writing this chunk may have joined up chunks that arrived before it.
     while (true) {
       final next = _waiting.remove(_written);
       if (next == null) {
@@ -489,7 +487,7 @@ class _OrderedWriter {
   }
 }
 
-/// The index of the block that [offset] falls in
+/// The index of the block that [offset] falls in.
 int _blockIndexAt(List<XZBlockLayout> blocks, int offset) {
   var low = 0;
   var high = blocks.length - 1;
@@ -506,15 +504,15 @@ int _blockIndexAt(List<XZBlockLayout> blocks, int offset) {
 
 /// Default for [XZDecoder.maxPreallocateSize].
 ///
-/// Two gigabytes where allocation failure is survivable, and 256 MB on the web,
-/// where it is not: dart2js and dart2wasm both kill the page outright rather
-/// than throwing something catchable, and dart2wasm cannot reach a gigabyte in
-/// the first place. The web figure leaves room under that
+/// 2 GB where a failed allocation is survivable. 256 MB on the web. dart2js
+/// and dart2wasm kill the page instead of throwing something catchable.
+/// dart2wasm cannot reach 1 GB at all. 256 MB stays under that
 final int xzDefaultMaxPreallocateSize =
     xzIsolatesSupported ? 1 << 31 : 256 * 1024 * 1024;
 
-// Returns the total uncompressed size of every stream in [d], taken from the
-// stream indexes, or null if it cannot be determined or exceeds [maxSize]
+// Adds up the uncompressed size of every stream in [d]. The sizes come from
+// the stream indexes. Returns null when they cannot be read or the total
+// passes [maxSize]
 int? _uSize(Uint8List d, int maxSize) =>
     parseXZLayout(XZMemorySource(d), maxUncompressedSize: maxSize)
         ?.uncompressedSize;

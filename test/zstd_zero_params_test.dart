@@ -147,6 +147,19 @@ void main() {
       expect(ZstdDecoder(windowSizeLimit: 1024), isA<ZstdDecoder>());
     });
 
+    // The converter is const and cannot check the limit. The sink checks it
+    // when the conversion starts
+    test('a window limit below the smallest window on the converter', () {
+      ByteConversionSink start(int limit) =>
+          ZstdDecoderConverter(windowSizeLimit: limit)
+              .startChunkedConversion(ByteConversionSink.withCallback((_) {}));
+      for (final limit in [0, 1, 1023]) {
+        expect(() => start(limit), throwsA(isA<ArgumentError>()),
+            reason: 'limit $limit');
+      }
+      expect(start(1024), isA<ByteConversionSink>());
+    });
+
     test('a worker count or a budget of zero', () {
       final source = _payload(1 << 20);
       expect(

@@ -374,6 +374,115 @@ void main() {
       expect(first, lessThan(whole ~/ 4));
     });
   });
+
+  group('a streamed entry that starts past four gigabytes', () {
+    test('only its central record carries zip64', () {
+      // The entry is small. Its offset is past 4 GB. The output already
+      // reports a length of 4 GB before the first write
+      final out = _OffsetOutput(0x100000000);
+      final encoder = ZipEncoder(streamed: true);
+      encoder.startEncode(out);
+      encoder.add(ArchiveFile.string('small.txt', 'hello world'));
+      encoder.endEncode();
+      final bytes = out.bytes;
+      final view = ByteData.sublistView(bytes);
+
+      // Java takes the descriptor width from the real sizes. A small entry
+      // gets a plain local header and 4 byte sizes behind its data
+      expect(view.getUint16(4, Endian.little), 20);
+      expect(view.getUint32(18, Endian.little), 0);
+      expect(view.getUint16(28, Endian.little), 0);
+      final at = _find(bytes, [0x50, 0x4b, 0x07, 0x08]);
+      expect(at, greaterThan(0));
+      expect(view.getUint32(at + 8, Endian.little), 13);
+      expect(view.getUint32(at + 12, Endian.little), 11);
+
+      final central = at + 16;
+      expect(view.getUint32(central, Endian.little), 0x02014b50);
+      expect(view.getUint16(central + 6, Endian.little), 45);
+      expect(view.getUint32(central + 42, Endian.little), 0xFFFFFFFF);
+      final nameLength = view.getUint16(central + 28, Endian.little);
+      final zip64 = central + 46 + nameLength;
+      expect(view.getUint16(zip64, Endian.little), 1);
+      expect(view.getUint64(zip64 + 20, Endian.little), 0x100000000);
+    });
+  });
+
+  group('an entry whose length does not agree with its isEOS', () {
+    test('the body ends instead of stepping forever', () {
+      final encoder = ZipEncoder(streamed: true);
+      encoder.startEncode(OutputMemoryStream());
+      final body =
+          encoder.addHeader(ArchiveFile.stream('a.bin', _LyingInput(10)));
+      expect(body, isNotNull);
+      // zip_chunked and finish both run `while (step())`. A step that takes
+      // nothing must return false. Otherwise both callers spin forever
+      expect(body!.step(), isFalse);
+      body.finish();
+      encoder.endEncode();
+    });
+  });
+}
+
+/// Reports a length of 0 while it still holds bytes. A real InputStream can
+/// behave this way
+class _LyingInput extends InputMemoryStream {
+  _LyingInput(int size) : super(Uint8List(size));
+
+  @override
+  int get length => 0;
+}
+
+int _find(Uint8List bytes, List<int> want) {
+  for (var at = 0; at + want.length <= bytes.length; at++) {
+    var same = true;
+    for (var i = 0; i < want.length; i++) {
+      if (bytes[at + i] != want[i]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) {
+      return at;
+    }
+  }
+  return -1;
+}
+
+/// Keeps everything written to it and adds [base] to its length. An entry
+/// written here starts past 4 GB without a 4 GB buffer
+class _OffsetOutput extends OutputStream {
+  final int base;
+  final _held = OutputMemoryStream();
+
+  _OffsetOutput(this.base) : super(byteOrder: ByteOrder.littleEndian);
+
+  Uint8List get bytes => _held.getBytes();
+
+  @override
+  int get length => base + _held.length;
+
+  @override
+  void clear() => _held.clear();
+
+  @override
+  void flush() => _held.flush();
+
+  @override
+  void writeByte(int value) => _held.writeByte(value);
+
+  @override
+  void writeBytes(List<int> bytes, {int? length}) =>
+      _held.writeBytes(bytes, length: length);
+
+  @override
+  void writeStream(InputStream stream) => _held.writeStream(stream);
+
+  @override
+  Uint8List subset(int start, [int? end]) => _held.subset(start, end);
+
+  @override
+  Uint8List getBytes() => _held.getBytes();
 }
 
 class _ObservedInput extends InputMemoryStream {

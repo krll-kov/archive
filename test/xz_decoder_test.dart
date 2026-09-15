@@ -9,12 +9,12 @@ import 'package:test/test.dart';
 // Decoder behaviours that the archives in xz_test.dart do not reach. Each one
 // here is either a format feature the upstream decoder rejected or got wrong,
 // or an API this package added, and every archive was produced by xz itself
-// and checked with `xz -t`
+// and checked with `xz -t`.
 
 Uint8List archiveBytes(String name) =>
     File(p.join('test/_data/xz', name)).readAsBytesSync();
 
-/// The content of `pb4.xz`, rebuilt rather than committed beside it
+/// The content of `pb4.xz`, rebuilt rather than committed beside it.
 Uint8List pb4Sample() {
   const pattern = 'the quick brown fox jumps over the lazy dog 0123456789\n';
   final bytes = <int>[];
@@ -25,7 +25,7 @@ Uint8List pb4Sample() {
 }
 
 /// The content of `x86.xz`. The e8 call operands are what the BCJ x86 filter
-/// rewrites, so decoding without the filter gives visibly different bytes
+/// rewrites, so decoding without the filter gives visibly different bytes.
 Uint8List x86Sample() {
   final data = <int>[];
   var i = 0;
@@ -52,7 +52,7 @@ void main() {
     // Builds a stream whose single block header carries [filters] and, when
     // given, a declared uncompressed length. There is no compressed data
     // behind it: every test here is about what the header alone can make the
-    // decoder do
+    // decoder do.
     Uint8List streamWith({List<int>? rawLength, List<int>? filters}) {
       final body = <int>[
         (filters == null ? 0 : (filters[0] - 1)) |
@@ -84,10 +84,10 @@ void main() {
     }
 
     // The x86 BCJ filter in front of LZMA2, which is what makes the decoder
-    // buffer the block instead of writing it straight through
+    // buffer the block instead of writing it straight through.
     const bcjThenLzma2 = [2, 0x04, 0x00, 0x21, 0x01, 0x00];
 
-    // A sink that is not an OutputMemoryStream, so the buffered path is taken
+    // A sink that is not an OutputMemoryStream, so the buffered path is taken.
     OutputStream sink() =>
         OutputFileStream(p.join(Directory.systemTemp.path, 'xz_header.out'));
 
@@ -97,7 +97,7 @@ void main() {
             verify: true, throwOnError: true);
       } on ArchiveException catch (e) {
         // The decoder prefixes the reason it recorded; the tests are about
-        // which reason came back, not about that wrapper
+        // which reason came back, not about that wrapper.
         return e.message.replaceFirst('Invalid XZ archive: ', '');
       }
       return '';
@@ -106,7 +106,7 @@ void main() {
     test('does not size a buffer from the length the header declares', () {
       // 16 TB, declared by 32 bytes of header. Allocating that up front is an
       // OutOfMemoryError on the VM and a dead page on the web, so the decoder
-      // has to reach the missing compressed data instead of the allocator
+      // has to reach the missing compressed data instead of the allocator.
       final archive = streamWith(
           rawLength: [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x04],
           filters: bcjThenLzma2);
@@ -116,7 +116,7 @@ void main() {
 
     test('rejects a multibyte integer longer than nine bytes', () {
       // Nine is the cap in the format. Past it the multiplier overflows and
-      // the value stops meaning anything, negative values included
+      // the value stops meaning anything, negative values included.
       for (final count in [9, 10, 11]) {
         final archive = streamWith(
             rawLength: [...List.filled(count, 0xff), 0x00],
@@ -165,7 +165,7 @@ void main() {
     test('still reaches the data when the header is well formed', () {
       // The same shape with a valid properties byte gets past every check
       // above, so the rejections are about the headers and not the archive
-      // being a stub
+      // being a stub.
       expect(reasonFor(streamWith(filters: [1, 0x21, 0x01, 0x00])),
           'LZMA2 data ended without an end marker');
     });
@@ -175,7 +175,7 @@ void main() {
     test('decodes an archive written with pb=4', () {
       // Four position bits is legal and rarely used, and reading the position
       // state a bit too narrowly makes the decoder run off the end of its
-      // probability tables partway through
+      // probability tables partway through.
       final data = XZDecoder().decodeBytes(archiveBytes('pb4.xz'));
       expect(data, equals(pb4Sample()));
     });
@@ -194,13 +194,13 @@ void main() {
     test('decodes concatenated streams', () {
       // Three separate streams in one file. A decoder that stops after the
       // first one returns only 'one\n', or nothing at all when the first
-      // stream is empty, without reporting a failure
+      // stream is empty, without reporting a failure.
       final data = XZDecoder().decodeBytes(archiveBytes('concatenated.xz'));
       expect(utf8.decode(data), equals('one\ntwo\nthree\n'));
     });
 
     test('skips stream padding between and after streams', () {
-      // Streams may be followed by padding in multiples of four zero bytes
+      // Streams may be followed by padding in multiples of four zero bytes.
       final data = XZDecoder().decodeBytes(archiveBytes('stream_padding.xz'));
       expect(utf8.decode(data), equals('one\ntwo\n'));
     });
@@ -226,7 +226,7 @@ void main() {
       test('accepts distances up to the declared dictionary', () {
         // Encoded with a 64 KiB dictionary over data whose period is 8 KiB, so
         // the matches reach well past any smaller window. This guards the
-        // check below against being too strict
+        // check below against being too strict.
         final data = XZDecoder().decodeBytes(archiveBytes('long_distance.xz'));
         expect(data.length, equals(4 * 1024 * 1024));
         expect(
@@ -263,14 +263,14 @@ void main() {
 
     test('accepts a plain List<int> as well as a Uint8List', () {
       // The other overload copies into a Uint8List first, which is a separate
-      // path through decodeBytes
+      // path through decodeBytes.
       final asList = archiveBytes('pb4.xz').toList();
       expect(XZDecoder().decodeBytes(asList), equals(pb4Sample()));
     });
 
     group('decodeBytes throwOnError', () {
       // decodeBytes has no return value to spare for an outcome, so without
-      // this a truncated archive is indistinguishable from a whole one
+      // this a truncated archive is indistinguishable from a whole one.
       Uint8List truncated() {
         final compressed = archiveBytes('long_distance.xz');
         return Uint8List.sublistView(compressed, 0, compressed.length ~/ 2);
@@ -289,7 +289,7 @@ void main() {
       test('reports a truncated archive that is otherwise silent', () {
         final compressed = truncated();
 
-        // The default: partial output, and no way to tell it is partial
+        // The default: partial output, and no way to tell it is partial.
         final quiet = XZDecoder().decodeBytes(compressed);
         expect(quiet, isNotEmpty);
         expect(quiet.length, lessThan(4 * 1024 * 1024));
@@ -307,11 +307,11 @@ void main() {
 
       test('reports a check that does not match', () {
         // Whole and well formed, but the stored CRC64 is wrong, which only a
-        // verifying decode notices
+        // verifying decode notices.
         final compressed = Uint8List.fromList(archiveBytes('crc64.xz'));
         compressed[compressed.length - 21] ^= 0xff;
 
-        // Only the check is broken: the data still decodes
+        // Only the check is broken: the data still decodes.
         expect(
             XZDecoder().decodeStream(
                 InputMemoryStream(compressed), OutputMemoryStream()),
@@ -339,7 +339,7 @@ void main() {
 
       test('turns a thrown decode failure into the same exception', () {
         // Corrupt compressed data makes the LZMA decoder itself throw, which
-        // has to surface as an ArchiveException rather than escaping raw
+        // has to surface as an ArchiveException rather than escaping raw.
         final compressed = Uint8List.fromList(archiveBytes('x86.xz'));
         for (var i = 0; i < 64; i++) {
           compressed[400 + i] ^= 0xff;
@@ -352,7 +352,7 @@ void main() {
     group('failure reasons', () {
       // 'Invalid XZ archive' on its own leaves a caller with nowhere to go:
       // a file that is not xz at all, one that lost its tail and one whose
-      // checksum does not match all need different answers
+      // checksum does not match all need different answers.
       String reasonFor(Uint8List compressed) {
         try {
           XZDecoder().decodeBytes(compressed, verify: true, throwOnError: true);
@@ -388,13 +388,13 @@ void main() {
           expect(actual, contains(expected));
         });
 
-        // Every one of them is distinct, which is the whole point
+        // Every one of them is distinct, which is the whole point.
         expect(cases.values.toSet(), hasLength(cases.length));
       });
 
       test('survive being thrown out of the LZMA decoder', () {
         // Some failures arrive as an exception rather than as a rejection, and
-        // that text has to reach the caller just the same
+        // that text has to reach the caller just the same.
         expect(reasonFor(archiveBytes('dict_overrun.xz')),
             contains('outside the dictionary'));
       });
@@ -417,7 +417,7 @@ void main() {
 
       test('turns a refusal into an exception', () {
         // Without it a malformed archive is reported by the return value, and
-        // whatever was decoded is left in the output
+        // whatever was decoded is left in the output.
         final compressed = Uint8List.fromList(archiveBytes('pb4.xz'));
         compressed[compressed.length - 6] ^= 0xff; // stream footer flags
 
@@ -434,7 +434,7 @@ void main() {
 
       test('turns a thrown decode failure into an exception too', () {
         // Corrupting the compressed data makes the LZMA decoder itself throw,
-        // which has to surface as the same exception rather than escaping raw
+        // which has to surface as the same exception rather than escaping raw.
         final compressed = Uint8List.fromList(archiveBytes('x86.xz'));
         for (var i = 0; i < 64; i++) {
           compressed[400 + i] ^= 0xff;
@@ -458,7 +458,7 @@ void main() {
         final actual = XZDecoder().uncompressedSize(compressed)!;
 
         // The size in the index comes from the archive, so a decoder that will
-        // not act on a number that large declines to report it either
+        // not act on a number that large declines to report it either.
         expect(
             XZDecoder(maxPreallocateSize: actual - 1)
                 .uncompressedSize(compressed),
@@ -471,7 +471,7 @@ void main() {
       test('decodes the same bytes on either side of the cap', () {
         // Below the cap the buffer is allocated up front from the index; above
         // it the decoder grows the buffer as the bytes arrive. Both have to
-        // produce identical output
+        // produce identical output.
         final compressed = archiveBytes('long_distance.xz');
         final reference = XZDecoder().decodeBytes(compressed);
         expect(reference.length, equals(4 * 1024 * 1024));
@@ -490,7 +490,7 @@ void main() {
       test('defaults low enough for the platform to survive', () {
         // A failed allocation throws on the VM but kills the page on the web,
         // where dart2wasm cannot reach a gigabyte at all, so the default has to
-        // stay well under that there
+        // stay well under that there.
         expect(xzDefaultMaxPreallocateSize, greaterThan(0));
         if (identical(1, 1.0)) {
           expect(xzDefaultMaxPreallocateSize,
@@ -531,7 +531,7 @@ void main() {
 
       test('gives up on a truncated archive', () {
         // The index and footer are what it reads, so losing the tail of the
-        // file has to be noticed rather than misread
+        // file has to be noticed rather than misread.
         final compressed = archiveBytes('concatenated.xz');
         final truncated =
             Uint8List.sublistView(compressed, 0, compressed.length - 8);
@@ -540,7 +540,7 @@ void main() {
 
       test('gives up when the index is corrupt', () {
         final compressed = Uint8List.fromList(archiveBytes('pb4.xz'));
-        // Land in the index, which sits just before the twelve byte footer
+        // Land in the index, which sits just before the twelve byte footer.
         compressed[compressed.length - 16] ^= 0xff;
         expect(XZDecoder().uncompressedSize(compressed), isNull);
       });

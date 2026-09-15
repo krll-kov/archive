@@ -9,7 +9,7 @@ import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
 import '../util/output_stream.dart';
 
-/// Checksum used for compressed data
+/// Checksum used for compressed data.
 enum XZCheck { none, crc32, crc64, sha256 }
 
 /// The most an uncompressed LZMA2 chunk may carry. Its length field is two
@@ -44,7 +44,7 @@ int xzDictionarySizeValue(int dictionarySize) {
 }
 
 /// Compress data using the xz format encoder.
-/// This encoder only currently supports uncompressed data
+/// This encoder only currently supports uncompressed data.
 class XZEncoder {
   Uint8List encodeBytes(List<int> bytes, {XZCheck check = XZCheck.crc64}) {
     final input = InputMemoryStream(bytes);
@@ -53,7 +53,7 @@ class XZEncoder {
     return output.getBytes();
   }
 
-  /// Alias for [encodeBytes], kept for backwards compatibility
+  /// Alias for [encodeBytes], kept for backwards compatibility.
   List<int> encode(List<int> bytes, {XZCheck check = XZCheck.crc64}) =>
       encodeBytes(bytes, check: check);
 
@@ -91,7 +91,7 @@ class XZEncoder {
     output.flush();
   }
 
-  // Writes an XZ stream header to [output]
+  // Writes an XZ stream header to [output].
   void _writeStreamHeader(OutputStream output, {required int flags}) {
     // '\xfd7zXZ\x00'
     output.writeBytes([253, 55, 122, 88, 90, 0]);
@@ -105,20 +105,20 @@ class XZEncoder {
     output.writeUint32(getCrc32(headerBytes));
   }
 
-  // Writes [data] to [output] in XZ block format
+  // Writes [data] to [output] in XZ block format.
   int _writeBlock(OutputStream output, InputStream input,
       {required int streamFlags,
       bool hasCompressedLength = false,
       bool hasUncompressedLength = false}) {
     final inputLength = input.length;
     final data = input.toUint8List();
-    // Covert data into LZMA2 format
+    // Covert data into LZMA2 format.
     final lzma2 = OutputMemoryStream();
     _writeLZMA2UncompressedData(lzma2, data);
     _writeLZMA2EndMarker(lzma2);
     final compressedLength = lzma2.length;
 
-    // Optionally write the compressed and uncompressed lengths
+    // Optionally write the compressed and uncompressed lengths.
     final blockLengths = OutputMemoryStream();
     if (hasCompressedLength) {
       _writeMultibyteInteger(blockLengths, compressedLength);
@@ -127,11 +127,11 @@ class XZEncoder {
       _writeMultibyteInteger(blockLengths, inputLength);
     }
 
-    // Block is encoded with one LZMA2 filter
+    // Block is encoded with one LZMA2 filter.
     final filters = <OutputStream>[];
     filters.add(_makeLZMA2Filter(xzDefaultDictionarySize));
 
-    // Generate header
+    // Generate header.
     var headerLength = 6 + blockLengths.length;
     for (final filter in filters) {
       headerLength += filter.length;
@@ -156,17 +156,17 @@ class XZEncoder {
     }
     _writePadding(header);
 
-    // Write header
+    // Write header.
     var headerBytes = header.getBytes();
     var blockStart = output.length;
     output.writeBytes(headerBytes);
     output.writeUint32(getCrc32(headerBytes));
 
-    // Write block data
+    // Write block data.
     output.writeBytes(lzma2.getBytes());
     var paddingLength = _writePadding(output);
 
-    // Write data checksum
+    // Write data checksum.
     var checkType = streamFlags & 0xf;
     switch (checkType) {
       case 0x00: // none
@@ -187,7 +187,7 @@ class XZEncoder {
     return output.length - blockStart - paddingLength;
   }
 
-  // Generate an LZMA2 filter
+  // Generate an LZMA2 filter.
   OutputStream _makeLZMA2Filter(int dictionarySize) {
     final id = 0x21;
     final propertiesLength = 1;
@@ -219,17 +219,17 @@ class XZEncoder {
     } while (at < data.length);
   }
 
-  // Write an LZMA2 end marker to [output]
+  // Write an LZMA2 end marker to [output].
   void _writeLZMA2EndMarker(OutputStream output) {
     output.writeByte(0);
   }
 
-  // Write the XZ stream index for [records] to [output]
+  // Write the XZ stream index for [records] to [output].
   void _writeStreamIndex(OutputStream output,
       {required List<_XZBlockSize> records}) {
     final index = OutputMemoryStream();
 
-    // Index indicator
+    // Index indicator.
     index.writeByte(0);
     _writeMultibyteInteger(index, records.length);
     for (var record in records) {
@@ -243,7 +243,7 @@ class XZEncoder {
     output.writeUint32(getCrc32(indexBytes));
   }
 
-  // Write an XZ stream footer to [output]
+  // Write an XZ stream footer to [output].
   void _writeStreamFooter(OutputStream output,
       {required int indexSize, required int flags}) {
     final footer = OutputMemoryStream();
@@ -270,7 +270,7 @@ class XZEncoder {
     output.writeByte(left);
   }
 
-  // Add empty bytes to make [output] align to a 32 bit boundary
+  // Add empty bytes to make [output] align to a 32 bit boundary.
   int _writePadding(OutputStream output) {
     var length = 0;
     while (output.length % 4 != 0) {
@@ -281,12 +281,12 @@ class XZEncoder {
   }
 }
 
-// Information about a block size
+// Information about a block size.
 class _XZBlockSize {
-  // The block size excluding padding
+  // The block size excluding padding.
   final int unpaddedLength;
 
-  // The size of the data in the block when uncompressed
+  // The size of the data in the block when uncompressed.
   final int uncompressedLength;
 
   const _XZBlockSize(this.unpaddedLength, this.uncompressedLength);

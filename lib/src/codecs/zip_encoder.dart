@@ -44,11 +44,6 @@ class _ZipFileData {
   /// carries zip64 and the sizes behind its data take 8 bytes each
   bool zip64 = false;
 
-  /// A streamed entry whose central record gets a zip64 extra field, for its
-  /// sizes or for a local header past 4 GB. A reader takes the sizes behind the
-  /// data as 8 bytes each once that field is there, so both halves agree on it
-  bool get streamedZip64 => deferred && (zip64 || position > 0xFFFFFFFF);
-
   CompressionType compression = CompressionType.deflate;
   String? comment = '';
   int position = 0;
@@ -469,12 +464,11 @@ class ZipEncoder {
 
     // Info-ZIP writes a streamed zip64 entry this way. The local sizes are
     // 0xFFFFFFFF and the zip64 field holds two zero sizes
-    final streamed64 = fileData.streamedZip64;
     final extra = <int>[];
-    if (needsZip64 && !streamed64) {
+    if (needsZip64 && !fileData.zip64) {
       extra.addAll(_getZip64ExtraData(fileData));
     }
-    if (streamed64) {
+    if (fileData.zip64) {
       extra.addAll(const [0x01, 0x00, 0x10, 0x00, 0, 0, 0, 0, 0, 0, 0, 0]);
       extra.addAll(const [0, 0, 0, 0, 0, 0, 0, 0]);
     }
@@ -487,14 +481,14 @@ class ZipEncoder {
     final encodedFilename = filenameEncoding.encode(filename);
 
     // local file header
-    output.writeUint16(streamed64 ? 45 : version);
+    output.writeUint16(needsZip64 || fileData.zip64 ? 45 : version);
     output.writeUint16(flags);
     output.writeUint16(compressionMethod);
     output.writeUint16(lastModFileTime);
     output.writeUint16(lastModFileDate);
     output.writeUint32(crc32);
-    output.writeUint32(streamed64 ? 0xFFFFFFFF : compressedSize);
-    output.writeUint32(streamed64 ? 0xFFFFFFFF : uncompressedSize);
+    output.writeUint32(fileData.zip64 ? 0xFFFFFFFF : compressedSize);
+    output.writeUint32(fileData.zip64 ? 0xFFFFFFFF : uncompressedSize);
     output.writeUint16(encodedFilename.length);
     output.writeUint16(extra.length);
     output.writeBytes(encodedFilename);
@@ -553,7 +547,8 @@ class ZipEncoder {
       zipNeedsZip64 |= needsZip64;
 
       final versionMadeBy = (os << 8) | version;
-      final versionNeededToExtract = fileData.streamedZip64 ? 45 : version;
+      final versionNeededToExtract =
+          fileData.zip64 || needsZip64 ? 45 : version;
       // Must match the local header. If only this one sets bit 11, a reader
       // decodes a latin1 name as UTF-8
       var generalPurposeBitFlag = 0;
@@ -709,10 +704,12 @@ class ZipEntryBody {
     var left = _piece;
     while (left > 0 && !_source.isEOS) {
       final take = _source.length < 1024 ? _source.length : 1024;
+      // This body runs under `while (step())`. A break returns true and that
+      // loop spins forever. Returning false ends the body
       // A caller's own InputStream may report a length that its isEOS does not
       // agree with. Without this the loop takes nothing and never ends
       if (take <= 0) {
-        break;
+        return false;
       }
       sink.add(_source.readBytes(take).toUint8List());
       left -= take;

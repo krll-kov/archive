@@ -126,6 +126,11 @@ class TarEncoderTransformer
         if (body != null) {
           while (!body.isEOS) {
             final take = body.length < _piece ? body.length : _piece;
+            // An InputStream can report a length of 0 before its end. Without
+            // this check the loop yields empty pieces forever
+            if (take <= 0) {
+              break;
+            }
             yield body.readBytes(take).toUint8List();
           }
         }

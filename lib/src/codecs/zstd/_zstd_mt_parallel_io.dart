@@ -239,7 +239,8 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
       }
     }
     left--;
-    if (left == 0) {
+    // A failed job loses the frame. No more jobs go out after it
+    if (left == 0 || failure != null) {
       if (!done.isCompleted) {
         done.complete();
       }

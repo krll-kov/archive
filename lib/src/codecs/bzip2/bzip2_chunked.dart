@@ -159,6 +159,14 @@ class BZip2ChunkedDecoder extends ChunkedSink {
     while (true) {
       switch (_stage) {
         case _Stage.signature:
+          // After a stream bzip2 1.0.8 reads BZh and a digit from 1 to 9.
+          // If a byte differs, bzip2 ignores the rest and exits 0. The rest
+          // is trailing garbage here too
+          if (_streams > 0 &&
+              BZip2.breaksSignature(view(available < 4 ? available : 4))) {
+            _stage = _Stage.trailing;
+            continue;
+          }
           if (available < 4) {
             // Refused on the first byte that is not the signature, not waited on
             final head = view(available);
@@ -200,13 +208,17 @@ class BZip2ChunkedDecoder extends ChunkedSink {
             return;
           }
           _stage = _Stage.signature;
+        case _Stage.trailing:
+          skip(available);
+          return;
       }
     }
   }
 
   @override
   void finish() {
-    if (_stage != _Stage.streamEnd || available != 0) {
+    if (_stage != _Stage.trailing &&
+        (_stage != _Stage.streamEnd || available != 0)) {
       throw ArchiveException('bzip2: the archive ended part way through');
     }
     if (_streams == 0) {
@@ -435,4 +447,5 @@ enum _Stage {
   blockBody,
   streamCrc,
   streamEnd,
+  trailing,
 }

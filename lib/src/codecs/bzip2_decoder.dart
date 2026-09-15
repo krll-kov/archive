@@ -29,11 +29,9 @@ class BZip2Decoder {
       if (input.isEOS) {
         return true;
       }
-      final next = input.peekBytes(3).toUint8List();
-      if (next.length < 3 ||
-          next[0] != BZip2.bzhSignature[0] ||
-          next[1] != BZip2.bzhSignature[1] ||
-          next[2] != BZip2.bzhSignature[2]) {
+      // After a stream bzip2 1.0.8 reads BZh and a digit from 1 to 9. If a byte
+      // differs, bzip2 ignores the rest as trailing garbage and exits 0
+      if (BZip2.breaksSignature(input.peekBytes(4).toUint8List())) {
         return true;
       }
     }

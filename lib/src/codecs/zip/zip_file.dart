@@ -93,6 +93,8 @@ class ZipFile extends FileContent {
 
     // Use the compressedSize and uncompressedSize from the CFD header.
     // For Zip64, the sizes in the local header will be 0xFFFFFFFF.
+    // header is never null here. ZipFileHeader creates every ZipFile and passes
+    // itself. The null checks stay for a future ZipFile without a header
     compressedSize = header?.compressedSize ?? compressedSize;
     uncompressedSize = header?.uncompressedSize ?? uncompressedSize;
 
@@ -161,6 +163,9 @@ class ZipFile extends FileContent {
       // central directory, so the central ones win and these fill in only what
       // it left at zero. Do not drop the read: an archive whose central
       // directory carries no sizes has them nowhere else
+      // central is never null here. ZipFileHeader creates every ZipFile and
+      // passes itself. The null checks stay for a future ZipFile without
+      // a header
       if (central == null || central.compressedSize == 0) {
         compressedSize = descriptorCompressed;
       }

@@ -260,7 +260,11 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
     if (recognized == ArchiveFormat.tar) {
       final input = InputFileStream(archivePath);
       toClose = input;
-      archive = TarDecoder().decodeStream(input, callback: callback);
+      // tar has no magic bytes. The file under the gzip or zstd might not be a
+      // tar at all. The header checksum rejects it. Without the check a
+      // .sql.gz is extracted as tar entries
+      archive =
+          TarDecoder().decodeStream(input, verify: true, callback: callback);
     } else if (recognized == ArchiveFormat.zip) {
       final input = InputFileStream(archivePath);
       toClose = input;

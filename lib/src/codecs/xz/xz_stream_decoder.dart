@@ -9,7 +9,7 @@ import '../bcj_x86.dart';
 import '../lzma/lzma_decoder.dart';
 
 // The XZ specification can be found at
-// https://tukaani.org/xz/xz-file-format.txt
+// https://tukaani.org/xz/xz-file-format.txt.
 
 /// Decodes a single xz block that starts at the current position of [input].
 ///
@@ -38,23 +38,22 @@ import '../lzma/lzma_decoder.dart';
   return (ok: ok, reason: ok ? null : decoder.failureReason);
 }
 
-/// Decodes an XZ stream
+/// Decodes an XZ stream.
 class XZStreamDecoder {
-  // True if checksums are confirmed
+  // True if checksums are confirmed.
   final bool verify;
 
-  // LZMA decoder
+  // LZMA decoder.
   final decoder = LzmaDecoder();
 
-  // Stream flags, which are sent in both the header and the footer
+  // Stream flags. The header and the footer both carry them
   var streamFlags = 0;
 
-  // Block sizes
+  // Block sizes.
   final _blockSizes = <_XZBlockSize>[];
 
   // Position of the start of the stream being decoded. Padding inside a stream
-  // is aligned to this, not to the start of [input], which may have been
-  // positioned elsewhere by the caller
+  // aligns to this, not to the start of [input]. [input] can start anywhere
   var _streamStart = 0;
 
   /// Why the last decode gave up, or null if it has not given up.
@@ -65,7 +64,7 @@ class XZStreamDecoder {
   /// nothing
   String? failureReason;
 
-  // Upper bound on a buffer sized from a length the archive declares
+  // Upper bound on a buffer sized from a length the archive declares.
   final int maxPreallocateSize;
   // A block decodes on its own, so its first chunk has to start the
   // dictionary: control 1 for an uncompressed chunk, reset 3 for an LZMA one
@@ -84,21 +83,21 @@ class XZStreamDecoder {
   XZStreamDecoder({this.verify = false, required this.maxPreallocateSize});
 
   // Records why the decode gave up and reports the failure. The first reason
-  // is kept, because it is the innermost one: the returns above it only pass
-  // the failure outwards and have nothing of their own to add
+  // is the innermost one and it stays. The returns above it only pass the
+  // failure outwards
   bool _fail(String reason) {
     failureReason ??= reason;
     return false;
   }
 
   // As [_fail], for the readers that report their failure with a negative
-  // length instead of a bool
+  // length instead of a bool.
   int _failLength(String reason) {
     failureReason ??= reason;
     return -1;
   }
 
-  /// Decode this stream and return the uncompressed data
+  /// Decode this stream and return the uncompressed data.
   bool decode(InputStream input, OutputStream output) {
     failureReason = null;
     while (true) {
@@ -106,7 +105,7 @@ class XZStreamDecoder {
         return false;
       }
 
-      // Streams can be concatenated, and each one may be followed by padding
+      // Streams can be concatenated. Padding can follow each one
       if (!_skipStreamPadding(input)) {
         return false;
       }
@@ -116,9 +115,9 @@ class XZStreamDecoder {
     }
   }
 
-  // Decodes a single stream from [input]
+  // Decodes a single stream from [input].
   bool _decodeStream(InputStream input, OutputStream output) {
-    // Each stream has its own flags, block list and dictionary
+    // Each stream has its own flags, block list and dictionary.
     _streamStart = input.position;
     streamFlags = 0;
     _blockSizes.clear();
@@ -152,8 +151,7 @@ class XZStreamDecoder {
   }
 
   // Skips the padding that may follow a stream. Padding is zero bytes in
-  // multiples of four, and is followed by another stream or the end of the
-  // input
+  // multiples of four. Another stream or the end of the input follows it
   bool _skipStreamPadding(InputStream input) {
     var count = 0;
     while (!input.isEOS) {
@@ -168,7 +166,7 @@ class XZStreamDecoder {
         : _fail('Stream padding is not a multiple of four bytes');
   }
 
-  // Reads an XZ steam header from [input]
+  // Reads an XZ steam header from [input].
   bool _readStreamHeader(InputStream input, OutputStream output) {
     final magic = input.readBytes(6).toUint8List();
     final magicIsValid = magic[0] == 253 &&
@@ -201,7 +199,7 @@ class XZStreamDecoder {
     return true;
   }
 
-  // Reads a data block from [input]
+  // Reads a data block from [input].
   bool readBlock(InputStream input, OutputStream output, int headerLength) {
     final blockStart = input.position;
     if (!readBlockHeader(input, headerLength)) {
@@ -216,8 +214,7 @@ class XZStreamDecoder {
     final startPosition = input.position;
     final startDataLength = output.length;
 
-    // The decoded block is needed again when a filter has to be applied or a
-    // checksum verified
+    // A filter or a checksum needs the decoded block again
     final checkType = streamFlags & 0xf;
     final needsBlockData =
         hasX86 || (verify && (checkType == 0x1 || checkType == 0x4));
@@ -260,8 +257,8 @@ class XZStreamDecoder {
         return false;
       }
       if (hasX86) {
-        // subset() returns a view into the output buffer, so the filter is
-        // applied in place without allocating a copy of the block
+        // subset() returns a view into the output buffer. The filter runs in
+        // place and allocates no copy of the block
         bcjX86Decode(output.subset(startDataLength), x86StartOffset);
       }
     }
@@ -454,8 +451,8 @@ class XZStreamDecoder {
       }
     }
 
-    // A match may not reach further back than the declared dictionary, which
-    // is a tighter bound than the buffer the dictionary is held in
+    // A match may not reach further back than the declared dictionary. That is
+    // a tighter bound than the buffer the dictionary sits in
     decoder.dictionaryLimit = dictionarySize;
     if (dictionarySize > 0 && dictionarySize < 0x40000000) {
       decoder.dictionaryCap =
@@ -473,7 +470,7 @@ class XZStreamDecoder {
     }
 
     // Entries are stored as (id, value) pairs. The supported chains are LZMA2
-    // on its own, or the x86 BCJ filter followed by LZMA2
+    // on its own, or the x86 BCJ filter followed by LZMA2.
     final hasX86 =
         filters.length == 4 && filters[0] == 0x04 && filters[2] == 0x21;
     if (!hasX86 && (filters.length != 2 || filters.first != 0x21)) {
@@ -489,7 +486,7 @@ class XZStreamDecoder {
     return true;
   }
 
-  // Reads LZMA2 data from [input]
+  // Reads LZMA2 data from [input].
   bool _readLZMA2(InputStream input, OutputStream output, int dictionarySize) {
     needDictionaryReset = true;
     needProperties = true;
@@ -600,7 +597,7 @@ class XZStreamDecoder {
   }
 
   // Reads an XZ stream index from [input].
-  // Returns the length of the index in bytes
+  // Returns the length of the index in bytes.
   int _readStreamIndex(InputStream input) {
     final startPosition = input.position;
     input.skip(1); // Skip index indicator
@@ -637,7 +634,7 @@ class XZStreamDecoder {
   }
 
   // Reads an XZ stream footer from [input] and check the index size matches
-  // [indexSize]
+  // [indexSize].
   bool _readStreamFooter(InputStream input, int indexSize) {
     final crc = input.readUint32();
     final footer = input.readBytes(6);
@@ -658,7 +655,7 @@ class XZStreamDecoder {
       return _fail('Invalid stream footer CRC checksum');
     }
 
-    // The stream is invalid if at least one byte is corrupted
+    // The stream is invalid if at least one byte is corrupted.
     final magic = input.readBytes(2).toUint8List();
     if (magic[0] != 89 /* 'Y' */ || magic[1] != 90 /* 'Z' */) {
       return _fail('Invalid XZ stream footer signature');
@@ -667,8 +664,9 @@ class XZStreamDecoder {
     return true;
   }
 
-  // Reads a multibyte integer from [input], or -1 if there is not a valid one
-  // there. Nine bytes is the format's cap; past it the multiplier overflows
+  // Reads a multibyte integer from [input]. Returns -1 when there is no valid
+  // one there. Nine bytes is the format's cap. Past it the multiplier
+  // overflows
   int _readMultibyteInteger(InputStream input) {
     var value = 0;
     var multiplier = 1;
@@ -692,7 +690,7 @@ class XZStreamDecoder {
 
   // Reads padding from [input] until the read position is aligned to a 4 byte
   // boundary. The padding bytes are confirmed to be zeros.
-  // Returns he number of padding bytes
+  // Returns he number of padding bytes.
   int _readPadding(InputStream input, [int origin = 0]) {
     var count = 0;
     while ((input.position - origin) % 4 != 0) {
@@ -706,12 +704,12 @@ class XZStreamDecoder {
   }
 }
 
-// Information about a block size
+// Information about a block size.
 class _XZBlockSize {
-  // The block size excluding padding
+  // The block size excluding padding.
   final int unpaddedLength;
 
-  // The size of the data in the block when uncompressed
+  // The size of the data in the block when uncompressed.
   final int uncompressedLength;
 
   const _XZBlockSize(this.unpaddedLength, this.uncompressedLength);

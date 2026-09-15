@@ -660,6 +660,29 @@ void main() async {
       await input.close();
     });
 
+    // The entry says 5 GB and holds three bytes. Nothing allocates 5 GB. A
+    // zip64 extra field needs version 45 in both headers
+    test('a stored entry over 4 GB needs version 45', () {
+      final output = OutputMemoryStream();
+      ZipEncoder()
+        ..startEncode(output)
+        ..add(ArchiveFile.file('a', 5000000000, FileContentMemory([1, 2, 3]))
+          ..compression = CompressionType.none)
+        ..endEncode();
+      final bytes = output.getBytes();
+      final view = ByteData.sublistView(bytes);
+
+      expect(view.getUint32(22, Endian.little), 0xFFFFFFFF);
+      expect(view.getUint16(30 + 1, Endian.little), 1);
+      expect(view.getUint16(4, Endian.little), 45);
+
+      var central = 0;
+      while (view.getUint32(central, Endian.little) != 0x02014b50) {
+        central++;
+      }
+      expect(view.getUint16(central + 6, Endian.little), 45);
+    });
+
     test('data types', () {
       final archive = Archive();
       archive.add(ArchiveFile.bytes('uint8list', Uint8List(2)));

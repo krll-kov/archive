@@ -24,6 +24,24 @@ Future<Uint8List> _encode(Uint8List src,
   return done.future;
 }
 
+/// Answers every job with an error. It sends each job index to the second
+/// port
+void _failingWorker(List<Object> ports) {
+  final replies = ports[0] as SendPort;
+  final given = ports[1] as SendPort;
+  final port = ReceivePort();
+  replies.send(port.sendPort);
+  port.listen((message) {
+    if (message == null) {
+      port.close();
+      return;
+    }
+    final index = (message as List)[0] as int;
+    given.send(index);
+    replies.send([port.sendPort, index, null, 'job failed', '']);
+  });
+}
+
 void main() {
   // Long runs and a scatter of noise, so the parse has both matches and
   // literals to choose between across a job boundary
@@ -299,6 +317,27 @@ void main() {
     expect(await failed.future.timeout(const Duration(seconds: 10)),
         isA<StateError>());
     await exited.first.timeout(const Duration(seconds: 10));
+  }, testOn: 'vm');
+
+  // One worker gets eight jobs. The first job fails and the frame is lost.
+  // The pool must not send the worker a second job
+  test('a failed job stops the pool handing out jobs', () async {
+    final real = zstdMtSpawnWorker;
+    final given = ReceivePort();
+    addTearDown(() {
+      zstdMtSpawnWorker = real;
+      given.close();
+    });
+    var jobs = 0;
+    given.listen((_) => jobs++);
+    zstdMtSpawnWorker = (replies, errors) => Isolate.spawn(
+        _failingWorker, [replies, given.sendPort],
+        onError: errors, errorsAreFatal: true);
+    await expectLater(
+        _encode(Uint8List(8 * 524288), level: 1, workers: 1, jobSize: 524288),
+        throwsA(isA<ArchiveException>()));
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(jobs, 1);
   }, testOn: 'vm');
 
   test('cancelling the output cancels the input subscription', () async {

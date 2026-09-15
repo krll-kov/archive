@@ -12,21 +12,20 @@ import '../../util/crc32.dart';
 
 /// Random access over the compressed bytes of an xz archive.
 ///
-/// The stream index sits at the end of an archive but describes offsets from
-/// its start, so parsing it has to reach both ends. Going through this
-/// interface lets a file be indexed without reading all of it into memory
+/// The stream index sits at the end of an archive. It describes offsets from
+/// the start. Parsing it reaches both ends. This interface indexes a file
+/// without reading all of it into memory
 abstract class XZByteSource {
-  /// Total number of bytes in the archive
+  /// Total number of bytes in the archive.
   int get length;
 
   /// The bytes from [start] (inclusive) to [end] (exclusive).
   ///
-  /// The result must not be modified by the caller, and may be a view onto
-  /// storage the source owns
+  /// The result is read only. It may be a view onto storage the source owns
   Uint8List range(int start, int end);
 }
 
-/// An [XZByteSource] over an archive that is already in memory
+/// An [XZByteSource] over an archive that is already in memory.
 class XZMemorySource extends XZByteSource {
   final Uint8List bytes;
 
@@ -40,23 +39,23 @@ class XZMemorySource extends XZByteSource {
       Uint8List.sublistView(bytes, start, end);
 }
 
-/// Where a single xz block sits in the input and in the decoded output
+/// Where a single xz block sits in the input and in the decoded output.
 class XZBlockLayout {
-  /// Offset of the block header from the start of the archive
+  /// Offset of the block header from the start of the archive.
   final int compressedOffset;
 
   /// Number of bytes the block occupies in the archive, covering the header,
-  /// the compressed data, the block padding and the check field
+  /// the compressed data, the block padding and the check field.
   final int compressedLength;
 
-  /// Offset of this block's data in the fully decoded output
+  /// Offset of this block's data in the fully decoded output.
   final int outputOffset;
 
-  /// Number of bytes this block decodes to
+  /// Number of bytes this block decodes to.
   final int uncompressedLength;
 
-  /// Flags of the stream this block belongs to. The low four bits are the
-  /// check type, which every block in a stream shares
+  /// Flags of the stream this block belongs to. The low four bits hold the
+  /// check type. Every block in a stream shares it
   final int streamFlags;
 
   const XZBlockLayout({
@@ -67,18 +66,18 @@ class XZBlockLayout {
     required this.streamFlags,
   });
 
-  /// The type of integrity check stored at the end of the block
+  /// The type of integrity check stored at the end of the block.
   int get checkType => streamFlags & 0xf;
 
-  /// The size of the check field in bytes
+  /// The size of the check field in bytes.
   int get checkSize => xzCheckSize(checkType);
 }
 
-/// The blocks of an archive, in the order they appear
+/// The blocks of an archive, in the order they appear.
 class XZLayout {
   final List<XZBlockLayout> blocks;
 
-  /// Total size of the decoded output of every stream in the archive
+  /// Total size of the decoded output of every stream in the archive.
   final int uncompressedSize;
 
   const XZLayout(this.blocks, this.uncompressedSize);
@@ -118,14 +117,13 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
     var end = _skipTrailingZeroPadding(source, source.length);
     var total = 0;
 
-    // Streams are concatenated back to back and only the last one can be found
-    // directly, so the archive is walked backwards, one stream footer at a
-    // time. Each stream's blocks are collected in order and the streams
-    // themselves are reversed at the end
+    // Streams sit back to back and only the last one can be found directly.
+    // The walk goes backwards, one stream footer at a time. Blocks come out in
+    // order inside a stream. The streams are reversed at the end
     final streams = <List<XZBlockLayout>>[];
 
     while (end > 0) {
-      // Stream footer: CRC32 (4), backward size (4), stream flags (2), 'YZ' (2)
+      // Stream footer: CRC32 (4), backward size (4), stream flags (2), 'YZ' (2).
       if (end < 32) {
         return null;
       }
@@ -138,8 +136,8 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         return null;
       }
       // The footer covers its backward size and flags with a CRC32. Nothing
-      // downstream reads these bytes again, so leaving it unchecked would let
-      // a damaged footer through a decode that works entirely from the index
+      // downstream reads these bytes again. Without this check a damaged
+      // footer passes a decode that works entirely from the index
       final footerCrc =
           footer[0] | footer[1] << 8 | footer[2] << 16 | footer[3] << 24;
       if (getCrc32(Uint8List.sublistView(footer, 4, 10)) != footerCrc) {
@@ -152,13 +150,13 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         return null;
       }
 
-      // Backward size holds the size of the index in four byte units, minus one
+      // Backward size holds the size of the index in four byte units, minus one.
       final backwardSize =
           footer[4] | footer[5] << 8 | footer[6] << 16 | footer[7] << 24;
       final indexSize = (backwardSize + 1) * 4;
       final indexStart = footerStart - indexSize;
-      // The smallest index is eight bytes, and it is preceded by at least the
-      // twelve byte stream header
+      // The smallest index is eight bytes. At least the twelve byte stream
+      // header sits in front of it
       if (indexSize < 8 || indexStart < 12) {
         return null;
       }
@@ -167,7 +165,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
       if (index[0] != 0) {
         return null;
       }
-      // The index ends with the CRC32 of everything before it in the index
+      // The index ends with the CRC32 of everything before it in the index.
       final storedCrc = index[indexSize - 4] |
           index[indexSize - 3] << 8 |
           index[indexSize - 2] << 16 |
@@ -177,12 +175,12 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         return null;
       }
 
-      // Positions below are absolute offsets into the archive, so that the
-      // bounds checks read the same way as the offsets being computed
+      // Positions below are absolute offsets into the archive. The bounds
+      // checks then read the same way as the offsets below
       final crcStart = footerStart - 4;
       var position = indexStart + 1;
-      // Reads a multibyte integer, returning -1 when it is malformed or runs
-      // past the last record
+      // Reads a multibyte integer. Returns -1 when the integer is malformed
+      // or reaches past the last record
       int readMultibyteInteger() {
         var value = 0;
         var multiplier = 1;
@@ -206,14 +204,14 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
       }
 
       final recordCount = readMultibyteInteger();
-      // Every record takes at least two bytes
+      // Every record takes at least two bytes.
       if (recordCount < 0 || recordCount > (crcStart - position) ~/ 2) {
         return null;
       }
 
-      // The block sizes are known before the stream header has been located,
-      // so blocks are recorded relative to the start of the blocks area and
-      // shifted into place once the header has been found
+      // The block sizes are known before the stream header is found. Blocks go
+      // in relative to the start of the blocks area and shift into place once
+      // the header is found
       final blocks = <XZBlockLayout>[];
       var blocksSize = 0;
       for (var i = 0; i < recordCount; i++) {
@@ -225,8 +223,8 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
           return null;
         }
         // Blocks are padded to a four byte boundary. Every check size is
-        // itself a multiple of four, so padding the unpadded size covers the
-        // header, the compressed data, the block padding and the check
+        // itself a multiple of four. Padding the unpadded size covers the
+        // header, the compressed data, the padding and the check field
         final paddedLength = (unpaddedLength + 3) & ~3;
         if (paddedLength < 0 || paddedLength < unpaddedLength) {
           return null;
@@ -252,7 +250,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         }
       }
 
-      // The twelve byte stream header sits in front of the blocks
+      // The twelve byte stream header sits in front of the blocks.
       final streamStart = indexStart - blocksSize - 12;
       if (streamStart < 0 || streamStart + 12 > source.length) {
         return null;
@@ -266,7 +264,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
           header[5] != 0) {
         return null;
       }
-      // The header repeats the flags that the footer carries
+      // The header repeats the flags that the footer carries.
       if (header[6] != 0 || header[7] != streamFlags) {
         return null;
       }
@@ -300,9 +298,8 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
       return null;
     }
 
-    // The streams were collected from the last one to the first, and the
-    // output offsets were accumulated in that same order, so both are put back
-    // into archive order here
+    // The streams came out last one first. The output offsets followed that
+    // order. Both go back into archive order here
     final blocks = <XZBlockLayout>[];
     for (var i = streams.length - 1; i >= 0; i--) {
       blocks.addAll(streams[i]);
@@ -397,10 +394,9 @@ int xzBlockDictionarySize(Uint8List header) {
 }
 
 // Returns the offset of the start of the stream padding that ends at [end].
-// Padding is zero bytes in multiples of four
+// Padding is zero bytes in multiples of four.
 int _skipTrailingZeroPadding(XZByteSource source, int end) {
-  // Padding is almost always absent, so this reads a small window at a time
-  // rather than the whole archive
+  // Padding is almost always absent. A small window at a time is enough here
   const windowSize = 1024;
   while (end >= 4) {
     final start = end - windowSize < 0 ? 0 : end - windowSize;

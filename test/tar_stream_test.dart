@@ -556,6 +556,17 @@ void main() {
       await source.close();
       expect(content.closed, isTrue);
     });
+
+    // The entry stream reports a length of 0 before its end. Only the first
+    // 100 pieces are taken. The whole archive is fewer than 100 pieces
+    test('an entry whose length does not agree with its isEOS ends', () async {
+      final pieces = await Stream.value(
+              ArchiveFile.stream('a.bin', _LyingInput(Uint8List(10))))
+          .transform(tarCodec.encoder)
+          .take(100)
+          .toList();
+      expect(pieces.length, lessThan(100));
+    });
   });
 
   group('a declared length buys no memory', () {
@@ -687,4 +698,19 @@ class _ClosingInput extends InputMemoryStream {
     closed = true;
     await super.close();
   }
+}
+
+/// Reports a length of 0 while it still holds bytes. Every subset of it does
+/// the same. A real InputStream can behave this way
+class _LyingInput extends InputMemoryStream {
+  final Uint8List bytes;
+
+  _LyingInput(this.bytes) : super(bytes);
+
+  @override
+  int get length => 0;
+
+  @override
+  InputStream subset({int? position, int? length, int? bufferSize}) =>
+      _LyingInput(bytes);
 }

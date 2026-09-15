@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:archive/src/codecs/xz/_xz_parallel_io.dart'
+    show xzDecodeMultithreaded;
 import 'package:archive/src/codecs/xz/xz_index.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -32,10 +34,10 @@ class BlockInfo {
   BlockInfo(this.compOffset, this.uncompOffset, this.totalSize, this.uncompSize,
       this.headerSize);
 
-  /// Offset of the first byte of compressed data, past the block header
+  /// Offset of the first byte of compressed data, past the block header.
   int get dataOffset => compOffset + headerSize;
 
-  /// Offset of the check field, which is the tail of the block
+  /// Offset of the check field, which is the tail of the block.
   int checkOffset(int checkSize) => compOffset + totalSize - checkSize;
 }
 
@@ -62,7 +64,7 @@ List<BlockInfo> blocksOf(Uint8List bytes) {
 }
 
 /// Something that compresses well enough to be worth several blocks, with
-/// enough variety that a block boundary landing in the wrong place shows up
+/// enough variety that a block boundary landing in the wrong place shows up.
 Uint8List sampleData(int length) {
   final data = Uint8List(length);
   var state = 0x2545f491;
@@ -70,7 +72,7 @@ Uint8List sampleData(int length) {
     state ^= (state << 13) & 0xffffffff;
     state ^= state >> 17;
     state ^= (state << 5) & 0xffffffff;
-    // Mostly a repeating pattern, with occasional noise
+    // Mostly a repeating pattern, with occasional noise.
     data[i] = (i % 251) ^ ((state & 0xff) < 16 ? state & 0xff : 0);
   }
   return data;
@@ -87,7 +89,7 @@ Future<Uint8List> decodeBytesOnIsolates(Uint8List compressed,
         workers: workers,
         memoryBudget: memoryBudget,
       ));
-  // Documented: in multithreaded mode the return value carries nothing
+  // Documented: in multithreaded mode the return value carries nothing.
   expect(returned, isEmpty);
   return completer.future;
 }
@@ -113,7 +115,7 @@ void main() {
 
     test('multi block archive matches the single threaded decode', () async {
       final compressed = fixture('blocks');
-      // A single block would make the whole exercise pointless
+      // A single block would make the whole exercise pointless.
       expect(XZDecoder().uncompressedSize(compressed), expected.length);
 
       final sequential = XZDecoder().decodeBytes(compressed);
@@ -152,12 +154,12 @@ void main() {
         final built = buildArchive('blocks');
         pristine = built.bytes;
         blocks = built.blocks;
-        // Several blocks, so that a corrupt one has intact neighbours
+        // Several blocks, so that a corrupt one has intact neighbours.
         expect(blocks.length, greaterThan(4));
       });
 
       // Whatever a failed decode hands back has to be genuine as far as it
-      // goes: a prefix of the real data, never bytes that were never there
+      // goes: a prefix of the real data, never bytes that were never there.
       void expectGenuinePrefix(Uint8List result, String label) {
         expect(result.length, lessThanOrEqualTo(expected.length),
             reason: label);
@@ -174,12 +176,42 @@ void main() {
         return data;
       }
 
+      // The output ends at the first failed block. Blocks after it are wasted
+      // work. The second worker can hold one block when the failure arrives.
+      // That one block is allowed to finish
+      test('a failed block stops the pool handing out blocks', () async {
+        final data = damaged(blocks[0].dataOffset + 8);
+        var failed = false;
+        var afterFailure = 0;
+        final ok = await xzDecodeMultithreaded(
+          bytes: data,
+          layout: parseXZLayout(XZMemorySource(data)),
+          verify: true,
+          maxPreallocateSize: expected.length,
+          workers: 2,
+          onChunk: (_, __) {},
+          onBlockDone: (_, blockOk) {
+            if (failed) {
+              afterFailure++;
+            }
+            if (!blockOk) {
+              failed = true;
+            }
+          },
+          fileReadBufferSize: 0,
+        );
+        expect(ok, isFalse);
+        expect(failed, isTrue);
+        expect(blocks.length, greaterThan(4));
+        expect(afterFailure, lessThanOrEqualTo(1));
+      });
+
       test('throwOnError reports a bad block while the index still reads',
           () async {
         // Truncating an archive takes its index with it, which sends the
         // decode down the growing buffer path. Damaging a block in place
         // leaves the index readable, so the output is allocated up front from
-        // it, and that is a separate place for the failure to be noticed
+        // it, and that is a separate place for the failure to be noticed.
         final data = damaged(blocks[1].dataOffset + 8);
         expect(XZDecoder().uncompressedSize(data), equals(expected.length));
 
@@ -205,10 +237,10 @@ void main() {
 
         expectGenuinePrefix(sequential, 'sequential');
         expectGenuinePrefix(parallel, 'parallel');
-        // The undamaged first block survives in both
+        // The undamaged first block survives in both.
         expect(sequential.length, greaterThanOrEqualTo(blocks[1].uncompOffset));
         expect(parallel.length, greaterThanOrEqualTo(blocks[1].uncompOffset));
-        // And neither pretends the rest of the archive decoded
+        // And neither pretends the rest of the archive decoded.
         expect(sequential.length, lessThan(expected.length));
         expect(parallel.length, lessThan(expected.length));
 
@@ -244,14 +276,14 @@ void main() {
       test('a corrupt block is caught with verify even at the last byte',
           () async {
         // Only the check field is damaged, so the data still decodes. Nothing
-        // but the checksum can tell that this archive is not what was stored
+        // but the checksum can tell that this archive is not what was stored.
         final data = damaged(blocks[1].checkOffset(8), 8);
 
-        // Without verification both modes decode it happily, as documented
+        // Without verification both modes decode it happily, as documented.
         expect(XZDecoder().decodeBytes(data), equals(expected));
         expect(await decodeBytesOnIsolates(data, workers: 4), equals(expected));
 
-        // With verification both refuse it
+        // With verification both refuse it.
         expect(
             XZDecoder().decodeStream(
                 InputMemoryStream(data), OutputMemoryStream(),
@@ -280,7 +312,7 @@ void main() {
 
       test('a truncated archive fails both modes', () async {
         // The index and the footer are gone, so the layout cannot be read and
-        // the parallel path has to fall back to decoding the stream whole
+        // the parallel path has to fall back to decoding the stream whole.
         final data = Uint8List.sublistView(pristine, 0, pristine.length - 40);
         expect(XZDecoder().uncompressedSize(data), isNull);
 
@@ -301,7 +333,7 @@ void main() {
 
       test('a corrupt index falls back and still fails cleanly', () async {
         // Land inside the index, which sits between the last block and the
-        // twelve byte footer
+        // twelve byte footer.
         final data = damaged(pristine.length - 12 - 8, 4);
         expect(XZDecoder().uncompressedSize(data), isNull);
 
@@ -362,7 +394,7 @@ void main() {
       // These all feed the arithmetic that sizes the pool, where a nonsense
       // value does not fail loudly. A negative read buffer in particular makes
       // the per worker cost come out negative, which skips the memory budget
-      // and hands out more workers than the budget allows
+      // and hands out more workers than the budget allows.
       final compressed = fixture('blocks');
       final cases = <String, XZMultithreadOptions<Uint8List>>{
         'workers: 0': XZMultithreadOptions(onDone: (_) {}, workers: 0),
@@ -435,7 +467,7 @@ void main() {
         }
         // Some of the archives here are deliberately corrupt in their payload
         // while carrying an intact index, so the size is readable even though
-        // the data is not
+        // the data is not.
         if (!XZDecoder().decodeStream(
             InputMemoryStream(compressed), OutputMemoryStream())) {
           continue;
@@ -522,7 +554,7 @@ void main() {
         File(path).writeAsBytesSync(compressed);
 
         // These are what let the decoder find the file behind a stream and
-        // hand disjoint ranges of it to isolates
+        // hand disjoint ranges of it to isolates.
         final whole = InputFileStream(path);
         expect(whole.fileOffset, 0);
         expect(whole.fileLength, compressed.length);
@@ -542,7 +574,7 @@ void main() {
     test('falls back for a stream that is neither memory nor a file', () async {
       // A RAM backed file stream has no path for workers to read, so it is
       // documented to decode on the calling isolate, still reporting through
-      // onDone
+      // onDone.
       final compressed = fixture('blocks');
       final input = await InputFileStream.asRamFile(
           Stream.value(compressed), compressed.length);
@@ -567,14 +599,14 @@ void main() {
 
       // Cutting the archive in half leaves a block that decodes for a while
       // and then runs out of input, which is the shape being tested and does
-      // not depend on where a particular xz build put its chunk boundaries
+      // not depend on where a particular xz build put its chunk boundaries.
       final compressed = Uint8List.sublistView(source, 0, source.length ~/ 2);
       final partial = XZDecoder().decodeBytes(compressed, verify: true).length;
       expect(partial, greaterThan(0));
       expect(partial, lessThan(full));
 
       // Every way of asking has to stop in the same place, whether or not the
-      // check is verified and whether or not the output can be read back
+      // check is verified and whether or not the output can be read back.
       expect(XZDecoder().decodeBytes(compressed).length, equals(partial));
       expect(await decodeBytesOnIsolates(compressed), hasLength(partial));
       expect(await decodeBytesOnIsolates(compressed, verify: true),
@@ -619,7 +651,7 @@ void main() {
 
       test('rejects a damaged stream header CRC', () async {
         // Bytes 8..11 of the archive. They cover the two flag bytes in front
-        // of them and nothing else reads them
+        // of them and nothing else reads them.
         for (var i = 8; i < 12; i++) {
           final data = flipped(i);
           expect(XZDecoder().uncompressedSize(data), isNull, reason: 'byte $i');
@@ -633,7 +665,7 @@ void main() {
       });
 
       test('rejects a damaged stream footer CRC', () async {
-        // The last twelve bytes are the footer, and its CRC32 leads
+        // The last twelve bytes are the footer, and its CRC32 leads.
         final footerStart = pristine.length - 12;
         for (var i = footerStart; i < footerStart + 4; i++) {
           final data = flipped(i);
@@ -651,7 +683,7 @@ void main() {
           () async {
         // The header, the footer and the index between them. Damaging any one
         // byte has to reach the same verdict either way, which is the property
-        // the two tests above are specific cases of
+        // the two tests above are specific cases of.
         final offsets = <int>[
           for (var i = 0; i < 12; i++) i,
           for (var i = pristine.length - 64; i < pristine.length; i++) i,
@@ -671,7 +703,7 @@ void main() {
     group('throwOnError', () {
       // The exception cannot reach the caller, whose stack is gone by the time
       // the workers finish, so it is delivered to onError instead. Without the
-      // flag a corrupt archive is not an error and reaches onDone
+      // flag a corrupt archive is not an error and reaches onDone.
       late Uint8List broken;
       late Uint8List whole;
 
@@ -680,7 +712,7 @@ void main() {
         broken = Uint8List.sublistView(whole, 0, whole.length ~/ 2);
       });
 
-      /// Runs a decode and reports which callback it ended up in
+      /// Runs a decode and reports which callback it ended up in.
       Future<({Object? error, Object? done})> outcome(
           void Function(void Function(Object? done) onDone,
                   void Function(Object, StackTrace) onError)
@@ -764,7 +796,7 @@ void main() {
 
       test('reaches onError on a single block archive as well', () async {
         // One block is decoded whole on one isolate rather than being split,
-        // which is a separate path through the worker
+        // which is a separate path through the worker.
         final single = fixture('whole');
         final r = await bytes(
             Uint8List.sublistView(single, 0, single.length ~/ 2),
@@ -800,7 +832,7 @@ void main() {
       test('carries the reason back out of the workers', () async {
         // The reason is worked out inside an isolate, so it has to survive the
         // trip home; without that the caller is told only that something was
-        // wrong somewhere
+        // wrong somewhere.
         final notXz = Uint8List.fromList(
             List<int>.generate(200000, (i) => (i * 37) & 0xff));
         final r = await bytes(notXz, throwOnError: true);
@@ -810,7 +842,7 @@ void main() {
 
         // And a failure that is about the data rather than the wrapper. The
         // check of a block sits at its end, so breaking that alone leaves the
-        // data itself decodable and only a verifying decode objects
+        // data itself decodable and only a verifying decode objects.
         final built = buildArchive('crc64-blocks');
         final badCheck = Uint8List.fromList(built.bytes);
         badCheck[built.blocks[0].checkOffset(8)] ^= 0xff;
@@ -826,7 +858,7 @@ void main() {
 
       test('is refused when there is nowhere to deliver the exception', () {
         // Asking to be told and leaving no onError would put the failure back
-        // where it started, so it is rejected while the caller can still hear
+        // where it started, so it is rejected while the caller can still hear.
         expect(
             () => XZDecoder().decodeBytes(broken,
                 throwOnError: true,
@@ -878,7 +910,7 @@ void main() {
           final data = damagedAt(offset);
           final declared = XZDecoder().uncompressedSize(data)!;
           // The premise: the single threaded decode really does produce more
-          // than the index accounts for, which is what has nowhere to go
+          // than the index accounts for, which is what has nowhere to go.
           expect(XZDecoder().decodeBytes(data).length, greaterThan(declared));
 
           final completer = Completer<({Object? error, Uint8List? done})>();
@@ -892,7 +924,7 @@ void main() {
           expect(result.error, isNull,
               reason: 'a corrupt archive is not an error without throwOnError');
           // Clipped at the index, which is the size the buffer was allocated
-          // against and the only one of the two the archive can be held to
+          // against and the only one of the two the archive can be held to.
           expect(result.done, hasLength(declared));
         });
 
@@ -912,7 +944,7 @@ void main() {
           // The same reason the single threaded decode gives, rather than the
           // RangeError of a buffer that ran out of room. Damage this far into
           // the block is caught by the range coder at the end of the chunk,
-          // before the index it disagrees with is ever read
+          // before the index it disagrees with is ever read.
           expect((error as ArchiveException).message,
               contains('LZMA data is corrupt'));
         });

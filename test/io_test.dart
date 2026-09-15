@@ -685,6 +685,24 @@ void main() {
     }
   });
 
+  // The file is a gzip with no tar inside. Nothing from it may reach the
+  // output directory
+  test('extractFileToDisk refuses a gzip that holds no tar', () async {
+    final directory = Directory.systemTemp.createTempSync('archive-extract-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final text =
+        Uint8List.fromList(List<int>.generate(1 << 20, (i) => 0x41 + (i % 26)));
+    final input = File('${directory.path}/dump.sql.gz')
+      ..writeAsBytesSync(GZipEncoder().encodeBytes(text));
+    final output = '${directory.path}/out';
+    await expectLater(extractFileToDisk(input.path, output),
+        throwsA(isA<ArchiveException>()));
+    final left = Directory(output).existsSync()
+        ? Directory(output).listSync()
+        : <FileSystemEntity>[];
+    expect(left, isEmpty);
+  });
+
   test('extractFileToDisk rejects a truncated tar.zst frame', () async {
     final directory = Directory.systemTemp.createTempSync('archive-extract-');
     addTearDown(() => directory.deleteSync(recursive: true));

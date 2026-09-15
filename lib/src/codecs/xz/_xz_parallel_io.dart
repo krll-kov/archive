@@ -5,8 +5,8 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 // The io file handle is imported directly rather than through
-// file_handle.dart, whose conditional export resolves to the web class when
-// the analyser has no platform in mind, and that one has no path
+// file_handle.dart. With no platform in mind the analyser resolves that
+// conditional export to the web class. The web class has no path
 import '../../util/_file_handle_io.dart';
 import '../../util/archive_exception.dart';
 import '../../util/byte_order.dart';
@@ -23,10 +23,10 @@ import 'xz_index.dart';
 import 'xz_multithread_options.dart';
 import 'xz_stream_decoder.dart';
 
-/// Whether this platform can decode on isolates
+/// Whether this platform can decode on isolates.
 const bool xzIsolatesSupported = true;
 
-/// A stretch of a file on disk holding an xz archive
+/// A stretch of a file on disk holding an xz archive.
 class XZFileRegion {
   final String path;
   final int offset;
@@ -52,7 +52,7 @@ XZFileRegion? xzFileRegionOf(InputStream input) {
       handle.path, input.fileOffset + input.position, input.length);
 }
 
-/// Reads the block layout of the archive in [region] without loading it
+/// Reads the block layout of the archive in [region] without loading it.
 XZLayout? xzLayoutOfFile(XZFileRegion region, {int? maxUncompressedSize}) {
   final file = File(region.path).openSync();
   try {
@@ -67,8 +67,8 @@ XZLayout? xzLayoutOfFile(XZFileRegion region, {int? maxUncompressedSize}) {
 
 /// An [XZByteSource] that reads the ranges it is asked for from a file.
 ///
-/// Parsing an index touches the footer, the index and the stream header, so
-/// only a few kilobytes are ever read however large the archive is
+/// Parsing an index touches the footer, the index and the stream header. Only
+/// a few kilobytes are read whatever the size of the archive
 class _XZFileSource extends XZByteSource {
   final RandomAccessFile _file;
   final int _offset;
@@ -85,18 +85,17 @@ class _XZFileSource extends XZByteSource {
   }
 }
 
-// Bytes a worker accumulates before shipping them back. Sending the output in
-// pieces is what keeps a worker from holding a whole decoded block: for a 192
-// MB block this is the difference between 192 MB and 4 MB of live memory per
-// worker, at the cost of one extra memcpy of the output (~18 ms per 200 MB)
+// Bytes a worker accumulates before shipping them back. Output in pieces keeps
+// a worker from holding a whole decoded block. For a 192 MB block that is 4 MB
+// of live memory instead of 192 MB, plus one memcpy (~18 ms per 200 MB)
 const _stagingSize = 4 * 1024 * 1024;
 
-// The largest block header the format allows, (255 + 1) * 4
+// The largest block header the format allows, (255 + 1) * 4.
 const _maxBlockHeaderSize = 1024;
 
 // Blocks sampled when sizing the LZMA2 dictionary. Dictionary size is a
-// per-block property but is uniform in practice, and reading every header of a
-// huge archive would cost more than it saves
+// per-block property. In practice it is uniform. Reading every header of a
+// huge archive would cost more than it saves.
 const _dictionarySampleLimit = 16;
 
 const _kindStream = 0;
@@ -145,8 +144,8 @@ Future<bool> xzDecodeMultithreaded({
   bool orderedOutput = false,
   required int fileReadBufferSize,
 }) {
-  // Offsets in the layout are relative to the start of the archive, which sits
-  // at [fileOffset] in a file and at zero in a buffer
+  // Offsets in the layout are relative to the start of the archive. The
+  // archive starts at [fileOffset] in a file and at zero in a buffer
   final base = bytes != null ? 0 : fileOffset;
   final blocks = layout?.blocks;
 
@@ -205,8 +204,8 @@ Future<bool> xzDecodeMultithreaded({
 
 /// The memory an LZMA2 dictionary will take for the largest sampled block.
 ///
-/// This mirrors the cap [XZStreamDecoder.readBlock] sets, so that the budget
-/// is measured against what a worker actually allocates rather than a guess
+/// This mirrors the cap [XZStreamDecoder.readBlock] sets. The budget then
+/// counts what a worker really allocates rather than a guess
 int _largestDictionaryCap(
     List<XZBlockLayout> blocks, Uint8List? bytes, String? path, int base) {
   var largest = 0;
@@ -241,8 +240,8 @@ int _largestDictionaryCap(
       }
     }
   } catch (_) {
-    // This only sizes the worker count, so a header that cannot be read falls
-    // back to whatever the other blocks reported
+    // This only sizes the worker count. A header that cannot be read falls
+    // back to whatever the other blocks reported.
   } finally {
     file?.closeSync();
   }
@@ -263,7 +262,8 @@ int _pickWorkerCount({
   required int fileReadBufferSize,
 }) {
   final cores = Platform.numberOfProcessors;
-  // One core is left to the caller; in Flutter that is the UI isolate
+  // One core stays free for the calling isolate. In Flutter that is the UI
+  // isolate
   var count = requested ?? cores - 1;
   if (count > cores) {
     count = cores;
@@ -275,10 +275,9 @@ int _pickWorkerCount({
     count = blocks.length;
   }
 
-  // A worker holds its dictionary, its staging buffer, and the compressed
-  // block only when the archive came in as bytes: reading from a file it goes
-  // through a small window instead. The budget applies even to an explicitly
-  // requested worker count, so that it can act as a safety valve
+  // A worker holds its dictionary and its staging buffer, plus the compressed
+  // block for an archive in memory. From a file it reads through a small
+  // window. The budget caps an explicit worker count too
   var compressed = fileReadBufferSize;
   if (holdsCompressedBlock) {
     compressed = 0;
@@ -289,10 +288,9 @@ int _pickWorkerCount({
     }
   }
 
-  // An output that can only be appended to has to hold back blocks that
-  // finished ahead of their turn, so every worker beyond the first can leave a
-  // whole decoded block waiting in the calling isolate. That is charged to the
-  // worker that causes it
+  // An append-only output holds back a block that finished ahead of its turn.
+  // Every worker beyond the first can leave a whole decoded block waiting in
+  // the calling isolate. That block is charged to the worker that caused it
   var reorder = 0;
   if (orderedOutput) {
     for (final block in blocks) {
@@ -316,12 +314,12 @@ int _pickWorkerCount({
   return count;
 }
 
-/// One unit of work handed to a worker
+/// One unit of work handed to a worker.
 class _Job {
   final int kind;
 
   /// The whole archive, when it is in memory. Only [offset]..[offset]+[length]
-  /// is sent to the worker
+  /// is sent to the worker.
   final Uint8List? bytes;
 
   final String? path;
@@ -348,9 +346,9 @@ class _Job {
 
   /// Builds the message for this job.
   ///
-  /// The copy into external memory happens here rather than up front, so that
-  /// only the blocks actually in flight are held: a queued job costs nothing
-  /// beyond a view onto the archive the caller already has
+  /// The copy into external memory happens here rather than up front. Only the
+  /// blocks in flight are held. A queued job costs nothing beyond a view onto
+  /// the archive already in memory
   List<Object?> toMessage() {
     TransferableTypedData? data;
     final source = bytes;
@@ -373,8 +371,8 @@ class _Job {
     ];
   }
 
-  // Slot 0 of a job message is unused; workers only ever receive jobs, so it
-  // carries no tag. Kept so main-bound and worker-bound messages index alike
+  // Slot 0 of a job message is unused. A worker only ever receives jobs and
+  // needs no tag. The slot stays so both directions index alike
   static const _kindMarker = 0;
 }
 
@@ -402,8 +400,8 @@ Future<bool> _runJobs(
     }
     finished = true;
     receive.close();
-    // Killing outright is safe because a worker holds no operating system
-    // resources between jobs: it opens and closes the archive within one
+    // A worker holds no operating system resources between jobs. It opens and
+    // closes the archive inside a single job. Killing it outright is safe
     for (final isolate in isolates) {
       isolate.kill(priority: Isolate.immediate);
     }
@@ -429,9 +427,9 @@ Future<bool> _runJobs(
       return;
     }
     try {
-      // An isolate that dies reports through the same port, as a list whose
-      // first entry is not one of the message tags. Without this the run would
-      // simply never complete
+      // A dead isolate reports through the same port. Its message is a list
+      // with no message tag in the first entry. Without this check the run
+      // never completes
       if (message is! List || message.isEmpty || message[0] is! int) {
         fail(StateError('XZ decode isolate failed: $message'));
         return;
@@ -450,8 +448,8 @@ Future<bool> _runJobs(
             }
             onBlockDone?.call(message[4] as int, blockOk);
             if (!blockOk) {
-              // The first block to be rejected is the one worth reporting:
-              // later ones may only be failing because this one did
+              // The first rejected block is the one worth reporting. A later
+              // one can be failing only because this one did
               final reason = message[5];
               if (reason != null) {
                 failureReason ??= reason as String;
@@ -460,6 +458,13 @@ Future<bool> _runJobs(
             final error = message[3];
             if (error != null) {
               failure ??= StateError('XZ decode failed: $error');
+            }
+            // The output ends at the first failed block. Every pending block
+            // comes after it. Dropping them leaves only the blocks already
+            // running
+            if (!blockOk || error != null) {
+              remaining -= pending.length;
+              pending.clear();
             }
             remaining--;
             if (remaining == 0) {
@@ -481,7 +486,7 @@ Future<bool> _runJobs(
   try {
     for (var i = 0; i < workerCount; i++) {
       // A fast worker can get through every job before the rest of the pool
-      // has even started, so the run can already be over by now
+      // starts. The run can already be over at this point
       if (finished) {
         break;
       }
@@ -489,7 +494,7 @@ Future<bool> _runJobs(
           onError: receive.sendPort, errorsAreFatal: true));
     }
     if (finished) {
-      // finish() only killed the isolates that existed when it ran
+      // finish() only killed the isolates that existed when it ran.
       for (final isolate in isolates) {
         isolate.kill(priority: Isolate.immediate);
       }
@@ -859,8 +864,8 @@ class _QueueSink implements Sink<List<int>> {
 
 /// Reads the check field, the tail of a block.
 ///
-/// The block padding sits in front of it and every check size is a multiple of
-/// four, so the check is always the last [checkSize] bytes
+/// The block padding sits in front of it. Every check size is a multiple of
+/// four. That leaves the check as the last [checkSize] bytes
 Uint8List _readCheckField(
     InputStream input, Uint8List? data, int length, int checkSize) {
   if (checkSize == 0 || length < checkSize) {
@@ -899,23 +904,22 @@ void _xzWorker(SendPort toMain) {
     final fileReadBufferSize = job[9] as int;
     final maxPreallocateSize = job[10] as int;
 
-    // Failing to get hold of the compressed data is a failure of the decode
-    // itself rather than a statement about the archive, so it is reported as
-    // an error. Anything that goes wrong afterwards is the archive's fault
+    // A failure to get hold of the compressed data says nothing about the
+    // archive. It is a failure of the decode itself and reports as an error.
+    // Anything that goes wrong afterwards is the archive's fault
     Uint8List? data;
     InputFileStream? file;
     InputStream input;
     try {
       if (transferable != null) {
-        // Materialising is free: the bytes are already in external memory and
-        // this hands over ownership of them
+        // The bytes already sit in external memory. Materialising hands over
+        // ownership of them and costs nothing
         data = Uint8List.view(transferable.materialize());
         input = InputMemoryStream(data);
       } else {
         // Read the block as it is decoded rather than up front. LZMA2 reads a
-        // block strictly in order, so nothing is gained by holding all of it,
-        // and a compressed block is the largest thing a worker would otherwise
-        // keep
+        // block strictly in order. Holding all of it gains nothing. A
+        // compressed block is the largest thing a worker would keep
         file = InputFileStream(path!, bufferSize: fileReadBufferSize);
         input = InputFileStream.fromFileStream(file,
             position: offset, length: length);
@@ -1025,7 +1029,7 @@ class _BlockSink extends OutputStream {
   final void Function(int offset, Uint8List piece) _onPiece;
   final int _outputOffset;
 
-  /// Check type to accumulate, or 0 to accumulate nothing
+  /// Check type to accumulate, or 0 to accumulate nothing.
   final int _checkType;
 
   final Uint8List _staging = Uint8List(_stagingSize);
@@ -1054,10 +1058,9 @@ class _BlockSink extends OutputStream {
       return;
     }
 
-    // A write larger than the staging area goes straight out. This is the path
-    // a BCJ filtered block takes: the block decoder buffers such a block itself
-    // and hands it over in one call, and copying it through staging would gain
-    // nothing
+    // A write larger than the staging area goes straight out. A BCJ filtered
+    // block takes this path. The block decoder hands it over in one call and
+    // staging it again would gain nothing
     if (length >= _stagingSize) {
       flush();
       _emit(bytes is Uint8List
@@ -1099,7 +1102,7 @@ class _BlockSink extends OutputStream {
   }
 
   /// Compares the accumulated checksum with the [checkField] stored in the
-  /// block. Check types that cannot be verified pass
+  /// block. Check types that cannot be verified pass.
   bool checkMatches(Uint8List checkField) {
     if (_checkType != 0x1 && _checkType != 0x4) {
       return true;

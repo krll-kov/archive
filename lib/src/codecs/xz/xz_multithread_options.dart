@@ -1,6 +1,6 @@
 import '_xz_no_result.dart';
 
-/// Default ceiling on the memory the isolates may hold at once, in bytes
+/// How much memory the isolates may hold at once by default, in bytes
 const xzDefaultMemoryBudget = 1024 * 1024 * 1024;
 
 /// Pass one of these to an [XZDecoder] call to spread it over isolates. You

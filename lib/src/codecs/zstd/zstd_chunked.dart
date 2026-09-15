@@ -402,7 +402,14 @@ class ZstdChunkedDecoder extends ChunkedSink {
   ZstdChunkedDecoder(super.output,
       {this.verify = true,
       this.dictionary,
-      this.windowSizeLimit = zstdDefaultWindowSizeLimit});
+      this.windowSizeLimit = zstdDefaultWindowSizeLimit}) {
+    // ZstdDecoderConverter is const and cannot check the limit. The check
+    // happens here. The message matches ZstdDecoder
+    if (windowSizeLimit < 1024) {
+      throw ArgumentError.value(windowSizeLimit, 'windowSizeLimit',
+          'Must be at least the 1 KB minimum window');
+    }
+  }
 
   late final _sink = SinkOutputStream(output);
   final _blocks = ZstdBlockDecoder();

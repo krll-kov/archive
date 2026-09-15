@@ -30,6 +30,60 @@ void main() {
         throwsA(isA<ArchiveException>()));
   });
 
+  // After a stream bzip2 1.0.8 reads BZh and a digit from 1 to 9. If a byte
+  // differs, bzip2 ignores the rest as trailing garbage and exits 0
+  test('bytes after a stream that start no stream are ignored on every path',
+      () async {
+    final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
+    final stream = BZip2Encoder().encodeBytes(data);
+    for (final tail in [
+      [0x41, 0x41, 0x41],
+      [0x42, 0x41],
+      [0x42, 0x5A, 0x68, 0x30],
+      [0x42, 0x5A, 0x68, 0x78],
+    ]) {
+      final archive = Uint8List.fromList([...stream, ...tail]);
+      final output = OutputMemoryStream();
+      expect(
+          BZip2Decoder()
+              .decodeStream(InputMemoryStream(archive), output, verify: true),
+          isTrue,
+          reason: 'decodeStream, tail $tail');
+      expect(output.getBytes(), data);
+      expect(BZip2Decoder().decodeBytes(archive, verify: true), data,
+          reason: 'decodeBytes, tail $tail');
+      expect(bzip2Codec.decode(archive), data, reason: 'converter, tail $tail');
+      // One byte at a time. The converter gets the tail in pieces
+      final pieces = await Stream.fromIterable([
+        for (final byte in archive) [byte]
+      ]).transform(bzip2Codec.decoder).expand((piece) => piece).toList();
+      expect(pieces, data, reason: 'converter by bytes, tail $tail');
+    }
+  });
+
+  // The input ends inside BZh and the digit. bzip2 1.0.8 exits 2 on it
+  test('a tail that ends inside a stream signature is an error on every path',
+      () {
+    final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
+    final stream = BZip2Encoder().encodeBytes(data);
+    for (final tail in [
+      [0x42],
+      [0x42, 0x5A],
+      [0x42, 0x5A, 0x68],
+      [0x42, 0x5A, 0x68, 0x39],
+    ]) {
+      final archive = Uint8List.fromList([...stream, ...tail]);
+      expect(
+          BZip2Decoder().decodeStream(
+              InputMemoryStream(archive), OutputMemoryStream(),
+              verify: true),
+          isFalse,
+          reason: 'decodeStream, tail $tail');
+      expect(() => bzip2Codec.decode(archive), throwsA(isA<ArchiveException>()),
+          reason: 'converter, tail $tail');
+    }
+  });
+
   test('a cut archive is a failure on both input streams', () async {
     // A file reads zeros past its end and memory throws, so the bit reader
     // stops at the end itself, or the verdict depends on the stream given
