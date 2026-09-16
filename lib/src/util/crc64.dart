@@ -1,14 +1,14 @@
-// [getCrc64] returns the check as one int, which needs an int wide enough to
-// hold it, so it exists only on the backends where an int is a real 64 bit
+// [getCrc64] returns the check as one int. That needs an int wide enough to
+// hold it and exists only on the backends where an int is a real 64 bit
 // integer. Everywhere else [isCrc64Supported] reports false. [Crc64] carries
-// the same check on every backend by keeping two halves and handing them back
-// as bytes. xz wants it as bytes anyway.
+// the same check on every backend. It keeps two halves and hands them back as
+// bytes. xz wants it as bytes anyway.
 //
-// The condition asks about integer width, not about dart:io: the
+// The condition asks about integer width, not about dart:io. The
 // implementation below imports nothing but dart:typed_data. dart:isolate is
 // available on exactly the VM and wasm, and those are exactly the backends
-// whose ints are 64 bit, so it selects them. The unsupported stub is the
-// default, so an unrecognised backend loses the one int form rather than
+// whose ints are 64 bit. It selects them. The unsupported stub is the default
+// and an unrecognised backend loses the one int form rather than
 // miscompiling.
 //
 // This used to key off dart.library.html. That is false on JavaScript targets

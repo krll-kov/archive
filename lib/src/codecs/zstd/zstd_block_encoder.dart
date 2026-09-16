@@ -21,8 +21,8 @@ class ZstdBlockEncoder {
   final ZstdSeqSplitter _splitter = ZstdSeqSplitter();
   final Uint8List _scratch;
 
-  /// The long distance matcher, which only the widest window of the hardest
-  /// searching levels turns on, and the matches it finds for one block
+  /// The long distance matcher and the matches it finds for one block. Only
+  /// the widest window of the hardest searching levels turns it on
   final ZstdLdm? _ldm;
   final ZstdLdmSequences? _ldmSeq;
 
@@ -30,8 +30,8 @@ class ZstdBlockEncoder {
   /// this wide cut a block up after parsing it
   final bool _splitting;
 
-  /// The offsets as the decoder will see them and as the sequences imply, which
-  /// a partition sent raw or as one repeated byte pulls apart
+  /// The offsets as the decoder will see them and as the sequences imply. A
+  /// partition sent raw or as one repeated byte pulls the two apart
   final Uint32List _decoded = Uint32List(3);
   final Uint32List _coded = Uint32List(3);
   final Uint32List _saved = Uint32List(3);
@@ -117,8 +117,8 @@ class ZstdBlockEncoder {
   /// to survive it
   int get slideStep => _finder.slideStep;
 
-  /// How many entries a slide walks, so a caller can buy back the cost with
-  /// the bytes it holds spare
+  /// How many entries a slide walks. The cost is bought back by the bytes it
+  /// frees
   int get slideCost => _finder.slideCost;
 
   /// Lets a caller drop the front of the buffer once the window has left it
@@ -164,7 +164,7 @@ class ZstdBlockEncoder {
       final coded =
           _code(src, start, size, 0, _store.count, 0, literals, first);
       if (coded == 1) {
-        // Nothing this block built reached the decoder, so none of it is kept
+        // Nothing this block built reached the decoder. None of it is kept
         rep[0] = held0;
         rep[1] = held1;
         rep[2] = held2;
@@ -179,7 +179,7 @@ class ZstdBlockEncoder {
         _literals.commit();
         return;
       }
-      // A stored block carries no sequences, so its offsets never happened
+      // A stored block carries no sequences. Its offsets never happened
       rep[0] = held0;
       rep[1] = held1;
       rep[2] = held2;

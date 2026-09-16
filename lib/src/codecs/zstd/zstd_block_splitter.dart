@@ -15,9 +15,10 @@ const _rates = [43, 11, 5, 1];
 const _hashLogs = [8, 9, 10, 10];
 
 /// How hard each strategy looks for a boundary, `splitLevels` indexed the way
-/// our strategy constants run. Zero compares the block's two ends, the rest
-/// walk it in chunks at the sampling rate one below. Our lazy covers the
-/// reference's lazy and lazy2, which it separates by depth
+/// the strategy constants here run. Zero compares the block's two ends, the
+/// rest walk it in chunks at the sampling rate one below. The lazy row here
+/// covers the reference's lazy and lazy2. The reference separates those by
+/// depth
 const _splitLevels = [0, 1, 2, 2, 3, 4];
 const _lazy2SplitLevel = 3;
 
@@ -32,7 +33,7 @@ class ZstdBlockSplitter {
   int _freshEvents = 0;
 
   /// How many bytes the next block should cover, at most [blockSizeMax].
-  /// [savings] is what every block so far has saved, which keeps the splitter
+  /// [savings] is what every block so far has saved. It keeps the splitter
   /// away from data that does not compress
   int sizeFor(Uint8List src, int at, int left, int blockSizeMax,
       ZstdLevelParams params, int savings) {

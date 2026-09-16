@@ -37,8 +37,8 @@ abstract class OutputStream {
     writeBytes(Uint8List.sublistView(bytes, start, end));
   }
 
-  /// Tells a sink that holds its data how much is still coming, so it can take
-  /// the room in one go rather than doubling into it. A sink that writes
+  /// Tells a sink that holds its data how much is still coming. It can then
+  /// take the room in one go rather than doubling into it. A sink that writes
   /// through has nothing to reserve and ignores it
   void reserve(int total) {}
 

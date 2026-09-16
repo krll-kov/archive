@@ -182,8 +182,8 @@ class TarFile {
   @override
   String toString() => '[$filename, $mode, $fileSize]';
 
-  /// With [headerOnly] the content and its padding are left to the caller, who
-  /// can then stream them out a piece at a time rather than through one call
+  /// With [headerOnly] the content and its padding are left out. They can then
+  /// go out a piece at a time rather than through one call
   void write(OutputStream output,
       {Encoding? filenameEncoder, bool headerOnly = false}) {
     fileSize = size;
@@ -316,8 +316,8 @@ class TarFile {
   }
 
   /// A field is NUL terminated, or fills its width. [trim] additionally drops
-  /// the spaces the ustar magic and the owner fields are padded with; a name
-  /// keeps them, since a space is a legal character in one and a file called
+  /// the spaces the ustar magic and the owner fields are padded with. A name
+  /// keeps them. A space is a legal character in one and a file called
   /// `" .codecov.yml"` is not the same file as `".codecov.yml"`
   String _parseString(InputStream input, int numBytes,
       [Encoding? encoding, bool trim = true]) {
@@ -376,7 +376,7 @@ class TarFile {
 
 /// What the headers carrying no data of their own say about the entry that
 /// follows: GNU long names and links, and PAX extended records. Both
-/// `TarDecoder` and the streamed reader walk them, so they live here
+/// `TarDecoder` and the streamed reader walk them. They live here for that
 class TarMetadata {
   static const _space = 0x20;
   static const _equals = 0x3d;
@@ -404,8 +404,8 @@ class TarMetadata {
   /// Takes what such a header carries, its content already in `rawContent`
   bool take(TarFile file) {
     // GNU tar puts filenames in files when they exceed tar's native length.
-    // Both kinds are named '././@LongLink', so only the type flag says
-    // whether the content is the next entry's name or its link target.
+    // Both kinds are named '././@LongLink'. Only the type flag says whether
+    // the content is the next entry's name or its link target.
     if (file.filename == '././@LongLink' ||
         file.typeFlag == TarFile.longName ||
         file.typeFlag == TarFile.longLinkName) {
@@ -480,7 +480,7 @@ class TarMetadata {
       pos = recordEnd;
 
       // The keyword, terminated by '='. Keywords are portable
-      // characters, so decoding them as ASCII is safe.
+      // characters and decode as ASCII safely.
       var eq = sp + 1;
       while (eq < recordEnd && records[eq] != _equals) {
         eq++;
@@ -523,8 +523,8 @@ class TarMetadata {
         case 'mtime':
           // Stored as seconds, with an optional fractional part that the
           // archive has nowhere to keep. Truncated off the string rather
-          // than through a double, which for a long enough fraction would
-          // round up and report the wrong second.
+          // than through a double. A long enough fraction would round that
+          // double up and report the wrong second.
           final dot = value.indexOf('.');
           modTime = int.tryParse(dot < 0 ? value : value.substring(0, dot));
           break;

@@ -70,9 +70,9 @@ const zstdCodec = ZstdCodec();
 
 /// Decodes zstd from a `Stream` of pieces into a `Stream` of pieces
 class ZstdDecoderConverter extends ChunkedConverter {
-  /// Checks the XXH64 of every frame that carries one. On by default: a caller
-  /// reading a stream has handed the compressed bytes back by the time the
-  /// check would be made, so there is no second chance at it
+  /// Checks the XXH64 of every frame that carries one. On by default. A stream
+  /// hands the compressed bytes on by the time the check would be made and
+  /// there is no second chance at it
   final bool verify;
 
   final ZstdDictionary? dictionary;
@@ -196,12 +196,12 @@ class ZstdChunkedEncoder extends ChunkedSink {
 
   /// Placed before the content so the first blocks can reach into it, and
   /// named in the frame header. The bytes are the ones
-  /// `ZSTD_compress_usingDict` writes, not the ones `zstd -D` writes: the
-  /// reference's streaming path goes through a cdict, which chooses
+  /// `ZSTD_compress_usingDict` writes, not the ones `zstd -D` writes. The
+  /// reference's streaming path goes through a cdict and that one chooses
   /// differently
   final ZstdDictionary? dictionary;
 
-  /// A level is resolved here rather than at the first block, so a level this
+  /// A level is resolved here rather than at the first block. A level this
   /// cannot work at is a mistake at the call, like every other setting
   ZstdChunkedEncoder(super.output,
       {int level = zstdDefaultLevel, this.checksum = true, this.dictionary})
@@ -216,7 +216,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
       ZstdBlockEncoder(_blockSizeMax, _params);
   final _splitter = ZstdBlockSplitter();
   // The header is written on the first block. The first bytes have gone
-  // through the checksum by then, so neither may be set up there
+  // through the checksum by then and neither may be set up there
   final _rep = Uint32List(3)..setAll(0, zstdInitialRepeatOffsets);
   final _hash = Xxh64();
 
@@ -235,7 +235,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
 
   /// `inBuffSize`, the ring the reference gathers into. It hands one
   /// `blockSizeMax` to the compressor at a time and starts over once the next
-  /// one would not fit, so it wraps on every multiple of this
+  /// one would not fit. It wraps on every multiple of this
   late final int _ring = _matchWindow + _blockSizeMax;
 
   /// What the reference reads for a size it does not know. It picks the level
@@ -293,7 +293,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
   @override
   void finish() {
     // `ZSTD_CCtx_init_compressStream2` takes the pledged size from the call
-    // that ends the frame, so a frame that never carried a byte is the single
+    // that ends the frame. A frame that never carried a byte is the single
     // segment one the reference writes, not a streamed header over nothing
     if (!_started && _content == 0 && available == 0) {
       _writeEmptyHeader();
@@ -325,7 +325,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
         _blocks.slide(delta);
       }
     }
-    // On a wrap the reference writes over the oldest bytes of the ring, so what
+    // On a wrap the reference writes over the oldest bytes of the ring. What
     // it still holds stops being contiguous with what comes now. The window it
     // reaches over is unchanged, only its low part is now a segment of its own
     if (_content > 0 && _content % _ring == 0) {
@@ -392,8 +392,8 @@ class ZstdChunkedEncoder extends ChunkedSink {
 
 /// Decodes a zstd archive that arrives in pieces.
 ///
-/// The unit of progress is one block, at most 128 KiB, so what is held is the
-/// frame's window and one block, whatever the archive weighs
+/// The unit of progress is one block, at most 128 KiB. It holds the frame's
+/// window and one block, whatever the archive weighs
 class ZstdChunkedDecoder extends ChunkedSink {
   final bool verify;
   final ZstdDictionary? dictionary;
@@ -509,8 +509,8 @@ class ZstdChunkedDecoder extends ChunkedSink {
     if (_stage != _Stage.magic || available != 0) {
       throw ArchiveException('zstd: the archive ended part way through');
     }
-    // Skippable frames on their own decode to nothing rather than failing,
-    // which is what the reference does with them
+    // Skippable frames on their own decode to nothing rather than failing.
+    // The reference does the same with them
     if (_frames == 0 && _skipped == 0) {
       throw ArchiveException('zstd: no frame, the input is empty');
     }

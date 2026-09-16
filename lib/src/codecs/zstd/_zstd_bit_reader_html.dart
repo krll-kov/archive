@@ -19,14 +19,14 @@ class ZstdBitReader {
   /// Below 32 only for a stream shorter than four bytes, padded at the bottom
   int _bitLimit = 32;
 
-  /// Check between symbols, not per read: one symbol spends at most 32 bits, so
-  /// overrunning by one reads container zeros rather than leaving the buffer
+  /// Check between symbols, not per read. One symbol spends at most 32 bits.
+  /// Overrunning by one reads container zeros rather than leaving the buffer
   bool get isOverrun => _overrun || consumed > _bitLimit;
 
   bool get isAtEnd => !_overrun && position == _start && consumed == _bitLimit;
 
-  /// False when the stream is empty or ends in a zero byte, which the format
-  /// forbids and which leaves no defined first bit
+  /// False when the stream is empty or ends in a zero byte. The format forbids
+  /// that and it leaves no defined first bit
   bool setStream(Uint8List data, int start, int length) {
     if (length <= 0 || start < 0 || start + length > data.length) {
       return false;
@@ -88,7 +88,7 @@ class ZstdBitReader {
 
     final step = consumed >> 3;
     if (position - step < _start) {
-      // Bits spent below _start stay counted, so consumed keeps tracking
+      // Bits spent below _start stay counted and consumed keeps tracking
       consumed -= (position - _start) << 3;
       position = _start;
     } else {

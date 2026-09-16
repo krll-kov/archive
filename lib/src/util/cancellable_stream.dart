@@ -9,7 +9,7 @@ class CancelSignal {
 }
 
 /// The next piece of the input, fetched while the body hands on what finished
-/// elsewhere. One piece at a time, so the input still goes at the body's pace
+/// elsewhere. One piece at a time. The input still goes at the body's pace
 class InputAhead<S> {
   final StreamIterator<S> _iterator;
   final void Function() _wake;
@@ -51,9 +51,9 @@ class InputAhead<S> {
 }
 
 /// The stream [body] writes, where a cancel ends it while the input is silent.
-/// An `async*` generator honours a cancel only at its next `yield`, so the
-/// input is read through a [StreamIterator], whose pending `moveNext` a cancel
-/// completes, and the body's own wait is woken through [CancelSignal]
+/// An `async*` generator honours a cancel only at its next `yield`. The input
+/// is read through a [StreamIterator] and a cancel completes its pending
+/// `moveNext`. The body's own wait is woken through [CancelSignal]
 Stream<T> cancellableStream<S, T>(Stream<S> input,
     Stream<T> Function(StreamIterator<S> input, CancelSignal signal) body) {
   final iterator = StreamIterator<S>(input);
@@ -75,7 +75,7 @@ Stream<T> cancellableStream<S, T>(Stream<S> input,
     onPause: () => inner?.pause(),
     onResume: () => inner?.resume(),
     onCancel: () async {
-      // Asked for first, so the yield the woken body reaches ends it
+      // Asked for first. The yield the woken body reaches then ends it
       final innerCancel = inner?.cancel();
       signal.cancelled = true;
       signal._wake?.call();

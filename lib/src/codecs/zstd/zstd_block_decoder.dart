@@ -33,8 +33,8 @@ class ZstdBlockDecoder {
   }
 
   /// Reads the block at [start] into [window] and returns its total size
-  /// Decodes one block. [body] and [bodyAt] name where its payload is, which a
-  /// streamed frame points at its own storage rather than copying
+  /// Decodes one block. [body] and [bodyAt] name where its payload is. A
+  /// streamed frame points them at its own storage rather than copying
   int decode(Uint8List src, int start, int end, ZstdWindow window,
       Uint32List rep, int blockSizeMax,
       {Uint8List? body, int bodyAt = 0}) {
@@ -84,7 +84,7 @@ class ZstdBlockDecoder {
           _compressedBlockIsTruncated();
         }
         final blockEnd = at + size;
-        // Literals go past the room this block's output will need, so the
+        // Literals go past the room this block's output will need. The
         // sequence loop reads them and writes through one and the same view
         window.reserve(blockSizeMax * 2 + zstdCopySlack * 2);
         final literalsSize = _literals.decode(src, at, blockEnd, blockSizeMax,

@@ -35,9 +35,9 @@ class _ZipFileData {
   /// buffered path reads the same three places and must not disagree with it
   int level = 6;
 
-  /// General purpose bit 3, which says the check and the sizes follow the
-  /// data. The central directory has to carry it too, or a reader that
-  /// compares the two headers calls the pair broken
+  /// General purpose bit 3. It says the check and the sizes follow the data.
+  /// The central directory has to carry it too, or a reader that compares the
+  /// two headers calls the pair broken
   bool deferred = false;
 
   /// Set on a streamed entry that deflate may grow past 4 GB. Its local header
@@ -228,7 +228,7 @@ class ZipEncoder {
     _data.files.add(fileData);
 
     // An entry with no content is not encrypted. Without this reset it keeps
-    // the last entry's mac, so its header declares 12 bytes it never writes
+    // the last entry's mac. Its header then declares 12 bytes it never writes
     // and every local header after it is off by 2
     _mac = null;
     _pwdVer = null;
@@ -501,8 +501,8 @@ class ZipEncoder {
 
     final source = fileData.source;
     if (source != null) {
-      // Deflated straight into the output, so its length is only known once it
-      // is there, and it goes into the descriptor behind the data
+      // Deflated straight into the output. Its length is known only once it is
+      // there and goes into the descriptor behind the data
       return ZipEntryBody._(source, output, fileData, done);
     } else if (compressedData != null) {
       // local file data
@@ -681,7 +681,7 @@ class ZipEntryBody {
             level: _data.level, raw: true);
 
   /// How much one [step] deflates. It still feeds the deflate in 1024 byte
-  /// reads, so the output bytes do not change
+  /// reads and the output bytes do not change
   static const _piece = 64 * 1024;
 
   final InputStream _source;
@@ -717,8 +717,8 @@ class ZipEntryBody {
     return true;
   }
 
-  /// Lets the entry go without finishing it. The archive is being abandoned,
-  /// so we skip the descriptor and only release what the entry holds
+  /// Lets the entry go without finishing it. The archive is being abandoned.
+  /// The descriptor is skipped and only what the entry holds is released
   void cancel() {
     if (_closed) {
       return;

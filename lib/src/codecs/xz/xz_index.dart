@@ -2,13 +2,12 @@ import 'dart:typed_data';
 
 import '../../util/crc32.dart';
 
-// Reads the stream index of an xz archive. It describes every block, and we
-// decode none of them to read it.
+// Reads the stream index of an xz archive. It describes every block and none
+// of them decode on the way.
 //
 // The index is what makes parallel decoding possible. It gives the compressed
-// and uncompressed size of every block, and blocks do not depend on each
-// other. So we can work out up front where each one sits in the input and in
-// the output
+// and uncompressed size of every block and blocks do not depend on each other.
+// Where each one sits in the input and in the output is then known up front
 
 /// Random access over the compressed bytes of an xz archive.
 ///
@@ -104,14 +103,13 @@ int xzCheckSize(int checkType) {
 
 /// Reads the layout of every block in [source] from the stream indexes.
 ///
-/// Returns null if we cannot work the layout out. This only feeds buffer sizes
-/// and work scheduling, so anything unexpected makes it give up instead of
-/// failing. We validate the data itself when we decode it.
+/// Returns null when the layout cannot be worked out. This only feeds buffer
+/// sizes and work scheduling. Anything unexpected makes it give up instead of
+/// failing. The data itself is validated during the decode.
 ///
-/// [maxUncompressedSize] caps the total decoded size we report. A valid index
-/// can describe an output far larger than the memory we have. A caller about
-/// to allocate that much passes its own ceiling and gets null instead of an
-/// answer it cannot use
+/// [maxUncompressedSize] caps the total decoded size reported here. A valid
+/// index can describe an output far larger than the memory on hand. Passing a
+/// ceiling gives null instead of an unusable answer
 XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
   try {
     var end = _skipTrailingZeroPadding(source, source.length);
@@ -144,8 +142,8 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         return null;
       }
       final streamFlags = footer[9];
-      // Everything above the check id is reserved, and a stream that sets it is
-      // one the block decoder refuses, so the layout is no use here either
+      // Everything above the check id is reserved. The block decoder refuses a
+      // stream that sets it and the layout is no use here either
       if (streamFlags & 0xf0 != 0) {
         return null;
       }
@@ -269,7 +267,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         return null;
       }
       // And covers them with its own CRC32. Nothing else guards a damaged
-      // header here. We find the blocks through the index, so nothing
+      // header here. The blocks are found through the index and nothing
       // downstream reads these bytes again. Without this check an archive that
       // xz rejects decodes here without complaint
       final headerCrc =

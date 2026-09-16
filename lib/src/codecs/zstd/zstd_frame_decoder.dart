@@ -106,9 +106,9 @@ ZstdFrameHeader readFrameHeader(
   if (singleSegment) {
     windowSize = contentSize!;
   }
-  // The declared window is what the frame may make a decoder hold, so it is
-  // refused on its own claim. A content size beside it is the writer's word,
-  // and taking it here would let a frame that lies allocate past the limit
+  // The declared window is what the frame may make a decoder hold and is
+  // refused on its own claim. A content size beside it is the writer's word.
+  // Taking it here would let a frame that lies allocate past the limit
   if (windowSize > windowSizeLimit) {
     throw ZstdFrameException(
         'Window of $windowSize bytes is above the $windowSizeLimit limit');
@@ -119,7 +119,7 @@ ZstdFrameHeader readFrameHeader(
 }
 
 /// Runs the blocks of one frame. The block decoder it holds carries the
-/// entropy tables from block to block, so one instance serves one frame
+/// entropy tables from block to block. One instance serves one frame
 class ZstdFrameDecoder {
   final ZstdBlockDecoder _blocks = ZstdBlockDecoder();
   final Uint32List _rep = Uint32List(3);
@@ -153,7 +153,7 @@ class ZstdFrameDecoder {
         throw ZstdFrameException('Block of $payload bytes is above the '
             '$blockSizeMax its frame allows');
       }
-      // A stream holding its own bytes hands over a view of them, which saves
+      // A stream holding its own bytes hands over a view of them. That saves
       // copying every block into a buffer only to read it once
       var body = input.viewBytes(payload);
       var at = 0;

@@ -19,7 +19,7 @@ const _weightLog = 6;
 const zstdFourStreamsFrom = 256;
 
 /// `HUF_sort`'s buckets: a bucket per count below [_logBucketsFrom] and one per
-/// power of two above it, so ordering symbols by count is a two pass scatter
+/// power of two above it. Ordering symbols by count is then a two pass scatter
 /// rather than a comparison sort, worth 3.1% of the encoder
 const _buckets = 192;
 const _logBucketsFrom = _buckets - 1 - 32 - 1;
@@ -33,20 +33,20 @@ class ZstdHuffmanEncoder {
   final Uint16List codes = Uint16List(zstdHuffmanSymbolCount);
   final Uint8List widths = Uint8List(zstdHuffmanSymbolCount);
 
-  /// `HUF_flags_optimalDepth`, which the levels from `btultra` up set
+  /// `HUF_flags_optimalDepth`. The levels from `btultra` up set it
   bool optimalDepth = false;
 
   /// Where a description is written only to be measured
   final Uint8List _probe = Uint8List(1024);
 
-  /// `HUF_CElt`: the code of a symbol and its width in one value, which the
-  /// encoding loop reads with a single load
+  /// `HUF_CElt`: the code of a symbol and its width in one value. The encoding
+  /// loop reads it with a single load
   final Uint32List _elt = Uint32List(zstdHuffmanSymbolCount);
   int tableLog = 0;
   int maxSymbol = 0;
 
   // The tree is built over symbols sorted by count and internal nodes above
-  // them, so one array holds both
+  // them. One array holds both
   static const _nodeBase = zstdHuffmanSymbolCount + 1;
   final Uint32List _count = Uint32List(_nodeBase * 2);
   final Uint16List _parent = Uint16List(_nodeBase * 2);
@@ -58,9 +58,9 @@ class ZstdHuffmanEncoder {
   final Uint16List _perRank = Uint16List(zstdHuffmanLogMax + 1);
   final Uint16List _valueOfRank = Uint16List(zstdHuffmanLogMax + 1);
 
-  /// Builds a tree over [counts], which cover [total] bytes, no code wider than
+  /// Builds a tree over [counts] covering [total] bytes, no code wider than
   /// what `HUF_optimalTableLog` allows. Returns false when fewer than two
-  /// symbols are used, which the caller should write as RLE literals instead
+  /// symbols are used. Such a section goes out as RLE literals instead
   bool build(Uint32List counts, int total) {
     var used = 0;
     maxSymbol = 0;
@@ -82,9 +82,9 @@ class ZstdHuffmanEncoder {
     return true;
   }
 
-  /// `HUF_optimalTableLog`'s own search, which `btultra` and above run in place
-  /// of the estimate: every depth from the fewest bits the alphabet needs is
-  /// built and described, and the one that comes out smallest wins
+  /// `HUF_optimalTableLog`'s own search. `btultra` and above run it in place of
+  /// the estimate: every depth from the fewest bits the alphabet needs is built
+  /// and described, and the one that comes out smallest wins
   int _searchLog(Uint32List counts, int used) {
     final least = zstdHighestBit(used) + 1;
     var best = 4611686018427387904;
@@ -170,9 +170,9 @@ class ZstdHuffmanEncoder {
       ? count
       : zstdHighestBitFast(count) + _logBucketsFrom;
 
-  /// `HUF_simpleQuickSort`. Its partition is not stable, so which of two
-  /// symbols of equal count ends up with the shorter code is decided here and
-  /// an insertion sort in its place writes a different archive
+  /// `HUF_simpleQuickSort`. Its partition is not stable. This is where two
+  /// symbols of equal count get their codes, and an insertion sort in its
+  /// place writes a different archive
   void _quickSort(int low, int high) {
     if (high - low < _insertionFrom) {
       _insertionSort(low, high);
@@ -207,7 +207,7 @@ class ZstdHuffmanEncoder {
     }
   }
 
-  /// The rightmost element is the pivot, which the reference settled on
+  /// The rightmost element is the pivot. The reference settled on that
   int _partition(int low, int high) {
     final pivot = _count[high];
     var at = low - 1;
@@ -230,8 +230,8 @@ class ZstdHuffmanEncoder {
     _symbol[b] = symbol;
   }
 
-  /// Merges the two cheapest nodes until one is left, taking them from either
-  /// the sorted symbols or the nodes built so far, whichever is cheaper
+  /// Merges the two cheapest nodes until one is left. They come from the
+  /// sorted symbols or from the nodes built so far, whichever is cheaper
   int _buildTree(int lastSymbol) {
     var nodeNb = _nodeBase;
     var lowS = lastSymbol;
@@ -315,7 +315,7 @@ class ZstdHuffmanEncoder {
     }
 
     while (cost > 0) {
-      // One symbol a rank up costs the same as two a rank below it, so take
+      // One symbol a rank up costs the same as two a rank below it. Take
       // whichever of the two is cheaper by count
       var step = zstdHighestBit(cost) + 1;
       for (; step > 1; step--) {
@@ -447,7 +447,7 @@ class ZstdHuffmanEncoder {
   int bitsOf(int symbol) => symbol > maxSymbol ? 0 : widths[symbol];
 
   /// Writes the tree description at [at] and returns the bytes it took, or -1
-  /// when neither form fits, which leaves the caller to store the literals
+  /// when neither form fits. The literals are then stored raw
   int writeTable(Uint8List out, int at) {
     final weights = Uint8List(maxSymbol);
     for (var s = 0; s < maxSymbol; s++) {
@@ -544,8 +544,8 @@ class ZstdHuffmanEncoder {
 
   /// Encodes `src[start...end]` at [at] and returns the bytes it took, or -1
   /// when a stream would not fit in the sixteen bits the jump table has
-  /// Set while the decoder holds a tree from a dictionary, which makes a short
-  /// section one stream whatever its size
+  /// Set while the decoder holds a tree from a dictionary. A short section is
+  /// then one stream whatever its size
   bool oneStream = false;
 
   int encodeLiterals(Uint8List out, int at, Uint8List src, int start, int end) {
@@ -571,7 +571,7 @@ class ZstdHuffmanEncoder {
     return write - at;
   }
 
-  /// Symbols go in from the last to the first, so the reader walking the bytes
+  /// Symbols go in from the last to the first. The reader walking the bytes
   /// backwards sees them in order
   int _encodeOne(Uint8List out, int at, Uint8List src, int start, int end) {
     if (!zstdUse64Bit) {
@@ -627,7 +627,7 @@ class ZstdHuffmanEncoder {
     // Eight symbols a pass. The second four fill a container of their own so
     // that their chain of dependent shifts does not wait on the first four's
     // flush, `HUF_zeroIndex1` and `HUF_mergeIndex1`. Unrolled by hand because
-    // AOT leaves a loop this short rolled, which measured ten milliseconds
+    // AOT leaves a loop this short rolled. That measured ten milliseconds
     while (n > start) {
       var e = elt[src[--n]];
       held |= (e & 0xffff) << (bits & 63);

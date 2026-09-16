@@ -10,9 +10,9 @@ import 'zstd_window.dart';
 /// 32 bit container.
 ///
 /// The native form packs a whole row into one 64 bit integer. An int is a
-/// JavaScript number here and cannot hold that, so the four fields sit in
-/// four arrays and the loop pays four loads. A 32 bit container also holds too
-/// few bits to serve a read of more than 24, so it is refilled between fields
+/// JavaScript number here and cannot hold that. The four fields sit in four
+/// arrays and the loop pays four loads. A 32 bit container also holds too few
+/// bits to serve a read of more than 24 and is refilled between fields
 class ZstdSequences extends ZstdSequencesBase {
   /// Public so a test can check the packing against the specification
   final Uint16List next = Uint16List(zstdSeqTableRows);
@@ -63,8 +63,8 @@ class ZstdSequences extends ZstdSequencesBase {
   int _floor = 0;
   ByteData _view = ByteData(0);
 
-  /// Moves back to where the bits still to read start, so the next read of up
-  /// to 24 bits is in hand
+  /// Moves back to where the bits still to read start. The next read of up to
+  /// 24 bits is then in hand
   void _reload() {
     final step = _consumed >> 3;
     if (_position - step < _floor) {
@@ -88,7 +88,7 @@ class ZstdSequences extends ZstdSequencesBase {
   }
 
   /// Offset codes reach 31 bits, more than a 32 bit container can hold at an
-  /// arbitrary bit offset, so those are read in two halves
+  /// arbitrary bit offset. Those are read in two halves
   int _takeWide(int count) {
     if (count <= 24) {
       return _take(count);
@@ -163,8 +163,8 @@ class ZstdSequences extends ZstdSequencesBase {
       final literalsLength = baseline[llState] + _take(extraBits[llState]);
 
       if (i != 1) {
-        // The three widths add to 26, which does not fit above whatever the
-        // last refill left consumed, so each takes its own
+        // The three widths add to 26. That does not fit above whatever the
+        // last refill left consumed and each takes its own
         _reload();
         llState = next[llState] + _take(nbBits[llState]);
         _reload();
@@ -210,8 +210,8 @@ class ZstdSequences extends ZstdSequencesBase {
       var from = out - offset;
       if (from < 0) {
         // The buffer has been written through once and this match reaches into
-        // the pass before, which sits where it was left rather than having been
-        // moved down
+        // the pass before. That pass sits where it was left and was never moved
+        // down
         from += lap;
         if (lap == 0 || from <= out) {
           throw ZstdSequencesException(
@@ -273,8 +273,8 @@ class ZstdSequences extends ZstdSequencesBase {
     return at;
   }
 
-  /// Writes at least eight bytes and rounds up, which the slack after the
-  /// block's output and after its literals is there to absorb
+  /// Writes at least eight bytes and rounds up. The slack after the block's
+  /// output and after its literals absorbs that
   static void _copy(ByteData dst, int to, int from, int length) {
     var at = to;
     var read = from;

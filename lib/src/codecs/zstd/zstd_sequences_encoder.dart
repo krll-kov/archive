@@ -15,8 +15,8 @@ class ZstdSequencesEncoderException implements Exception {
   String toString() => 'ZstdSequencesEncoderException: $message';
 }
 
-/// Literal length code per length, up to 63; above that it is the highest set
-/// bit plus nineteen
+/// Literal length code per length, up to 63. Above that the code is the
+/// highest set bit plus nineteen
 final Uint8List zstdLiteralsLengthCodes = Uint8List.fromList(const [
   0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, //
   16, 16, 17, 17, 18, 18, 19, 19, 20, 20, 20, 20, 21, 21, 21, 21, //
@@ -24,8 +24,8 @@ final Uint8List zstdLiteralsLengthCodes = Uint8List.fromList(const [
   24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
 ]);
 
-/// Match length code per length above the minimum, up to 127; above that it is
-/// the highest set bit plus thirty six
+/// Match length code per length above the minimum, up to 127. Above that the
+/// code is the highest set bit plus thirty six
 final Uint8List zstdMatchLengthCodes = Uint8List.fromList(const [
   0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, //
   16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, //
@@ -113,7 +113,7 @@ class ZstdSequenceStore {
       // A literal run is usually a handful of bytes, where two moves that may
       // write past the run cost less than a call that has to be exact.
       // `litLimit_w`: near the end of the input there is nothing to over read
-      // into, so the exact copy is the only safe one
+      // into. The exact copy is the only safe one there
       if (zstdUse64Bit &&
           length <= 16 &&
           from + 16 <= src.length &&
@@ -164,7 +164,7 @@ class ZstdSequenceStore {
     return total;
   }
 
-  /// The tail of the block, which no match covers
+  /// The tail of the block. No match covers it
   void finish(Uint8List src, int from, int end) {
     final length = end - from;
     if (length > 0) {
@@ -182,7 +182,7 @@ const _wildcopy = 32;
 
 const _stride = 4;
 
-/// `MINMATCH`, which a stored match length is held above
+/// `MINMATCH`. A stored match length sits above it
 const _matchFloor = 3;
 
 /// Where each field sits in a packed code word.
@@ -191,8 +191,8 @@ const _ofShift = 12;
 const _llBitsShift = 18;
 const _mlBitsShift = 23;
 
-/// Stands in for the reference's error return, which its unsigned comparisons
-/// read as a cost nothing can beat
+/// Stands in for the reference's error return. Its unsigned comparisons read
+/// that as a cost nothing can beat
 const _costError = 1099511627776;
 
 const _modePredefined = 0;
@@ -257,8 +257,8 @@ class ZstdSequencesEncoder {
   final _TableSlot _mlSlot =
       _TableSlot(zstdMatchLengthLogMax, zstdMatchLengthCodeMax + 1);
 
-  /// The level's parse, which decides whether a table is picked by weighing
-  /// what each would cost or by the cheap rules the levels below `lazy` use
+  /// The level's parse. It decides whether a table is picked by weighing what
+  /// each would cost or by the cheap rules the levels below `lazy` use
   int strategy = zstdStrategyLazy;
 
   /// How each table was described by the last [encode] or [estimate]
@@ -299,8 +299,8 @@ class ZstdSequencesEncoder {
 
   /// `ZSTD_estimateBlockSize_sequences`: what this section would cost, tables
   /// and all, without writing the bitstream. The splitter weighs partitions
-  /// with this, so it has to be the reference's estimate rather than the real
-  /// encode. It decides where the block is cut
+  /// with this and needs the reference's estimate rather than the real encode.
+  /// It decides where the block is cut
   int estimate(Uint8List scratch, ZstdSequenceStore store, int from, int to) {
     final count = to - from;
     final header = 2 + (count >= 128 ? 1 : 0) + (count >= 0x7f00 ? 1 : 0);
@@ -335,7 +335,7 @@ class ZstdSequencesEncoder {
 
   /// `ZSTD_estimateBlockSize_symbolType`, in bytes: the codes through whichever
   /// table was chosen for them, plus the extra bits they carry. An offset code
-  /// is itself the count of its extra bits, so [extraBits] may be null
+  /// is itself the count of its extra bits. [extraBits] may then be null
   static int _symbolCost(
       int mode,
       Uint32List counts,
@@ -372,9 +372,9 @@ class ZstdSequencesEncoder {
     return bits >> 3;
   }
 
-  /// A block with no sequences describes no table, so committing it must leave
+  /// A block with no sequences describes no table. Committing it must leave
   /// the ones the decoder holds exactly as they are. `ZSTD_entropyCompressSeqStore`
-  /// copies the whole of `prevEntropy->fse` over on `nbSeq == 0`, which carries
+  /// copies the whole of `prevEntropy->fse` over on `nbSeq == 0`. That carries
   /// the repeat mode of each table and not only whether one is there
   void _holdSlots() {
     for (final slot in [_llSlot, _ofSlot, _mlSlot]) {
@@ -390,8 +390,8 @@ class ZstdSequencesEncoder {
     _llCounts.fillRange(0, _llCounts.length, 0);
     _ofCounts.fillRange(0, _ofCounts.length, 0);
     _mlCounts.fillRange(0, _mlCounts.length, 0);
-    // Both code tables are lazily built statics, and reading one costs a call
-    // to its initialiser guard, which clobbers the whole loop's registers
+    // Both code tables are lazily built statics. Reading one costs a call to
+    // its initialiser guard. That call clobbers the whole loop's registers
     final llTable = zstdLiteralsLengthCodes;
     final mlTable = zstdMatchLengthCodes;
     final llBitsTable = zstdLiteralsLengthExtraBits;
@@ -412,21 +412,20 @@ class ZstdSequencesEncoder {
           (of << _ofShift) |
           (llBitsTable[ll] << _llBitsShift) |
           (mlBitsTable[ml] << _mlBitsShift);
-      // A code cannot reach the mask, so it costs one instruction to say so
-      // and saves the bound check the counter would otherwise carry
+      // A code cannot reach the mask. One instruction says so and saves the
+      // bound check the counter would otherwise carry
       _llCounts[ll & 63]++;
       _ofCounts[of & 31]++;
       _mlCounts[ml & 63]++;
     }
   }
 
-  /// Describes all three tables at [at] and returns what they took, leaving how
-  /// each was chosen in [llMode], [ofMode] and [mlMode]
+  /// Describes all three tables at [at] and returns what they took. How each
+  /// was chosen lands in [llMode], [ofMode] and [mlMode]
   int _describeTables(
       Uint8List out, int at, ZstdSequenceStore store, int count, int last) {
     // The last sequence's state is written into the bitstream rather than
-    // coded, so `ZSTD_buildCTable` leaves it out of the distribution it
-    // describes
+    // coded. `ZSTD_buildCTable` leaves it out of the distribution it describes
     final tail = store.seq[((last - 1) << 2) + 3];
     var write = at;
     final ll = _writeTable(
@@ -502,8 +501,8 @@ class ZstdSequencesEncoder {
       }
     }
 
-    // The offset alphabet reaches past the predefined table, and nothing else
-    // does, so this is the reference's `isDefaultAllowed`
+    // The offset alphabet reaches past the predefined table and nothing else
+    // does. This is the reference's `isDefaultAllowed`
     final predefinedTop = predefined.length - 1;
     final allowed = top <= predefinedTop;
 
@@ -592,8 +591,8 @@ class ZstdSequencesEncoder {
     return cost >> 8;
   }
 
-  /// `ZSTD_entropyCost`, in bits: the bound a table of its own would reach,
-  /// which stands in for building one and weighing it
+  /// `ZSTD_entropyCost`, in bits: the bound a table of its own would reach. It
+  /// stands in for building one and weighing it
   static int _entropyCost(Uint32List counts, int top, int total) {
     var cost = 0;
     for (var s = 0; s <= top; s++) {
@@ -608,7 +607,7 @@ class ZstdSequencesEncoder {
   }
 
   /// Normalises [counts] into `_normalized` the way `ZSTD_buildCTable` does,
-  /// which is without the last sequence's own symbol
+  /// without the last sequence's own symbol
   void _describe(Uint32List counts, int count, int top, int log, int lastCode) {
     var total = count;
     final held = counts[lastCode];
@@ -654,10 +653,10 @@ class ZstdSequencesEncoder {
     return total;
   }
 
-  /// Keeps the tables this block described, which only a block that is written
-  /// out may do
+  /// Keeps the tables this block described. Only a block that is written out
+  /// may do that
   /// `ZSTD_loadCEntropy`: the three tables a dictionary carries become the ones
-  /// the decoder already holds, so a first block can repeat rather than
+  /// the decoder already holds. A first block can then repeat rather than
   /// describe them. The offset table is built over every code the format has,
   /// since a table that stops short cannot price the codes above it
   /// The reference trusts a dictionary's offset table for one block only, since
@@ -727,7 +726,7 @@ class ZstdSequencesEncoder {
     writer.flush();
 
     // The container holds sixty four bits and the three states take at most
-    // twenty six of them, so a sequence usually needs one flush, not three
+    // twenty six of them. A sequence usually needs one flush, not three
     final floor = from * _stride;
     for (var at = top - _stride; at >= floor; at -= _stride) {
       final packed = seq[at + 3];

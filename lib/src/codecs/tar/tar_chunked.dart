@@ -10,9 +10,9 @@ import '../../util/input_memory_stream.dart';
 import '../tar_encoder.dart';
 import 'tar_file.dart';
 
-/// Writes a tar into a `Sink` an entry at a time, so neither the archive nor an
-/// entry exists whole. An entry's size goes in the header before its bytes, so
-/// a length not known until the content is generated has to be measured first
+/// Writes a tar into a `Sink` an entry at a time. Neither the archive nor an
+/// entry exists whole. An entry's size goes in the header before its bytes. A
+/// length not known until the content is generated has to be measured first
 class TarChunkedEncoder {
   final Sink<List<int>> output;
 
@@ -44,8 +44,8 @@ class TarChunkedEncoder {
     return _encoder.addHeader(entry);
   }
 
-  /// Pushes what the header left in the buffer out to the sink, so a caller
-  /// that writes the content itself writes it behind the header
+  /// Pushes what the header left in the buffer out to the sink. Content
+  /// written by hand then lands behind the header
   void flush() => _out.flush();
 
   void close() {
@@ -81,21 +81,21 @@ class TarCodec {
 const tarCodec = TarCodec();
 
 /// [TarChunkedEncoder] behind `tarCodec.encoder`. It takes entries and writes
-/// bytes, so it is a `StreamTransformer` and not a `Converter`
+/// bytes. That makes it a `StreamTransformer` and not a `Converter`
 class TarEncoderTransformer
     extends StreamTransformerBase<ArchiveFile, List<int>> {
   final Encoding filenameEncoding;
 
   /// Closes each entry once it is written, the way `ZipEncoder.add` does. Off
-  /// by default, as it is on `ZipEncoder.encodeStream`: the entries are the
-  /// caller's, and whoever opened a file closes it
+  /// by default, as it is on `ZipEncoder.encodeStream`. The entries belong to
+  /// whoever opened them, and whoever opened a file closes it
   final bool autoClose;
 
   const TarEncoderTransformer(
       {this.filenameEncoding = const Utf8Codec(), this.autoClose = false});
 
-  /// What an entry's content is handed out in. An entry is not held whole, so
-  /// this is all the encoder owes beyond the header it has already written
+  /// What an entry's content is handed out in. An entry is not held whole.
+  /// This is all the encoder owes beyond the header it has already written
   static const _piece = 64 * 1024;
 
   @override
@@ -139,7 +139,7 @@ class TarEncoderTransformer
           yield Uint8List(pad);
         }
       } finally {
-        // A cancel lands on a yield above, so this is a finally
+        // A cancel lands on a yield above. That is why this is a finally
         if (autoClose) {
           entry.closeSync();
         }
@@ -184,7 +184,7 @@ class TarDecoderTransformer extends StreamTransformerBase<List<int>, TarEntry> {
 }
 
 /// What an entry is, as the header's type flag names it. Old archives leave
-/// the field empty for a plain file, so that flag is not only `'0'`
+/// the field empty for a plain file. That flag is not only `'0'`
 enum TarEntryType {
   file,
   hardLink,
@@ -271,8 +271,8 @@ class TarEntry {
     return _detached(_pieces());
   }
 
-  /// [pieces] behind a cancel that returns at once, so a timeout on a silent
-  /// input gets its caller out; a read still pending ends at its next piece
+  /// [pieces] behind a cancel that returns at once. A timeout on a silent
+  /// input then returns, and a read still pending ends at its next piece
   Stream<List<int>> _detached(Stream<List<int>> pieces) {
     StreamSubscription<List<int>>? inner;
     late final StreamController<List<int>> out;
@@ -327,12 +327,12 @@ Stream<TarEntry> _read(_Reader reader, Encoding encoding) async* {
   try {
     while (true) {
       final header = await reader.exact(512);
-      // A block of zeros ends the archive; padding or another archive follows
+      // A block of zeros ends the archive. Padding or another archive follows
       if (header == null || _allZero(header)) {
         break;
       }
-      // Nothing here can seek back, so a header read from junk is content
-      // already lost. The sum is what says this block is a header at all
+      // Nothing here can seek back. A header read from junk is content already
+      // lost. The sum is what says this block is a header at all
       if (!tarHeaderChecksumMatches(header)) {
         throw ArchiveException('tar: invalid header checksum');
       }
@@ -358,7 +358,7 @@ Stream<TarEntry> _read(_Reader reader, Encoding encoding) async* {
       final entry = TarEntry._(file, reader);
       yield entry;
       entry._done = true;
-      // A content read still under way shares the reader, so it ends first
+      // A content read still under way shares the reader. It ends first
       await entry._settled;
       entry._gone = entry._left > 0;
       await reader.skip(entry._left + _padding(entry.size));
@@ -417,9 +417,9 @@ class _Reader {
     return piece;
   }
 
-  /// A header can claim any size. Under this we believe it and allocate up
-  /// front, over it we grow the buffer as the bytes really arrive. Every real
-  /// header and long name is far under it
+  /// A header can claim any size. Under this the claim is believed and the
+  /// buffer is taken up front. Over it the buffer grows as the bytes arrive.
+  /// Every real header and long name is far under it
   static const _reserve = 1 << 16;
 
   /// Exactly [count] bytes, or null if the input ended before any arrived

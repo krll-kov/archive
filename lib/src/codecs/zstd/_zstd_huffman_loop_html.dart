@@ -8,8 +8,8 @@ void decodeHuffmanStream(ZstdHuffmanTable table, Uint8List src, int start,
   decodeHuffmanStreamSlow(table, src, start, length, dst, dstStart, count);
 }
 
-/// The four streams are independent, so on a target with no wide bit container
-/// to keep fed there is nothing to gain from interleaving them
+/// The four streams are independent. On a target with no wide bit container to
+/// keep fed there is nothing to gain from interleaving them
 void decodeHuffman4Streams(
     ZstdHuffmanTable table,
     Uint8List src,

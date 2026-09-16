@@ -30,7 +30,7 @@ class ZstdLdmSequences {
 
   /// `RawSeqStore_t.pos` and `posInSequence`: where a reader of this store has
   /// got to. A store generated for one block is read whole and the cursor never
-  /// moves off zero; one generated for a whole job is read a block at a time
+  /// moves off zero. One generated for a whole job is read a block at a time
   int pos = 0;
   int inSequence = 0;
 
@@ -66,8 +66,8 @@ class ZstdLdmSequences {
 /// How far the optimal parse plans, `ZSTD_OPT_NUM`
 const _optMax = 1 << 12;
 
-/// A position past the end of any block, which parks the cursor for the rest
-/// of one when it has nothing more to offer
+/// A position past the end of any block. It parks the cursor for the rest of
+/// one block when the store has nothing more to offer
 const _never = 0xffffffff;
 
 /// The cursor the optimal parse keeps over a block's long distance matches. It
@@ -80,13 +80,13 @@ class ZstdOptLdm {
   int _end = 0;
   int _offset = 0;
 
-  /// Points the cursor at a block's matches, which each pass over the block
-  /// walks from the beginning. The reference takes its first match here rather
-  /// than on the first candidate, which moves the cursor one sequence on before
-  /// the parse starts and so keeps a block's last match out of the parse
+  /// Points the cursor at a block's matches. Each pass over the block walks
+  /// them from the beginning. The reference takes its first match here rather
+  /// than on the first candidate. That moves the cursor one sequence on before
+  /// the parse starts and keeps a block's last match out of the parse
   void begin(ZstdLdmSequences? store, int size) {
     _store = store;
-    // The reference copies the store by value, cursor and all, so a parse over
+    // The reference copies the store by value, cursor and all. A parse over
     // one block of a job's store starts where the block before it stopped and
     // leaves the store itself alone
     _pos = store?.pos ?? 0;
@@ -219,8 +219,8 @@ class ZstdLdm {
         _entrySum = Uint32List(1 << (hashBits + bucketLog)),
         _next = Uint8List(1 << hashBits);
 
-  /// `ZSTD_resolveEnableLdm` and `ZSTD_ldm_adjustParameters`, which only the
-  /// widest window of the hardest searching levels turns on
+  /// `ZSTD_resolveEnableLdm` and `ZSTD_ldm_adjustParameters`. Only the widest
+  /// window of the hardest searching levels turns this on
   static ZstdLdm? forParams(int strategy, int windowLog) {
     if (strategy < _btopt || windowLog < 27) {
       return null;
@@ -246,7 +246,7 @@ class ZstdLdm {
   }
 
   /// `ZSTD_ldm_gear_init`: the mask takes the bits the rolling hash gives the
-  /// most weight to, so a split point depends on a whole match's worth of bytes
+  /// most weight to. A split point depends on a whole match's worth of bytes
   static int _stopMaskFor(int minMatch, int rateLog) {
     if (!zstdUse64Bit) return _webMask(minMatch, rateLog, 0);
     final width = minMatch < 64 ? minMatch : 64;
@@ -258,8 +258,8 @@ class ZstdLdm {
 
   int capacityFor(int blockSize) => blockSize ~/ minMatch + 1;
 
-  /// The buffer moved [delta] bytes down. A bucket is keyed on the bytes, not
-  /// on a position, so only the positions it holds move
+  /// The buffer moved [delta] bytes down. A bucket is keyed on the bytes and
+  /// not on a position. Only the positions it holds move
   void slide(int delta) {
     for (var at = 0; at < _entryPos.length; at++) {
       final held = _entryPos[at];
@@ -269,7 +269,7 @@ class ZstdLdm {
   }
 
   /// `ZSTD_ldm_fillHashTable`: a dictionary's split points, registered without
-  /// looking for a match, so the first block can reach into it
+  /// looking for a match. The first block can then reach into it
   void fill(Uint8List src, int start, int end) {
     final hashMask = (1 << hashBits) - 1;
     var ip = start;
@@ -313,7 +313,7 @@ class ZstdLdm {
           ? chunkEnd - at
           : _generate(src, view, at, chunkEnd, out);
       // The literals a chunk ends on belong to the first sequence of the next
-      // one, which started measuring from its own beginning
+      // one. That sequence started measuring from its own beginning
       if (before < out.size) {
         out.litLength[before] += leftover;
         leftover = rest;
@@ -334,8 +334,8 @@ class ZstdLdm {
     final width = 1 << bucketLog;
     final hashMask = (1 << hashBits) - 1;
     var anchor = start;
-    // `ZSTD_ldm_gear_reset` leaves the state alone, so the first bytes of a
-    // block are stepped over rather than hashed
+    // `ZSTD_ldm_gear_reset` leaves the state alone. The first bytes of a block
+    // are stepped over rather than hashed
     var ip = start + minMatch;
     _rolling = 0xffffffff;
     if (!zstdUse64Bit) _rollingHigh = 0;
@@ -397,9 +397,9 @@ class ZstdLdm {
         out.size = at + 1;
         _insert(hash, sum, split);
         anchor = split + forward;
-        // A match reaching past what this pass hashed is a repeating pattern,
-        // and every later repetition would land on the mask the same way, so
-        // only the first is worth a table entry
+        // A match reaching past what this pass hashed is a repeating pattern.
+        // Every later repetition would land on the mask the same way. Only the
+        // first is worth a table entry
         if (anchor > ip + hashed) {
           ip = anchor - hashed;
           break;
@@ -490,8 +490,8 @@ class ZstdLdm {
     return length;
   }
 
-  /// `ZSTD_ldm_countBackwardsMatch`, which may not walk before the block's
-  /// anchor or before the lowest position the window still holds
+  /// `ZSTD_ldm_countBackwardsMatch`. It may not walk before the block's anchor
+  /// or before the lowest position the window still holds
   static int _countBack(
       Uint8List src, int at, int anchor, int match, int floor) {
     var length = 0;

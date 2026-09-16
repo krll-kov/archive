@@ -160,9 +160,9 @@ class ZipFile extends FileContent {
       final descriptorUncompressed =
           zip64 ? input.readUint64() : input.readUint32();
       // APPNOTE 4.4.8: the correct sizes go in both the descriptor and the
-      // central directory, so the central ones win and these fill in only what
-      // it left at zero. Do not drop the read: an archive whose central
-      // directory carries no sizes has them nowhere else
+      // central directory. The central ones win and these fill in only what it
+      // left at zero. Do not drop the read. An archive whose central directory
+      // carries no sizes has them nowhere else
       // central is never null here. ZipFileHeader creates every ZipFile and
       // passes itself. The null checks stay for a future ZipFile without
       // a header

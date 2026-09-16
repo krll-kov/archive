@@ -14,17 +14,16 @@ import '../lzma/lzma_decoder.dart';
 /// Decodes a single xz block that starts at the current position of [input].
 ///
 /// Every block resets the LZMA2 dictionary. A block carries no state from the
-/// blocks before it, so we can hand blocks to separate isolates.
+/// blocks before it and can go to an isolate of its own.
 ///
 /// [input] must cover the block from its header to the end of the check field.
 /// [XZBlockLayout.compressedLength] measures exactly that. [input] does not
-/// have to be in memory. Reading a block from a file while we decode it keeps
-/// the compressed block out of memory.
+/// have to be in memory. A block read from a file as it decodes never lands
+/// there whole.
 ///
 /// [streamFlags] comes from the stream header or footer. Its low four bits
-/// pick the check type. We read the check but do not verify it. A caller
-/// decoding into a stream it cannot seek computes the check as the bytes go
-/// past
+/// pick the check type. The check is read here and not verified. A decode into
+/// a stream that cannot seek computes it as the bytes go past
 ({bool ok, String? reason}) decodeXZBlock(
     InputStream input, int streamFlags, OutputStream output,
     {required int maxPreallocateSize}) {
@@ -58,16 +57,15 @@ class XZStreamDecoder {
 
   /// Why the last decode gave up, or null if it has not given up.
   ///
-  /// Every rejection sets this. A caller who asked about failures then gets
-  /// the reason, not just the fact. It costs one string. We still report
-  /// failure by returning, so a successful decode throws and allocates
-  /// nothing
+  /// Every rejection sets this. The reason then comes back with the failure
+  /// and not only the fact of it. It costs one string. Failure still travels
+  /// by return value and a successful decode allocates nothing
   String? failureReason;
 
   // Upper bound on a buffer sized from a length the archive declares.
   final int maxPreallocateSize;
-  // A block decodes on its own, so its first chunk has to start the
-  // dictionary: control 1 for an uncompressed chunk, reset 3 for an LZMA one
+  // A block decodes on its own. Its first chunk has to start the dictionary:
+  // control 1 for an uncompressed chunk, reset 3 for an LZMA one
   var needDictionaryReset = true;
   // liblzma lzma2_decoder.c: the LZMA chunk after a dictionary reset must set
   // new properties
@@ -184,7 +182,7 @@ class XZStreamDecoder {
       return _fail('Invalid stream flags');
     }
     streamFlags = header.readByte();
-    // The check id is the low nibble and the rest is reserved, so a stream that
+    // The check id is the low nibble and the rest is reserved. A stream that
     // sets any of it asks for something this decoder cannot promise
     if (streamFlags & 0xf0 != 0) {
       return _fail('Invalid stream flags');
@@ -221,10 +219,10 @@ class XZStreamDecoder {
     Uint8List? blockData;
 
     if (needsBlockData && output is! OutputMemoryStream) {
-      // A stream with no contiguous buffer behind it cannot be read back after
-      // we write to it. So decode the block into a temporary buffer and append
-      // it afterwards. The declared length is only a hint. We do not trust it
-      // past [maxPreallocateSize]. The stream grows into what the block needs
+      // A stream with no contiguous buffer behind it cannot be read back once
+      // written to. The block decodes into a temporary buffer and lands there
+      // afterwards. The declared length is only a hint and is not trusted past
+      // [maxPreallocateSize]. The stream grows into what the block needs
       final block = OutputMemoryStream(
           size: uncompressedLength != null &&
                   uncompressedLength <= maxPreallocateSize
@@ -235,11 +233,10 @@ class XZStreamDecoder {
         read = _readLZMA2(input, block, dictionarySize);
       } catch (_) {
         // A failure part way through leaves the temporary buffer holding what
-        // decoded before it. Hand that over. The caller then gets the same
-        // output as if we had written the block straight through, so a corrupt
-        // archive leaves the same bytes whichever stream they passed in. We do
-        // not apply the filter to it. The branch below also gives up before
-        // filtering
+        // decoded before it. Hand that over. The output then matches a block
+        // written straight through, and a corrupt archive leaves the same
+        // bytes whichever stream took it. The filter is not applied to it. The
+        // branch below also gives up before filtering
         output.writeBytes(block.getBytes());
         rethrow;
       }
@@ -586,8 +583,8 @@ class XZStreamDecoder {
           input.readBytes(compressedLength), uncompressedLength, output);
       // Checking this can catch some corrupt files, especially if they don't
       // have any other integrity check. An end of payload marker is not
-      // allowed in LZMA2, so a chunk that reached its uncompressed size
-      // without emptying the range coder is a data error
+      // allowed in LZMA2. A chunk that reached its uncompressed size without
+      // emptying the range coder is a data error
       if (!decoder.isRangeCoderFinished) {
         return _fail('LZMA data is corrupt');
       }

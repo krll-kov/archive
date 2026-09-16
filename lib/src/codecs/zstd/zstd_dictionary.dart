@@ -17,7 +17,7 @@ class ZstdDictionaryException implements Exception {
 /// formatted dictionary is taken as raw content, the way the reference decoder
 /// takes it
 class ZstdDictionary {
-  /// Zero for a raw content dictionary, which no frame can name
+  /// Zero for a raw content dictionary. No frame can name one
   final int id;
 
   /// What matches reach back into, placed before the output of every frame
@@ -40,7 +40,7 @@ class ZstdDictionary {
   final Uint8List huffmanWeights;
 
   /// The three sequence distributions, by slot. These are kept rather than the
-  /// rows they build into, so the row layout stays a matter for the decoder
+  /// rows they build into. The row layout stays a matter for the decoder
   final List<Int16List> counts;
   final List<int> maxSymbols;
   final List<int> logs;

@@ -4,8 +4,8 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 // The io file handle is imported directly rather than through
-// file_handle.dart, whose conditional export resolves to the web class when
-// the analyser has no platform in mind, and that one has no path
+// file_handle.dart. With no platform in mind the analyser resolves that
+// conditional export to the web class. The web class has no path
 import '../../util/_file_handle_io.dart';
 import '../../util/cancellable_stream.dart';
 import '../../util/input_file_stream.dart';
@@ -24,10 +24,10 @@ Future<Isolate> Function(SendPort replies, SendPort errors) zstdMtSpawnWorker =
         onError: errors, errorsAreFatal: true);
 
 /// Compresses every job on an isolate, at most [workers] at a time, and
-/// returns their output in job order. A job carries its own prefix, so nothing
-/// is shared and the bytes do not depend on how many run at once.
+/// returns their output in job order. A job carries its own prefix. Nothing is
+/// shared and the bytes do not depend on how many run at once.
 ///
-/// The workers are spawned once and fed job after job: a fresh isolate per job
+/// The workers are spawned once and fed job after job. A fresh isolate per job
 /// costs a heap and a set of tables each time. That made the memory grow with
 /// the job count rather than with the pool
 Future<List<Uint8List>> zstdMtCompressJobs(
@@ -66,8 +66,8 @@ Future<List<Uint8List>> zstdMtCompressJobs(
           : (start, end) => zstdMtPackLdm(pass.generate(src, start, end)));
 }
 
-/// As [zstdMtCompressJobs], with each job read from the file itself, so the
-/// input never sits in the calling isolate
+/// As [zstdMtCompressJobs], with each job read from the file itself. The input
+/// never sits in the calling isolate
 Future<List<Uint8List>> zstdMtCompressFileJobs(String path, int offset,
     int size, List<int> starts, int prefixSize, int level,
     {required int jobSize,
@@ -79,8 +79,8 @@ Future<List<Uint8List>> zstdMtCompressFileJobs(String path, int offset,
       [path, offset + start - prefix, prefix + (end - start)];
   final pass = ZstdMtLdmPass.forParams(
       zstdParamsForLevel(level, size), jobSize > 0 ? jobSize : size);
-  // The workers read their own slices, so the one serial pass reads the file
-  // here rather than sharing their buffers
+  // The workers read their own slices. The one serial pass reads the file here
+  // rather than sharing their buffers
   final handle = pass == null ? null : File(path).openSync();
   List<Object>? ldmFor(int start, int end) {
     final reader = handle!;
@@ -221,10 +221,10 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
       if (onPart == null) {
         parts[index] = part;
       } else {
-        // Only the parts that ran ahead of their turn are held, the rest go
-        // straight out, so a frame of any size costs the pool and not itself
+        // Only the parts that ran ahead of their turn are held and the rest go
+        // straight out. A frame of any size costs the pool and not itself
         held[index] = part;
-        // The output belongs to the caller, and a write of theirs that throws
+        // The output belongs to whoever passed it in and a write that throws
         // is their failure to hear about. Uncaught here it would leave through
         // this port's zone instead, where the call has nothing listening
         try {
@@ -289,7 +289,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
 
 /// The compressed parts of [input], in job order, with the jobs cut out of the
 /// bytes as they arrive and handed to a pool of at most [workers]. The header
-/// and the checksum are the caller's, as everywhere else here
+/// and the checksum are written outside, as everywhere else here
 Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
         {required int jobSize,
         required int overlapLog,
@@ -385,7 +385,7 @@ Stream<Uint8List> _zstdMtCompressStream(
     final pair = message as List;
     failure ??= pair[0];
     failureStack ??= StackTrace.fromString('${pair[1]}');
-    // No further reply can arrive from a dead worker, so whoever is parked on
+    // No further reply can arrive from a dead worker. Whoever is parked on
     // `waiting` has to be let go or the frame never ends
     wake();
   });
@@ -425,8 +425,8 @@ Stream<Uint8List> _zstdMtCompressStream(
   });
 
   void submit(Uint8List job, int prefix, bool first, bool last) {
-    // The dictionary belongs to the first job and does not cross the port, so
-    // that one is compressed here and takes its place in the order like any
+    // The dictionary belongs to the first job and does not cross the port.
+    // That job is compressed here and takes its place in the order like any
     // other part
     if (first && dictionary != null) {
       final content = dictionary.content;
@@ -475,9 +475,9 @@ Stream<Uint8List> _zstdMtCompressStream(
       isolates.add(await zstdMtSpawnWorker(receive.sendPort, errors.sendPort));
     }
 
-    // The reading happens here rather than beside it, so a consumer that pauses
-    // pauses the input with it and a consumer that cancels cancels the input:
-    // a generator suspended at a yield is not asking its source for anything
+    // The reading happens here rather than beside it. A consumer that pauses
+    // pauses the input with it and a consumer that cancels cancels the input.
+    // A generator suspended at a yield is not asking its source for anything
     final ahead = InputAhead<List<int>>(input, wake);
     while (true) {
       ahead.ask();

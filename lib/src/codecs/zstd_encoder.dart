@@ -23,7 +23,7 @@ class ZstdEncoder {
   final int level;
 
   /// Placed before the content so matches can reach into it, and named in the
-  /// frame header, so only the same dictionary reads the frame back
+  /// frame header. Only the same dictionary reads the frame back
   final ZstdDictionary? dictionary;
 
   const ZstdEncoder(
@@ -33,9 +33,9 @@ class ZstdEncoder {
   /// single threaded encoder writes, and it arrives through `onDone` rather
   /// than as the return value. The return value is then empty.
   ///
-  /// A setting that cannot be honoured throws [ArgumentError] here, while the
-  /// caller is still on the stack; only a failure of the work itself reaches
-  /// `onError`, and without one it reaches `onDone` as empty output
+  /// A setting that cannot be honoured throws [ArgumentError] before the call
+  /// returns. Only a failure of the work itself reaches `onError`. Without one
+  /// the result reaches `onDone` as empty output
   Uint8List encodeBytes(List<int> data,
       {int? level, ZstdMultithreadOptions<Uint8List>? multithread}) {
     if (multithread == null) {
@@ -51,8 +51,8 @@ class ZstdEncoder {
     return Uint8List(0);
   }
 
-  /// `ZSTDMT_JOBSIZE_MIN`: the reference turns its workers off below this, so
-  /// the frame is the single threaded one
+  /// `ZSTDMT_JOBSIZE_MIN`: the reference turns its workers off below this. The
+  /// frame is then the single threaded one
   Future<Uint8List> _multithreadBytes(
       Uint8List bytes, int level, ZstdMultithreadOptions<Object?> options) {
     if (bytes.length <= zstdMtJobSizeMin) {
@@ -101,8 +101,8 @@ class ZstdEncoder {
 
   /// Compress [input] into [output] as one frame, holding only its window.
   ///
-  /// With [multithread] over a file, each worker reads its own job from disk,
-  /// so the input never sits in this isolate; over any other stream the bytes
+  /// With [multithread] over a file, each worker reads its own job from disk
+  /// and the input never sits in this isolate. Over any other stream the bytes
   /// are read in first. `onDone` is called with true when the frame is written
   void encodeStream(InputStream input, OutputStream output,
       {int? level, ZstdMultithreadOptions<bool>? multithread}) {
@@ -110,12 +110,12 @@ class ZstdEncoder {
       _checkMultithread(multithread);
       final chosen = level ?? this.level;
       // Reading the input is part of the work and reports through onError. The
-      // body up to the first await still runs here, so the input is consumed
+      // body up to the first await still runs here. The input is consumed
       // before the call returns, as it was when the reads stood outside
       _reportAsync(multithread, () async {
         final region = zstdMtFileRegion(input);
-        // A dictionary belongs to the first job, and a worker reading its own
-        // slice of a file has no way to be given one, so that path reads the
+        // A dictionary belongs to the first job and a worker reading its own
+        // slice of a file has no way to be given one. That path reads the
         // bytes in instead
         if (input.length <= zstdMtJobSizeMin ||
             region == null ||
@@ -148,8 +148,8 @@ class ZstdEncoder {
     }
   }
 
-  /// The codec's own exceptions live inside `src` and a caller cannot name
-  /// them, so the one type the package exports is what leaves here
+  /// The codec's own exceptions live inside `src` and nothing outside can name
+  /// them. The one type the package exports is what leaves here
   static Object _wrap(Object error) => error is ArchiveException ||
           error is ArgumentError ||
           error is OutOfMemoryError

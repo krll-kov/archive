@@ -7,7 +7,7 @@ import 'zstd_sequences_base.dart';
 import 'zstd_window.dart';
 
 /// Each symbol's baseline and extra bit count already in the places a row keeps
-/// them, so a table build reads one entry instead of two and shifts nothing
+/// them. A table build reads one entry instead of two and shifts nothing
 final List<Uint64List> _values = [
   _packValues(zstdSlotLiteralsLength),
   _packValues(zstdSlotOffset),
@@ -28,7 +28,7 @@ Uint64List _packValues(int slot) {
 /// 64 bit container.
 ///
 /// One packed row per state carries the value the symbol stands for as well as
-/// the transition, so the loop needs no second dependent load: next state
+/// the transition. The loop then needs no second dependent load: next state
 /// including its table's base in bits 0 to 15, bits to read for it in 16 to 23,
 /// the value's extra bits in 24 to 29, its baseline in 30 to 61. The top two
 /// bits stay clear so every row is a Smi and no load allocates, and one array
@@ -156,8 +156,8 @@ class ZstdSequences extends ZstdSequencesBase {
       consumed += mlBits;
 
       // `ZSTD_decodeSequence`: the container holds fifty seven bits after a
-      // fill, so what is left over covers the literal length and the three
-      // state reads unless this sequence's own fields are unusually wide
+      // fill. What is left over covers the literal length and the three state
+      // reads unless this sequence's own fields are unusually wide
       final llBits = (llRow << 34) >>> 58;
       if (ofBits + mlBits + llBits >= refillAt) {
         step = consumed >> 3;
@@ -219,8 +219,8 @@ class ZstdSequences extends ZstdSequencesBase {
         }
       }
 
-      // Most literal runs are under eight bytes and nearly all under sixteen,
-      // so the common lengths cost stores and no loop at all
+      // Most literal runs are under eight bytes and nearly all under sixteen.
+      // The common lengths cost stores and no loop at all
       dstView.setUint64(
           out, dstView.getUint64(litAt, Endian.little), Endian.little);
       if (literalsLength > 8) {
@@ -245,8 +245,8 @@ class ZstdSequences extends ZstdSequencesBase {
       var from = out - offset;
       if (from < 0) {
         // The buffer has been written through once and this match reaches into
-        // the pass before, which sits where it was left rather than having been
-        // moved down
+        // the pass before. That pass sits where it was left and was never moved
+        // down
         from += lap;
         if (lap == 0 || from <= out) {
           _offsetBeforeStart(offset);
@@ -259,7 +259,7 @@ class ZstdSequences extends ZstdSequencesBase {
             out, dstView.getUint64(from, Endian.little), Endian.little);
         dstView.setUint64(
             out + 8, dstView.getUint64(from + 8, Endian.little), Endian.little);
-        // Matches run to thirty two bytes in 98% of sequences, so those cost a
+        // Matches run to thirty two bytes in 98% of sequences. Those cost a
         // second pair of stores and no loop. What is left goes thirty two bytes
         // an iteration the way `ZSTD_wildcopy` does. Either may write past the
         // match. `zstdCopySlack` is there for that, and the stores stay in
@@ -340,7 +340,7 @@ int _wrapped(Uint8List dst, int out, int from, int length, int lap) {
 
 /// Every throw of the sequence loop lives out of line. Left inline, the
 /// exception's construction and its message's interpolation put an allocation,
-/// a call and the boxing of their operands in the loop body, which costs
+/// a call and the boxing of their operands in the loop body. That costs
 /// registers on the path that never throws
 @pragma('vm:never-inline')
 Never _zeroBitstream() =>

@@ -22,7 +22,7 @@ const _holdsBuilt = 2;
 /// reads them. Those two are written once per bit container width.
 ///
 /// The three tables persist across the blocks of a frame. A repeat mode block
-/// refers back to them, so one instance lives for one frame
+/// refers back to them and one instance lives for one frame
 abstract class ZstdSequencesBase {
   static const builtBases = [
     zstdLiteralsLengthTableBase,
@@ -38,7 +38,7 @@ abstract class ZstdSequencesBase {
   /// Which base each slot's states currently point at
   final Int32List bases = Int32List(3);
 
-  /// Accuracy log per slot, and what the slot currently holds, so a predefined
+  /// Accuracy log per slot, and what the slot currently holds. A predefined
   /// table is only copied in when it is not already there
   final Int32List logs = Int32List(3);
   final Int32List _holds = Int32List(3);
@@ -105,9 +105,9 @@ abstract class ZstdSequencesBase {
     _holds[2] = _holdsNothing;
   }
 
-  /// Rebuilds the dictionary's three tables, so a first block may repeat them.
-  /// They are rebuilt rather than referenced because a later block writes over
-  /// them in place
+  /// Rebuilds the dictionary's three tables for a first block that repeats
+  /// them. They are rebuilt rather than referenced because a later block writes
+  /// over them in place
   void loadDictionary(ZstdDictionary dictionary) {
     for (var slot = 0; slot < 3; slot++) {
       buildTable(builtBases[slot], slot, dictionary.counts[slot],
@@ -197,8 +197,8 @@ abstract class ZstdSequencesBase {
       _blockOutputIsLarger();
     }
     final at = window.position;
-    // Where a block has no sequence to place them, so the literals are moved
-    // down from the room reserved above the output rather than decoded again
+    // Where a block has no sequence to place them. The literals are moved down
+    // from the room reserved above the output rather than decoded again
     window.buffer.setRange(
         at, at + size, window.buffer, at + blockSizeMax + zstdCopySlack);
     window.position = at + size;

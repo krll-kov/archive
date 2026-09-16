@@ -13,9 +13,9 @@ import 'bzip2.dart';
 /// bzip2 for data that arrives in pieces, the way a `Stream` gives it. The
 /// shape is the one `dart:io` uses for gzip, one converter per direction
 class BZip2Codec extends Codec<List<int>, List<int>> {
-  /// Checks the CRC of every block and of the stream. On by default: a caller
-  /// reading a stream has handed the compressed bytes back by the time the
-  /// check would be made, so there is no second chance at it
+  /// Checks the CRC of every block and of the stream. On by default. A stream
+  /// hands the compressed bytes on by the time the check would be made and
+  /// there is no second chance at it
   final bool verify;
 
   /// Hundreds of thousands of bytes a block, one to nine
@@ -63,9 +63,9 @@ class BZip2EncoderConverter extends ChunkedConverter {
 /// Writes a bzip2 archive over data that arrives in pieces.
 ///
 /// A block is filled a byte at a time and coded once it is full. [BZip2Encoder]
-/// does the same with the bytes it pulls, so the archive this writes is
-/// the one `encodeBytes` writes for the same input. What it holds is one
-/// block, whatever the input weighs
+/// does the same with the bytes it pulls. The archive this writes is the one
+/// `encodeBytes` writes for the same input. It holds one block, whatever the
+/// input weighs
 class BZip2ChunkedEncoder extends ChunkedSink {
   final int blockSize100k;
 
@@ -102,7 +102,7 @@ class BZip2ChunkedEncoder extends ChunkedSink {
   @override
   void finish() {
     _begin();
-    // A block no byte reached writes nothing, so this is the last one or it is
+    // A block no byte reached writes nothing. This is the last one or it is
     // not there at all
     _endBlock();
     _encoder.endStream();
@@ -126,14 +126,14 @@ class BZip2ChunkedEncoder extends ChunkedSink {
 
 /// Decodes a bzip2 archive that arrives in pieces.
 ///
-/// The format is a bit stream: a block does not start on a byte boundary and
-/// carries no length, so the only way to know it is all here is to find the
-/// marker that follows it. One block of input and one of output is what this
-/// holds, whatever the archive weighs.
+/// The format is a bit stream. A block does not start on a byte boundary and
+/// carries no length. The marker that follows it is the only sign that it is
+/// all here. This holds one block of input and one of output, whatever the
+/// archive weighs.
 ///
 /// A marker can also turn up inside a block by chance. The decode of that block
-/// then runs out of input, and the scan carries on to the next marker. So the
-/// block's output is held back until it is whole
+/// then runs out of input and the scan carries on to the next marker. A block's
+/// output is held back until it is whole
 class BZip2ChunkedDecoder extends ChunkedSink {
   final bool verify;
 
@@ -289,9 +289,9 @@ class BZip2ChunkedDecoder extends ChunkedSink {
       try {
         crc = _decodeInto();
       } on _NeedMore {
-        // The marker was one the block's own data happened to spell, so the
+        // The marker was one the block's own data happened to spell. The
         // block runs past it and the next one is the candidate. The window
-        // slides on one bit, so a marker right after it or across it is found
+        // slides on one bit and finds a marker right after it or across it
         _sink.divert = null;
         continue;
       } finally {
@@ -341,8 +341,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
     _stage = _Stage.streamEnd;
   }
 
-  /// A block's own run coding can turn 900 KiB into tens of megabytes, so what
-  /// it decoded to goes out in pieces the size the other codecs here hand over
+  /// A block's own run coding can turn 900 KiB into tens of megabytes. What it
+  /// decoded to goes out in pieces the size the other codecs here hand over
   void _emit(Uint8List bytes) {
     for (var at = 0; at < bytes.length; at += _piece) {
       final end = at + _piece < bytes.length ? at + _piece : bytes.length;
@@ -401,7 +401,7 @@ class Bz2MarkerScan {
       _scanAt++;
       if (_scanFilled < 48) {
         _scanFilled++;
-        // The 48th bit completes the first window, so that one is compared too
+        // The 48th bit completes the first window. That one is compared too
         if (_scanFilled < 48) {
           continue;
         }

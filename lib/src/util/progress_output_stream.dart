@@ -7,8 +7,8 @@ import 'output_stream.dart';
 /// Passes every write to [output] and calls [onProgress] with the number of
 /// bytes written through it, once per [interval] bytes and on flush and close.
 ///
-/// A decoder rarely knows its output size in advance, so a fraction is read
-/// off the input instead:
+/// A decoder rarely knows its output size in advance. A fraction is read off
+/// the input instead:
 ///
 /// ```dart
 /// final total = input.length;

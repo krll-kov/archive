@@ -23,18 +23,18 @@ import 'xz_stream_decoder.dart';
 /// }
 /// ```
 ///
-/// The format does not care where the input is cut, so any pieces will do
+/// The format does not care where the input is cut. Any pieces will do
 class XzDecoderConverter extends ChunkedConverter {
   /// Checks the CRC of every block that carries one it can compute. On by
-  /// default: a caller reading a stream has handed the compressed bytes back
-  /// by the time the check would be made, so there is no second chance at it
+  /// default. A stream hands the compressed bytes on by the time the check
+  /// would be made and there is no second chance at it
   final bool verify;
 
-  /// Decodes blocks on isolates when you bind this converter to a stream. We
-  /// can only send ahead a block whose header declares both lengths. `xz`
-  /// writes those in threaded mode. Any other block we decode here, once the
+  /// Decodes blocks on isolates once this converter is bound to a stream. Only
+  /// a block whose header declares both lengths can go to a worker. `xz`
+  /// writes those in threaded mode. Any other block decodes here, once the
   /// blocks in front of it are out. `startChunkedConversion` cannot take this
-  /// option. Its sink owes its output before it returns, and a worker answers
+  /// option. Its sink owes its output before it returns and a worker answers
   /// later
   final XZMultithreadOptions<Object?>? multithread;
 
@@ -75,7 +75,7 @@ class XzDecoderConverter extends ChunkedConverter {
       throw ArgumentError.value(budget, 'memoryBudget', 'Must be at least 1');
     }
     if (!xzIsolatesSupported) {
-      // Not super.bind: that goes through startChunkedConversion, which
+      // Not super.bind. That goes through startChunkedConversion and it
       // refuses the options this converter still carries
       yield* XzDecoderConverter(verify: verify).bind(stream);
       return;
@@ -120,10 +120,10 @@ const xzCodec = XzCodec();
 ///
 /// The pull decoder asks its input for the next field and blocks until it has
 /// it. This one takes whatever arrived and stops at the first field that is
-/// not there yet, so nothing waits inside the parse.
+/// not there yet. Nothing waits inside the parse.
 ///
-/// It moves one LZMA2 chunk at a time, and the format caps a chunk at 64 KiB
-/// compressed. So we hold the dictionary the archive asks for plus one chunk,
+/// It moves one LZMA2 chunk at a time and the format caps a chunk at 64 KiB
+/// compressed. It holds the dictionary the archive asks for plus one chunk,
 /// however big the archive is
 class XzChunkedDecoder extends ChunkedSink {
   /// Checks the CRC of every block that carries one it can compute, on by
@@ -143,8 +143,8 @@ class XzChunkedDecoder extends ChunkedSink {
     _sink = SinkOutputStream(output);
   }
 
-  // The LZMA decoder, the block header parse and the LZMA2 chunk rules are the
-  // whole buffer decoder's, so the two cannot drift apart
+  // The LZMA decoder, the block header parse and the LZMA2 chunk rules come
+  // from the whole buffer decoder. The two cannot drift apart
   final _xz = XZStreamDecoder(maxPreallocateSize: 0);
   LzmaDecoder get _decoder => _xz.decoder;
   late final SinkOutputStream _sink;
@@ -213,8 +213,8 @@ class XzChunkedDecoder extends ChunkedSink {
   }
 
   /// Reads what has arrived, one field at a time, and returns as soon as a
-  /// field is short. Every step commits only once it has all of its bytes, so
-  /// the next call starts where this one stopped
+  /// field is short. Every step commits only once it has all of its bytes. The
+  /// next call starts where this one stopped
   @override
   void step() {
     while (true) {
@@ -372,7 +372,7 @@ class XzChunkedDecoder extends ChunkedSink {
     skip(6);
     final flags = view(2);
     // The check id is the low nibble of the second byte and the rest is
-    // reserved, so a stream that sets any of it asks for something else
+    // reserved. A stream that sets any of it asks for something else
     if (flags[0] != 0 || flags[1] & 0xf0 != 0) {
       throw ArchiveException('xz: invalid stream flags');
     }
@@ -405,7 +405,7 @@ class XzChunkedDecoder extends ChunkedSink {
       final compressed = _declaredCompressedLength;
       final uncompressed = _declaredUncompressedLength;
       // Past the limit a claimed length would make the parse hold the rest of
-      // the stream while it waits, so such a block is decoded here instead
+      // the stream while it waits. Such a block decodes here instead
       final limit = dispatch.maxBlockBytes;
       if (compressed != null &&
           uncompressed != null &&
@@ -421,8 +421,8 @@ class XzChunkedDecoder extends ChunkedSink {
         }
         dispatch.block(Uint8List.fromList(view(total)), _streamFlags,
             uncompressed, _dictionarySize);
-        // The worker holds the block to its declared lengths, so they are what
-        // the index is checked against
+        // The worker holds the block to its declared lengths. The index is
+        // checked against those
         _blocks.add(_BlockSize(size + compressed + checkSize, uncompressed));
         skip(total);
         _stage = _Stage.blockOrIndex;
@@ -436,10 +436,10 @@ class XzChunkedDecoder extends ChunkedSink {
 
     skip(size);
 
-    // The x86 filter reads the block back, so that block alone is held. Every
+    // The x86 filter reads the block back. That block alone is held. Every
     // other block is handed to the sink as its chunks come out
     _blockBuffer = _x86Filter ? OutputMemoryStream() : null;
-    // A filtered block is checked over what the filter leaves, so the running
+    // A filtered block is checked over what the filter leaves. The running
     // check is only worth keeping for a block that goes straight out
     _sink
       ..reset()
@@ -467,7 +467,7 @@ class XzChunkedDecoder extends ChunkedSink {
     _stage = _Stage.chunkHeader;
   }
 
-  /// Waits for the lengths, so the whole chunk goes to
+  /// Waits for the lengths. The whole chunk then goes to
   /// [XZStreamDecoder.readLZMA2Chunk] at once
   bool _readChunkHeader() {
     final need = _chunkControl < 0x80
@@ -518,7 +518,7 @@ class XzChunkedDecoder extends ChunkedSink {
     final checkType = _streamFlags & 0xf;
     final field = view(size);
 
-    // The check covers what the filters leave, so a filtered block is checked
+    // The check covers what the filters leave. A filtered block is checked
     // once it has been read back and filtered
     final buffered = _blockBuffer;
     Uint8List? filtered;
@@ -720,8 +720,8 @@ enum _Stage {
 /// Writes xz from a `Stream` of pieces into a `Stream` of pieces.
 ///
 /// Nothing in the format needs the total size. A block header may leave its
-/// lengths out, the index that carries them comes last, and we fold the check
-/// in as the bytes go past. So this writes the same archive as the whole input
+/// lengths out, the index that carries them comes last, and the check is folded
+/// in as the bytes go past. This writes the same archive as the whole input
 /// would have.
 ///
 /// It stores the data rather than compressing it. That is all [XZEncoder] does

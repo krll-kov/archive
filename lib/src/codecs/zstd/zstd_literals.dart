@@ -15,8 +15,8 @@ class ZstdLiteralsException implements Exception {
 /// Decodes the literals of one block, and holds the Huffman table that a later
 /// treeless section in the same frame reuses.
 ///
-/// The literals land in the caller's buffer, past the room reserved for the
-/// block's own output, so the sequence loop reads them and writes the output
+/// The literals land in the output buffer, past the room reserved for the
+/// block's own output. The sequence loop reads them and writes the output
 /// through one and the same view
 class ZstdLiterals {
   Uint8List _buffer = Uint8List(0);
@@ -35,8 +35,8 @@ class ZstdLiterals {
     length = 0;
   }
 
-  /// Copies the dictionary's tree in, so a treeless first block has one. It is
-  /// copied rather than referenced because a later block overwrites it
+  /// Copies the dictionary's tree in for a treeless first block. It is copied
+  /// rather than referenced because a later block overwrites it
   void loadDictionary(ZstdDictionary dictionary) {
     _table.rows.setAll(0, dictionary.huffman.rows);
     _table.tableLog = dictionary.huffman.tableLog;
@@ -121,8 +121,8 @@ class ZstdLiterals {
       _literalsHeaderIsTruncated();
     }
 
-    // The header reaches 40 bits, wider than a shift is portable, so it is
-    // built and taken apart by arithmetic
+    // The header reaches 40 bits, wider than a shift is portable. It is built
+    // and taken apart by arithmetic
     var packed = 0;
     for (var i = headerSize - 1; i >= 0; i--) {
       packed = packed * 256 + src[start + i];

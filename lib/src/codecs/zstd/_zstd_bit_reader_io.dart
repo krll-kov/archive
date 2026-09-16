@@ -1,8 +1,8 @@
 import 'dart:typed_data';
 
 /// Reads backwards from the last byte towards the first, most significant bit
-/// first, ending on a marker 1 bit. Cold paths only: the hot loops hold the
-/// same three values in locals, so they are public fields here
+/// first, ending on a marker 1 bit. Cold paths only. The hot loops hold the
+/// same three values in locals and those are public fields here
 class ZstdBitReader {
   int container = 0;
   int consumed = 0;
@@ -16,14 +16,14 @@ class ZstdBitReader {
   /// Below 64 only for a stream shorter than eight bytes, padded at the bottom
   int _bitLimit = 64;
 
-  /// Check between symbols, not per read: one symbol spends at most 64 bits, so
-  /// overrunning by one reads container zeros rather than leaving the buffer
+  /// Check between symbols, not per read. One symbol spends at most 64 bits.
+  /// Overrunning by one reads container zeros rather than leaving the buffer
   bool get isOverrun => _overrun || consumed > _bitLimit;
 
   bool get isAtEnd => !_overrun && position == _start && consumed == _bitLimit;
 
-  /// False when the stream is empty or ends in a zero byte, which the format
-  /// forbids and which leaves no defined first bit
+  /// False when the stream is empty or ends in a zero byte. The format forbids
+  /// that and it leaves no defined first bit
   bool setStream(Uint8List data, int start, int length) {
     if (length <= 0 || start < 0 || start + length > data.length) {
       return false;
@@ -53,7 +53,7 @@ class ZstdBitReader {
       _bitLimit = length << 3;
     }
 
-    // The marker counts as read, so an exhausted stream ends on `_bitLimit`
+    // The marker counts as read. An exhausted stream ends on `_bitLimit`
     consumed = 8 - _highestBit(last);
     return true;
   }

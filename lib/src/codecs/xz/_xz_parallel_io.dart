@@ -37,7 +37,7 @@ class XZFileRegion {
 
 /// The file region [input] reads from, or null if there is no file behind it.
 ///
-/// We need this so every worker can read its own block straight from disk. The
+/// Every worker reads its own block straight from disk through this. The
 /// compressed data then never passes through the calling isolate. A stream
 /// over a file held in memory has no region and takes the ordinary path
 XZFileRegion? xzFileRegionOf(InputStream input) {
@@ -110,7 +110,7 @@ const _msgDone = 2;
 ///
 /// The archive comes from [bytes], or from the file at [path]. With a file,
 /// [fileOffset] and [fileLength] mark where it sits. The file is the cheaper
-/// of the two. Every worker reads only its own block, so the compressed data
+/// of the two. Every worker reads only its own block and the compressed data
 /// never passes through the calling isolate.
 ///
 /// [onChunk] gets an absolute offset into the decoded output and the bytes
@@ -119,7 +119,7 @@ const _msgDone = 2;
 ///
 /// [onBlockDone] gives the verdict on each block as it finishes, keyed by the
 /// same output offset. A block can deliver all of its bytes and still fail.
-/// That is what a bad check looks like, so the bytes alone do not tell you
+/// That is what a bad check looks like. The bytes alone say nothing about
 /// whether to trust them.
 ///
 /// [onFailureReason] gets the first reason a block was rejected. It says why
@@ -180,12 +180,11 @@ Future<bool> xzDecodeMultithreaded({
   }
 
   // There is nothing worth splitting, or the budget allows only one worker.
-  // One isolate still gives the caller what they asked for. Their own isolate
-  // stays free.
+  // One isolate still does the whole job and the calling isolate stays free.
   //
-  // We report no per block verdict here. The single job covers every block, so
-  // its verdict does not say where the failure fell. The caller works that out
-  // from the bytes that arrived
+  // No per block verdict goes out here. The single job covers every block and
+  // its verdict does not say where the failure fell. The bytes that arrived
+  // say that
   return _runJobs([
     _Job(
       kind: _kindStream,
@@ -517,8 +516,8 @@ const _idShift = 40;
 ///
 /// [XzChunkedDecoder] does the parse. It sends out every block whose header
 /// declares both lengths. It decodes any other block itself, once the blocks
-/// in front of it are out. We size the pool from the first block we send out
-/// and add a worker for each block that waits for one. A block decoded on a
+/// in front of it are out. The pool is sized from the first block sent out and
+/// grows by a worker for each block that waits for one. A block decoded on a
 /// worker comes back whole and checked. A block decoded here streams out the
 /// way the single threaded converter writes it
 Stream<Uint8List> xzDecodeStreamMultithreaded(Stream<List<int>> input,
@@ -559,8 +558,8 @@ Stream<Uint8List> _xzDecodeStream(
 
   signal.onCancel = wake;
 
-  // A block comes out whole and only once it passed its check, so what a
-  // failure leaves is every block before it
+  // A block comes out whole and only once it passed its check. A failure
+  // leaves every block before it
   void release() {
     while (dispatch.records.isNotEmpty) {
       final head = dispatch.records.first;
@@ -637,9 +636,9 @@ Stream<Uint8List> _xzDecodeStream(
     wake();
   });
 
-  // One worker for each block waiting for one, up to the pool, so a single
-  // block starts one isolate and comes out without waiting for the close. A
-  // spawn that fails is a failure of the decode, which every wait here ends on
+  // One worker for each block waiting for one, up to the pool. A single block
+  // then starts one isolate and comes out without waiting for the close. A
+  // spawn that fails is a failure of the decode and every wait here ends on it
   Future<void> grow() async {
     if (dispatch.unsent.isEmpty) {
       return;
@@ -880,8 +879,8 @@ Uint8List _readCheckField(
 
 /// Entry point of a decode worker.
 ///
-/// A worker outlives one block. The pool hands it job after job, which keeps
-/// the hot LZMA loop warm. That matters under the JIT. A fresh isolate has to
+/// A worker outlives one block. The pool hands it job after job and the hot
+/// LZMA loop stays warm. That matters under the JIT. A fresh isolate has to
 /// optimise the loop all over again
 void _xzWorker(SendPort toMain) {
   final receive = ReceivePort();
@@ -976,8 +975,8 @@ void _xzWorker(SendPort toMain) {
   var ok = false;
   String? reason;
   final checkType = streamFlags & 0xf;
-  // The check is folded in as the pieces go past, so verifying never holds
-  // the whole block
+  // The check is folded in as the pieces go past. Verifying never holds the
+  // whole block
   final verifyHere = verify && kind == _kindBlock;
   final sink = _BlockSink(onPiece, outputOffset, verifyHere ? checkType : 0);
   try {
@@ -1021,9 +1020,9 @@ void _xzWorker(SendPort toMain) {
 
 /// An [OutputStream] that hands what it is given to [_onPiece] in pieces.
 ///
-/// We buffer writes into a fixed staging area and hand it over whenever it
-/// fills, so a decode never holds more than [_stagingSize] of its output. We
-/// reuse the staging buffer, so a receiver has to copy a piece to keep it.
+/// Writes go into a fixed staging area that is handed over whenever it fills.
+/// A decode never holds more than [_stagingSize] of its output. The staging
+/// buffer is reused and a receiver has to copy a piece to keep it.
 /// [SendPort.send] copies on its own
 class _BlockSink extends OutputStream {
   final void Function(int offset, Uint8List piece) _onPiece;

@@ -22,8 +22,8 @@ class ZstdLevelParams {
 
   /// The reference's `TL` column, the step for the fast parse and the
   /// length that satisfies the optimal one. The greedy and lazy rows carry
-  /// instead a length that ends their search at once, which the reference does
-  /// not do: measured byte identical on 312 MB and 1% faster
+  /// instead a length that ends their search at once. The reference does not do
+  /// that: measured byte identical on 312 MB and 1% faster
   final int targetLength;
 
   /// Positions past a match to look at for a longer one. The optimal parse
@@ -32,11 +32,11 @@ class ZstdLevelParams {
   final int depth;
 
   /// How many bytes the table is keyed on. A match still only has to agree on
-  /// four, so a wider key raises not the minimum but the odds of a long match
+  /// four. A wider key raises the odds of a long match, not the minimum
   final int hashBytes;
 
-  /// The reference's own strategy number, one to nine, which the long distance
-  /// matcher reads directly rather than through the six the parse has
+  /// The reference's own strategy number, one to nine. The long distance
+  /// matcher reads it directly rather than through the six the parse has
   final int refStrategy;
 
   const ZstdLevelParams(
@@ -190,7 +190,7 @@ const zstdMaxLevel = 22;
 
 /// `ZSTD_c_compressionLevel`: zero is the reference's own default and a level
 /// above the table is clamped. Below zero selects the `--fast` parse, a match
-/// finder this does not carry, so it is refused rather than read as level one
+/// finder this does not carry. Such a level is refused, not read as level one
 int zstdEffectiveLevel(int level) {
   if (level < 0) {
     throw ArgumentError.value(level, 'level',
@@ -211,7 +211,7 @@ int zstdGainLog(ZstdLevelParams params) =>
         : 6;
 
 /// `ZSTD_minLiteralsToCompress`: below this many literals a tree cannot pay
-/// for its own description, so the bytes go as they stand
+/// for its own description. The bytes go as they stand
 int zstdMinLiteralsToCompress(ZstdLevelParams params) {
   if (params.strategy != zstdStrategyOptimal) {
     return 64;
@@ -221,8 +221,8 @@ int zstdMinLiteralsToCompress(ZstdLevelParams params) {
 
 /// [level] read from the row the reference picks for [size] bytes of input,
 /// then trimmed the way `ZSTD_adjustCParams_internal` trims it. A smaller input
-/// gets its own row, not the large one cut down: it keys the table on fewer
-/// bytes, which finds the short matches a wider key would have hashed apart
+/// gets its own row, not the large one cut down. It keys the table on fewer
+/// bytes and finds the short matches a wider key would have hashed apart
 ZstdLevelParams zstdParamsForLevel(int level, int size) {
   final pick = zstdEffectiveLevel(level);
   final table = _tables[(size <= 262144 ? 1 : 0) +

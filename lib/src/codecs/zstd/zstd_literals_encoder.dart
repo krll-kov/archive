@@ -51,8 +51,8 @@ class ZstdLiteralsEncoder {
     _spare.optimalDepth = on;
   }
 
-  /// Takes a dictionary's tree as the one the decoder already holds, so the
-  /// first block can send its literals without describing a tree
+  /// Takes a dictionary's tree as the one the decoder already holds. The first
+  /// block can then send its literals without describing a tree
   void loadDictionary(Uint8List weights, int log) {
     _live.loadWeights(weights, log);
     _ready = true;
@@ -65,12 +65,12 @@ class ZstdLiteralsEncoder {
     _trusted = whole;
   }
 
-  /// The tree the decoder holds, which the optimal parse prices its first
-  /// block from when a dictionary put one there
+  /// The tree the decoder holds. The optimal parse prices its first block from
+  /// that tree when a dictionary put one there
   ZstdHuffmanEncoder? get dictionaryTree => _ready ? _live : null;
 
-  /// Keeps the tree this block described, which only a block that is written
-  /// out may do
+  /// Keeps the tree this block described. Only a block that is written out may
+  /// do that
   void commit() {
     if (_swap) {
       final held = _live;
@@ -131,7 +131,7 @@ class ZstdLiteralsEncoder {
       return _writeStored(out, at, src, start, size, zstdLiteralsRaw);
     }
 
-    // The tree the decoder holds costs no description, so it wins whenever it
+    // The tree the decoder holds costs no description. It wins whenever it
     // codes these about as tightly, and one this dear is not worth sending
     final cramped = tableSize + _tableSlack >= size;
     if (held >= 0 &&
@@ -157,8 +157,8 @@ class ZstdLiteralsEncoder {
     }
     _swap = true;
     _nextReady = true;
-    // A tree of our own is only `HUF_repeat_check`: the next block still has to
-    // weigh it rather than take it outright
+    // A tree built here is only `HUF_repeat_check`. The next block still has
+    // to weigh it rather than take it outright
     _nextTrusted = false;
     _writeCodedHeader(out, at, size, coded, headerSize, zstdLiteralsCompressed,
         one: _spare.oneStream);
@@ -169,7 +169,7 @@ class ZstdLiteralsEncoder {
   /// together: what this run would take, tree and all, without writing any of
   /// it. The block splitter weighs partitions with this, and its rules are not
   /// [encode]'s: no probe, no minimum gain, and a floor of
-  /// `COMPRESS_LITERALS_SIZE_MIN`, which a valid tree lowers as [encode]'s is
+  /// `COMPRESS_LITERALS_SIZE_MIN`. A valid tree lowers that floor as in [encode]
   int estimate(Uint8List scratch, Uint8List src, int start, int end) {
     final size = end - start;
     if (size <= (_trusted ? 6 : 63)) {
@@ -328,8 +328,8 @@ class ZstdLiteralsEncoder {
     return headerSize + size;
   }
 
-  /// Two bits of type, two of size format, then the two sizes, which together
-  /// reach forty bits and so are written by arithmetic rather than shifts
+  /// Two bits of type, two of size format, then the two sizes. Together they
+  /// reach forty bits and go out by arithmetic rather than shifts
   static void _writeCodedHeader(
       Uint8List out, int at, int size, int coded, int headerSize, int type,
       {bool one = false}) {

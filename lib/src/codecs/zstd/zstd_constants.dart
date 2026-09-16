@@ -40,20 +40,20 @@ const zstdMatchLengthLogMax = 9;
 const zstdOffsetLogMax = 8;
 
 /// Copies inside the sequence loop write in eight and sixteen byte chunks and
-/// are allowed to run past the end of what they copy, so the block's output and
+/// are allowed to run past the end of what they copy. The block's output and
 /// the literals it reads need this much room between and after them
 const zstdCopySlack = 64;
 
-/// The three sequence tables share one array, so a state value carries the base
-/// of its own table and the loop needs a single pointer for all three
+/// The three sequence tables share one array. A state value carries the base of
+/// its own table and the loop needs a single pointer for all three
 const zstdLiteralsLengthTableBase = 0;
 const zstdOffsetTableBase = 1 << zstdLiteralsLengthLogMax;
 const zstdMatchLengthTableBase = zstdOffsetTableBase + (1 << zstdOffsetLogMax);
 const zstdBuiltTableRows =
     zstdMatchLengthTableBase + (1 << zstdMatchLengthLogMax);
 
-/// The predefined tables sit in the same array at their own bases, so choosing
-/// them is choosing a base rather than copying four kilobytes into place
+/// The predefined tables sit in the same array at their own bases. Choosing one
+/// is choosing a base rather than copying four kilobytes into place
 const zstdPredefinedLiteralsLengthTableBase = zstdBuiltTableRows;
 const zstdPredefinedOffsetTableBase = zstdPredefinedLiteralsLengthTableBase +
     (1 << zstdPredefinedLiteralsLengthLog);
@@ -222,7 +222,7 @@ const List<int> _deBruijnSlots = [
 ];
 
 /// The same as [zstdHighestBit] without the call `int.bitLength` compiles to.
-/// A call clobbers every live register, so in a loop that carries state it costs
+/// A call clobbers every live register. In a loop that carries state it costs
 /// far more than the dozen operations here: 8% at level 9 and 9% at level 12
 @pragma('vm:prefer-inline')
 int zstdHighestBitFast(int value) {

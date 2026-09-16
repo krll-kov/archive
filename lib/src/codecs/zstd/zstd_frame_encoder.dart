@@ -26,14 +26,14 @@ class ZstdFrameEncoder {
   }
 
   /// Writes one frame of [size] bytes pulled from [input]. Only the window and
-  /// the block being parsed are held, so the frame's memory follows the level
+  /// the block being parsed are held. The frame's memory follows the level
   /// rather than the input. The blocks fall where a whole buffer would put
-  /// them, so the bytes are the ones [encode] would have written
+  /// them and the bytes are the ones [encode] would have written
   void encodeStream(InputStream input, int size, OutputStream out,
       {bool checksum = true,
       int level = zstdDefaultLevel,
       ZstdDictionary? dictionary}) {
-    // A stream over memory hands out its own buffer, which spares the frame
+    // A stream over memory hands out its own buffer. That spares the frame
     // both the copy and the window
     final held = input.viewBytes(size);
     if (held != null) {
@@ -56,12 +56,12 @@ class ZstdFrameEncoder {
     // `ZSTD_getCParamRowSize` and `ZSTD_adjustCParams_internal` both size the
     // frame by the dictionary buffer, headers and all, not by its content
     final params = zstdParamsForLevel(level, size + (dict?.sourceSize ?? 0));
-    // A frame that fits its level's window declares the content instead, which
+    // A frame that fits its level's window declares the content instead. That
     // costs a decoder nothing extra and saves the window field
     final singleSegment = size <= (1 << params.windowLog);
     final windowSize = singleSegment ? size : 1 << params.windowLog;
-    // How far a match may reach is the level's window, which a frame declaring
-    // its content does not shrink: with a dictionary the two differ
+    // A match reaches as far as the level's window. A frame declaring its
+    // content does not shrink that window. With a dictionary the two differ
     final matchWindow = 1 << params.windowLog;
 
     _writeHeader(
@@ -78,13 +78,13 @@ class ZstdFrameEncoder {
         windowSize < zstdBlockMaximumSize ? windowSize : zstdBlockMaximumSize;
     final blocks = ZstdBlockEncoder(blockSizeMax, params);
     // A slide has to leave the low bits of a position alone for the chain and
-    // the tree to stay addressable, so it goes in whole steps of this
+    // the tree to stay addressable. It goes in whole steps of this
     final step = blocks.slideStep;
 
-    // The parse works in one buffer of absolute positions, so the dictionary
-    // has to sit directly before the content it is a dictionary for. A frame
-    // read from a stream keeps the window and enough spare beside it that a
-    // slide, which walks every table, is paid for by the bytes it frees
+    // The parse works in one buffer of absolute positions. The dictionary has
+    // to sit directly before the content it is a dictionary for. A frame read
+    // from a stream keeps the window and enough spare beside it. A slide walks
+    // every table and is paid for by the bytes it frees
     var slack = blocks.slideCost;
     if (slack < matchWindow) {
       slack = matchWindow;
@@ -172,7 +172,7 @@ class ZstdFrameEncoder {
       coded += take;
       // What the first block cost says what the rest will, near enough that a
       // sink holding its data takes the room once instead of doubling into it.
-      // A frame never exceeds its own bound, so neither does the estimate
+      // A frame never exceeds its own bound and neither does the estimate
       if (coded == take && coded < size) {
         final bound = size + (size >> 7) + 64;
         var want = out.length + (out.length * (size - coded)) ~/ coded;

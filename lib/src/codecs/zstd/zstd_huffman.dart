@@ -9,8 +9,8 @@ class ZstdHuffmanTable {
   final Uint16List rows = Uint16List(1 << zstdHuffmanLogMax);
   int tableLog = 0;
 
-  /// How many symbols the description covered, which an encoder needs to read
-  /// the same weights back
+  /// How many symbols the description covered. An encoder needs it to read the
+  /// same weights back
   int symbolCount = 0;
 }
 
@@ -161,8 +161,8 @@ void _buildFromWeights(ZstdHuffmanTable table, Uint8List weights,
   final symbolCount = weightCount + 1;
   table.symbolCount = symbolCount;
 
-  // Codes go to the lightest weight first, and within a weight in symbol order,
-  // so a cursor per weight is enough to place every run
+  // Codes go to the lightest weight first, and within a weight in symbol order.
+  // A cursor per weight is enough to place every run
   for (var w = rankStart.length - 1; w >= 0; w--) {
     rankStart[w] = 0;
   }
@@ -172,9 +172,9 @@ void _buildFromWeights(ZstdHuffmanTable table, Uint8List weights,
       rankStart[w] += 1 << (w - 1);
     }
   }
-  // `HUF_readStats_body`: weight one is the longest code, so a complete tree
-  // pairs them off and cannot hold fewer than two. The rank holds one slot per
-  // such symbol, so it is the count
+  // `HUF_readStats_body`: weight one is the longest code. A complete tree pairs
+  // them off and cannot hold fewer than two. The rank holds one slot per such
+  // symbol and is the count
   final ones = rankStart[1];
   if (ones < 2 || ones & 1 != 0) {
     _weightOnesDoNotPair(ones);
@@ -206,9 +206,9 @@ void _buildFromWeights(ZstdHuffmanTable table, Uint8List weights,
   }
 }
 
-/// A stream that owes no symbol is still read: `BIT_initDStream` and
-/// `BIT_endOfDStream` run over it either way, so its bytes have to carry the
-/// end marker and nothing above it
+/// A stream that owes no symbol is still read. `BIT_initDStream` and
+/// `BIT_endOfDStream` run over it either way. Its bytes have to carry the end
+/// marker and nothing above it
 void checkEmptyHuffmanStream(Uint8List src, int start, int length) {
   final reader = ZstdBitReader();
   if (!reader.setStream(src, start, length) || !reader.isAtEnd) {

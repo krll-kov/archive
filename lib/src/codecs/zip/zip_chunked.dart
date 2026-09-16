@@ -9,8 +9,8 @@ import '../zlib/deflate.dart';
 
 /// zip through `transform`, writing only. The encoder is a `StreamTransformer`
 /// rather than a `Converter`, since its input is entries and not bytes. There is
-/// no decoder: reading needs the central directory, which sits at the end of the
-/// archive, so a forward-only source cannot be read
+/// no decoder. Reading needs the central directory and it sits at the end of the
+/// archive, out of reach of a forward-only source
 class ZipCodec {
   final int level;
   final String? password;
@@ -41,7 +41,7 @@ class ZipCodec {
 const zipCodec = ZipCodec();
 
 /// [ZipChunkedEncoder] behind `zipCodec.encoder`. It takes entries and writes
-/// bytes, so it is a `StreamTransformer` and not a `Converter`
+/// bytes. That makes it a `StreamTransformer` and not a `Converter`
 class ZipEncoderTransformer
     extends StreamTransformerBase<ArchiveFile, List<int>> {
   final int level;
@@ -50,8 +50,8 @@ class ZipEncoderTransformer
   final bool streamed;
 
   /// Closes each entry once it is written, the way `ZipEncoder.add` does. Off
-  /// by default, as it is on `ZipEncoder.encodeStream`: the entries are the
-  /// caller's, and whoever opened a file closes it
+  /// by default, as it is on `ZipEncoder.encodeStream`. The entries belong to
+  /// whoever opened them, and whoever opened a file closes it
   final bool autoClose;
 
   const ZipEncoderTransformer(
@@ -77,7 +77,7 @@ class ZipEncoderTransformer
     while (await input.moveNext()) {
       final entry = input.current;
       try {
-        // Header first, then the content in pieces, so a reader gets the first
+        // Header first, then the content in pieces. A reader gets the first
         // bytes before the entry is fully deflated. On the web the body is one
         // step, because deflate there only runs whole
         final body = encoder.addHeader(entry);
@@ -98,11 +98,11 @@ class ZipEncoderTransformer
             yield held.removeAt(0);
           }
         } finally {
-          // A cancel stops us at one of the yields above, so finish never ran
+          // A cancel stops at one of the yields above and finish never ran
           body.cancel();
         }
       } finally {
-        // A cancel lands on a yield above, so this is a finally
+        // A cancel lands on a yield above. That is why this is a finally
         if (autoClose) {
           entry.closeSync();
         }
@@ -134,11 +134,11 @@ class _Pieces implements Sink<List<int>> {
 /// entry is held, since a local header carries the check and the compressed
 /// size ahead of the bytes they describe, unless [streamed] moves them behind
 class ZipChunkedEncoder {
-  /// Where the archive goes. [close] closes it, which flushes a codec under it
+  /// Where the archive goes. [close] closes it and flushes a codec under it
   final Sink<List<int>> output;
 
   /// Deflates an entry straight into [output], its check and sizes behind the
-  /// data, so the peak is one deflate buffer rather than the largest entry.
+  /// data. The peak is then one deflate buffer rather than the largest entry.
   /// Turn it off to get the bytes `ZipEncoder.encodeBytes` writes
   final bool streamed;
 
@@ -167,7 +167,7 @@ class ZipChunkedEncoder {
   }
 
   /// Writes [entry]'s local header and returns its body. Null if the entry is
-  /// already written whole. The entry is left open, the caller decides
+  /// already written whole. The entry is left open for whoever owns it
   ZipEntryBody? addHeader(ArchiveFile entry) {
     if (_closed) {
       throw StateError('Cannot add to a closed encoder');

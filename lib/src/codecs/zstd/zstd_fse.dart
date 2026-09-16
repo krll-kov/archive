@@ -47,17 +47,17 @@ class ZstdFseException implements Exception {
   String toString() => 'ZstdFseException: $message';
 }
 
-/// [end] bounds what the caller has, not the description, whose length is only
-/// known once it has been read. [counts] is written in place over
-/// `0..maxSymbolValue`
+/// [end] bounds the bytes on hand, not the description. The description's
+/// length is known only once it has been read. [counts] is written in place
+/// over `0..maxSymbolValue`
 ZstdFseDistribution readFseDistribution(
     Uint8List data, int start, int end, Int16List counts, int maxSymbolValue,
     {required int maxAccuracyLog}) {
   if (start >= end) {
     _tableDescriptionIsEmpty();
   }
-  // A loop, not `fillRange`, which reaches the element setter through a mixin
-  // and so is not inlined
+  // A loop, not `fillRange`. That one reaches the element setter through a
+  // mixin and is not inlined
   for (var s = maxSymbolValue; s >= 0; s--) {
     counts[s] = 0;
   }
@@ -96,7 +96,7 @@ ZstdFseDistribution readFseDistribution(
       }
     }
 
-    // Small values cost one bit less, so the width depends on the value as well
+    // Small values cost one bit less. The width depends on the value as well
     // as on the points left
     final max = (threshold << 1) - 1 - remaining;
     final low = _peek(view, start, end, bitPos, nbBits - 1);
@@ -155,7 +155,7 @@ void buildFseTable(ZstdFseTable table, Int16List counts, int maxSymbol,
   zstdSpreadSymbols(counts, maxSymbol, tableSize, spread, nextState);
 
   // Increasing state order visits each symbol's rows in the order the format
-  // wants, so the running counter alone fixes width and baseline
+  // wants. The running counter alone fixes width and baseline
   for (var state = 0; state < tableSize; state++) {
     final symbol = spread[state];
     final next = nextState[symbol];

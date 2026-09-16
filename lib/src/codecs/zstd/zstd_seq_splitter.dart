@@ -87,7 +87,7 @@ void zstdUpdateRep(Uint32List rep, int offBase, bool noLiterals) {
 }
 
 /// `ZSTD_resolveRepcodeToRawOffset`. Code three with no literals names the
-/// first offset less one, which may be zero and is then discarded
+/// first offset less one. That may be zero and is then discarded
 int _rawOffset(Uint32List rep, int offBase, bool noLiterals) {
   final code = offBase - 1 + (noLiterals ? 1 : 0);
   return code == 3 ? rep[0] - 1 : rep[code];
@@ -95,7 +95,7 @@ int _rawOffset(Uint32List rep, int offBase, bool noLiterals) {
 
 /// `ZSTD_seqStore_resolveOffCodes`: a partition sent raw or as one repeated
 /// byte leaves [decoded], what the decoder will hold, behind [coded], what the
-/// sequences imply, so a repeat that resolves differently names its offset
+/// sequences imply. A repeat that resolves differently names its offset
 void zstdResolveOffCodes(Uint32List decoded, Uint32List coded,
     ZstdSequenceStore store, int from, int to) {
   final seq = store.seq;

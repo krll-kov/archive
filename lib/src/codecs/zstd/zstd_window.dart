@@ -43,15 +43,15 @@ class ZstdWindow {
     origin = content.length;
   }
 
-  /// Makes room for [need] more bytes, moving both [buffer] and [position], so
-  /// hoist those into locals only after calling this
+  /// Makes room for [need] more bytes and moves both [buffer] and [position].
+  /// Hoist those into locals only after calling this
   void reserve(int need) {
     if (position + need <= capacity) {
       return;
     }
     final sink = output;
     if (sink != null) {
-      // A whole window of output stands in front of the dictionary, so nothing
+      // A whole window of output stands in front of the dictionary. Nothing
       // can reach it any more
       if (origin > 0 && position - origin >= windowSize) {
         buffer.setRange(0, position - origin, buffer, origin);
@@ -60,11 +60,11 @@ class ZstdWindow {
         origin = 0;
       }
       // `ZSTD_decompressStream` restarts at the head of its buffer rather than
-      // sliding: the pass just written stays put and becomes the history a
-      // match reaches back into, so nothing is ever moved. What is overwritten
+      // sliding. The pass just written stays put and becomes the history a
+      // match reaches back into. Nothing is ever moved. What is overwritten
       // from here on is only what has fallen out of the window
       // The pass has to end far enough in that a match at the widest offset
-      // still lands above what this pass will overwrite. So the buffer carries
+      // still lands above what this pass will overwrite. The buffer carries
       // two blocks' room rather than one
       if (origin == 0 &&
           need == blockReserve &&
@@ -94,8 +94,8 @@ class ZstdWindow {
   void finish() {
     final sink = output;
     if (sink != null && position > origin) {
-      // A whole window handed over at once is a whole window the sink may copy,
-      // so the tail goes out in pieces the size of a block
+      // A whole window handed over at once is a whole window the sink may copy.
+      // The tail goes out in pieces the size of a block
       _flush(sink, emitted > origin ? emitted : origin, position);
       flushed += position - origin;
       position = 0;
@@ -123,16 +123,16 @@ class ZstdWindow {
 
   void _grow(int need, bool bounded) {
     final wanted = position + need;
-    // Exact first, so a caller that knows the frame's size gets that and no more
+    // Exact first. A known frame size then buys that much and no more
     var size = capacity == 0 ? wanted : capacity;
-    // Slack above the window, so sliding the history down happens once per
+    // Slack above the window. Sliding the history down then happens once per
     // slack bytes rather than once per block. Without it a wide window is moved
     // whole for every block. That is what the output costs, not the decode
     final ceiling = bounded ? origin + windowSize + 2 * need : 0;
     while (size < wanted) {
       size <<= 1;
-      // Every buffer left behind is garbage the collector has yet to take, so
-      // once the doubling is into real memory the last step goes to the bound
+      // Every buffer left behind is garbage the collector has yet to take.
+      // Once the doubling is into real memory the last step goes to the bound
       // the window sets rather than through it
       if (bounded && size >= _doubleTo) {
         size = ceiling;

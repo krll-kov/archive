@@ -17,10 +17,10 @@ enum ArchiveFormat {
 
 /// Reads the first bytes of an archive and says what wrote them.
 ///
-/// Every check reads the header alone, so a file may be recognised from the
-/// piece a stream has handed over so far rather than from all of it. What each
-/// one needs. The first number is where a check can answer. The second number
-/// is where it has read every field it checks:
+/// Every check reads the header alone. A file may be recognised from the piece
+/// a stream has handed over so far rather than from all of it. What each one
+/// needs. The first number is where a check can answer. The second number is
+/// where it has read every field it checks:
 ///
 /// | format | answers from | checks everything at |
 /// | --- | --- | --- |
@@ -33,12 +33,12 @@ enum ArchiveFormat {
 /// | tar | 263 for the ustar magic | 512 for the header checksum |
 ///
 /// A check with fewer bytes than the second number skips the fields it has not
-/// reached. So it can pass data that a whole header would fail
+/// reached. It can then pass data that a whole header would fail
 ///
 /// A tar written before ustar carries no magic and needs the whole 512 byte
-/// header. This package's own encoder still writes one
+/// header. This package's own encoder always writes the magic
 ///
-/// So six bytes give an answer for every format but tar. Twelve bytes run every
+/// Six bytes give an answer for every format but tar. Twelve bytes run every
 /// check but the tar checksum. [headerBytes] decides all of it.
 /// A format with no header of its own, raw LZMA and raw deflate among them,
 /// cannot be recognised this way and is not here
@@ -46,7 +46,7 @@ abstract final class CodecsRecognizer {
   /// The most bytes any of these checks reads, one tar header
   static const headerBytes = 512;
 
-  /// `1f 8b`, then the compression method, which the format fixes at eight
+  /// `1f 8b`, then the compression method. The format fixes it at eight
   ///
   /// RFC 1952 reserves the top three bits of FLG. A decoder must refuse a member
   /// that sets them
@@ -96,7 +96,7 @@ abstract final class CodecsRecognizer {
 
   /// `BZh` and the block size, one of nine hundred kilobyte steps
   ///
-  /// The magic is plain text. So we also match the six bytes after it when the
+  /// The magic is plain text. The six bytes after it are matched too when the
   /// data has them. A stream with blocks has the block magic there. An empty
   /// stream has the end of stream magic there
   static bool isBZip2(List<int> data) {
@@ -125,7 +125,8 @@ abstract final class CodecsRecognizer {
   /// Two bytes of stream flags follow the magic. Their CRC32 follows the flags.
   /// Every stream header has this CRC32. The check type of the blocks does not
   /// change that. The first flag byte must be zero. The top four bits of the
-  /// second flag byte must be zero. We check each field once the data reaches it
+  /// second flag byte must be zero. Each field is checked once the data
+  /// reaches it
   static bool isXZ(List<int> data) {
     if (data.length < 6 ||
         data[0] != 0xfd ||
@@ -179,8 +180,8 @@ abstract final class CodecsRecognizer {
     return kind == 0x0304 || kind == 0x0506 || kind == 0x0708;
   }
 
-  /// A tar header is 512 bytes, and the versions before ustar carry no magic,
-  /// so the checksum it holds is what identifies those. The eight bytes the
+  /// A tar header is 512 bytes and the versions before ustar carry no magic.
+  /// The checksum it holds is what identifies those. The eight bytes the
   /// checksum sits in count as spaces, and old writers summed them as signed.
   ///
   /// With less than a whole header the ustar magic still answers. Everything
@@ -188,9 +189,9 @@ abstract final class CodecsRecognizer {
   ///
   /// A whole header with a bad checksum is not a tar, even when the magic is
   /// there. `file` calls it data and libarchive's `archive_read_format_tar_bid`
-  /// returns 0 before it ever looks at the magic, which only adds points. So do
-  /// not add a magic fallback here: it would make us the only reader calling
-  /// such a file a tar
+  /// returns 0 before it ever looks at the magic, where it only adds points.
+  /// Do not add a magic fallback here. It would make this package the only
+  /// reader calling such a file a tar
   static bool isTar(List<int> data) {
     if (data.length < 512) {
       // 263 bytes reach past the ustar magic at 257
@@ -207,8 +208,8 @@ abstract final class CodecsRecognizer {
 
   /// The format the data starts with, or [ArchiveFormat.unknown].
   ///
-  /// The order matters only for zlib, whose header is two bytes with no magic
-  /// and can be read out of another format's first bytes, so it is tried last
+  /// The order matters only for zlib. Its header is two bytes with no magic and
+  /// can be read out of another format's first bytes. zlib is tried last
   ///
   /// [withZLib] is set to false on purpose. It has no magic so its byte
   /// verification sometimes gives false positives

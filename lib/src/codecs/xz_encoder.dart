@@ -16,10 +16,10 @@ enum XZCheck { none, crc32, crc64, sha256 }
 /// bytes wide
 const _lzma2ChunkMax = 1 << 16;
 
-/// How far back a block says a match may reach. We store data instead of
-/// compressing it, so no match reaches anywhere. The decoder still has to
-/// accept the number. Both encoders name the same one, so both write the same
-/// archive
+/// How far back a block says a match may reach. This encoder stores data
+/// instead of compressing it and no match reaches anywhere. The decoder still
+/// has to accept the number. Both encoders name the same one and write the
+/// same archive
 const xzDefaultDictionarySize = 0x800000;
 
 /// A dictionary size as the format encodes it. The low bit is the mantissa
@@ -201,7 +201,7 @@ class XZEncoder {
   }
 
   // Write [data] to [output] in uncompressed LZMA2 format. A chunk holds its
-  // length in sixteen bits, so anything longer goes out in chunks that size
+  // length in sixteen bits. Anything longer goes out in chunks that size
   void _writeLZMA2UncompressedData(OutputStream output, Uint8List data,
       {bool resetDictionary = true}) {
     var at = 0;

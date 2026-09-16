@@ -35,7 +35,7 @@ const _longPrime = (0xcf1bbcdc << 32) | 0xb7a56463;
 /// three finds one through it
 const _shortPrime = 506832829;
 
-/// `ZSTD_HASHLOG3_MAX`, which a narrow window cuts down
+/// `ZSTD_HASHLOG3_MAX`. A narrow window cuts it down
 const _shortLogMax = 17;
 
 /// Which search a level runs
@@ -122,15 +122,17 @@ const _slots = <int>[
   12,
 ];
 
-/// Older SDKs use this fallback; an int instance getter takes precedence, so the
-/// comparison below folds and neither arm costs a branch. The intrinsic is 4.18%
+/// Older SDKs use this fallback. An int instance getter takes precedence. The
+/// comparison below then folds and neither arm costs a branch. The intrinsic
+/// is 4.18%
 extension _ZstdTrailingZeroBitCount on int {
   @pragma('vm:prefer-inline')
   // ignore: unused_element
   int get trailingZeroBitCount => -1;
 }
 
-/// Callers pass a nonzero mismatch; the sentinel selects the SDK implementation
+/// A nonzero mismatch comes from the call sites. The sentinel picks the SDK
+/// implementation
 @pragma('vm:prefer-inline')
 int _trailingZeroBitCount(int value) {
   // ignore: sdk_version_since
@@ -153,8 +155,8 @@ int _isolatedTrailingZeroBitCount(int low) {
   return low.trailingZeroBitCount;
 }
 
-/// Finds the sequences of a block. A slot holds a position plus one, so zero
-/// means it was never filled, and the tables hold absolute positions so they
+/// Finds the sequences of a block. A slot holds a position plus one. Zero
+/// means the slot was never filled. The tables hold absolute positions and
 /// carry across the blocks of a frame
 class ZstdMatchFinder {
   final ZstdLevelParams params;
@@ -163,7 +165,7 @@ class ZstdMatchFinder {
   final int _tries;
   final int _shift;
 
-  /// The table's prime with the discard shift folded in, so hashing is one
+  /// The table's prime with the discard shift folded in. Hashing is then one
   /// multiply: `(w << s) * p` and `w * (p << s)` agree modulo 2^64
   final int _keyMul;
 
@@ -178,7 +180,7 @@ class ZstdMatchFinder {
   /// and eight more for the tag
   final int _rowShift;
 
-  /// Half the tree's node count less one, which addresses a node
+  /// The mask that addresses a node. Half the tree's node count less one
   final int _btMask;
 
   /// Which search this level runs: a row of tags, a hash chain, or the tree
@@ -225,15 +227,15 @@ class ZstdMatchFinder {
   ZstdOptPrices get prices => _prices;
   final ZstdOptLdm _optLdm = ZstdOptLdm();
 
-  /// The long distance matches of the block being parsed, which only the
-  /// widest window of the optimal parse ever has
+  /// The long distance matches of the block being parsed. Only the widest
+  /// window of the optimal parse ever has them
   ZstdLdmSequences? ldm;
 
   int _nextToUpdate = 0;
   int _foundOffset = 0;
 
   /// Where the data this frame codes begins. A dictionary sits before it as a
-  /// segment of its own, so `window.dictLimit` is here rather than at the start
+  /// segment of its own. `window.dictLimit` is here rather than at the start
   /// of everything the parse can reach
   int prefixStart = 0;
 
@@ -247,8 +249,7 @@ class ZstdMatchFinder {
   int dictionaryEnd = 0;
 
   /// `ZSTD_getLowestMatchIndex`: a whole dictionary stays reachable while any
-  /// byte of it is in the window, so the bound is not applied until the frame
-  /// drops it
+  /// byte of it is in the window. The bound waits until the frame drops it
   @pragma('vm:prefer-inline')
   int _lowestFrom(int at, int lowLimit, int maxDistance) {
     if (dictionaryEnd != 0) {
@@ -359,8 +360,8 @@ class ZstdMatchFinder {
     return params.searchLog > 6 ? 6 : params.searchLog;
   }
 
-  /// A row holds a fixed number of candidates, so a deeper search cannot see
-  /// past it. The tree has no such bound and takes the level's own count
+  /// A row holds a fixed number of candidates. A deeper search cannot see past
+  /// it. The tree has no such bound and takes the level's own count
   static int _triesFor(ZstdLevelParams params) {
     final asked = 1 << params.searchLog;
     if (params.strategy >= zstdStrategyBinaryTree) {
@@ -387,7 +388,7 @@ class ZstdMatchFinder {
   }
 
   /// `ZSTD_cycleLog`: the chain and the tree address a node by the low bits of
-  /// a position, so only a slide that leaves those bits alone keeps them
+  /// a position. Only a slide that leaves those bits alone keeps them
   /// reachable. The other searches key on the bytes and take any slide
   int get slideStep {
     if (params.strategy >= zstdStrategyBinaryTree) {
@@ -401,7 +402,7 @@ class ZstdMatchFinder {
   int get slideCost =>
       _hashTable.length + _chain.length + _rows.length + _short.length;
 
-  /// `ZSTD_reduceIndex`: the buffer moved [delta] bytes down, so every stored
+  /// `ZSTD_reduceIndex`: the buffer moved [delta] bytes down. Every stored
   /// position moves with it and whatever fell off the front is dropped
   void slide(int delta) {
     if (params.strategy >= zstdStrategyBinaryTree) {
@@ -419,8 +420,8 @@ class ZstdMatchFinder {
     dictionaryEnd = dictionaryEnd > delta ? dictionaryEnd - delta : 0;
   }
 
-  /// A slot holds a position raised by one, so anything at or below the slide
-  /// was pushed out of the buffer and reads as never filled
+  /// A slot holds a position raised by one. Anything at or below the slide was
+  /// pushed out of the buffer and reads as never filled
   static void _reduce(Uint32List table, int delta) {
     for (var at = 0; at < table.length; at++) {
       final held = table[at];
@@ -448,8 +449,8 @@ class ZstdMatchFinder {
     _nextToUpdate = at;
   }
 
-  /// Puts a dictionary's positions in this level's tables, so the first block
-  /// can match into it rather than only through the repeat offsets it starts
+  /// Puts a dictionary's positions in this level's tables. The first block can
+  /// then match into it rather than only through the repeat offsets it starts
   /// with. `ZSTD_loadDictionaryContent`
   /// The raw prefix a threaded job starts from: the same load, but the bytes
   /// stay ordinary input rather than a dictionary to keep whole
@@ -479,7 +480,7 @@ class ZstdMatchFinder {
       return;
     }
     final view = ByteData.sublistView(src);
-    // `ZSTD_dtlm_fast`, which one shot compression always asks for: a third of
+    // `ZSTD_dtlm_fast`. One shot compression always asks for it: a third of
     // the positions carry the table, the rest are left out
     const step = 3;
     if (params.strategy == zstdStrategyFast) {
@@ -526,7 +527,7 @@ class ZstdMatchFinder {
     store.reset();
     _skipping = false;
     // `ZSTD_compress_frameChunk` raises the cursor to the window before the
-    // catch-up below weighs it, so a position the window has dropped never
+    // catch-up below weighs it. A position the window has dropped never
     // decides how far back the catch-up reaches
     if (_nextToUpdate < lowLimit) {
       _nextToUpdate = lowLimit;
@@ -539,7 +540,7 @@ class ZstdMatchFinder {
       _nextToUpdate = start - (gap < 192 ? gap : 192);
     }
     final view = ByteData.sublistView(src);
-    // `ZSTD_matchState_dictMode`, which weighs the window as the block starts
+    // `ZSTD_matchState_dictMode`. It weighs the window as the block starts
     _ext = prefixStart > lowLimit;
     if (params.strategy == zstdStrategyOptimal) {
       _parseOptimal(src, view, start, end, lowLimit, store, rep);
@@ -624,8 +625,8 @@ class ZstdMatchFinder {
       do {
         current0 = ip0;
         table[hash0] = ip0 + 1;
-        // The reference loads the repeat's bytes before it tests the offset,
-        // and `ip2 - 0` is `ip2`, so a dead repeat fails on the second test
+        // The reference loads the repeat's bytes before it tests the offset.
+        // `ip2 - 0` is `ip2`. A dead repeat then fails on the second test
         // rather than costing a branch on the first
         if (view.getUint32(ip2, Endian.little) ==
                 view.getUint32(ip2 - rep0, Endian.little) &&
@@ -641,8 +642,8 @@ class ZstdMatchFinder {
           table[hash1] = ip1 + 1;
           break;
         }
-        // A slot holds a position plus one, so an empty one reads as -1 here
-        // and fails the window test without a compare of its own
+        // A slot holds a position plus one. An empty one reads as -1 here and
+        // fails the window test without a compare of its own
         if (held - 1 >= floor &&
             view.getUint32(ip0, Endian.little) ==
                 view.getUint32(held - 1, Endian.little)) {
@@ -663,7 +664,7 @@ class ZstdMatchFinder {
             view.getUint32(ip0, Endian.little) ==
                 view.getUint32(held - 1, Endian.little)) {
           // Past a step of four the next position is already behind where the
-          // search resumes, so writing it would only stale the table
+          // search resumes. Writing it would only stale the table
           if (step <= 4) {
             table[hash1] = ip1 + 1;
           }
@@ -788,7 +789,7 @@ class ZstdMatchFinder {
         final repeat = ip2 - rep0;
         current0 = ip0;
         table[hash0] = ip0 + 1;
-        // `(U32)(prefixStartIndex - repIndex) >= 4`, which rejects a repeat
+        // `(U32)(prefixStartIndex - repIndex) >= 4`. It rejects a repeat
         // landing on the boundary as well as one straddling it. Every other
         // site in the reference takes the boundary itself
         if (rep0 > 0 &&
@@ -864,7 +865,7 @@ class ZstdMatchFinder {
       ip0 += length;
       anchor = ip0;
 
-      // The position the second probe took, which the match ran past
+      // The position the second probe took. The match ran past it
       if (ip1 < ip0) {
         table[hash1] = ip1 + 1;
       }
@@ -918,8 +919,8 @@ class ZstdMatchFinder {
     var rep1 = rep[1];
 
     while (ip < ilimit) {
-      // The position the tables took this pass, which the insertion after a
-      // match measures from rather than from where the match was finally placed
+      // The position the tables took this pass. The insertion after a match
+      // measures from here rather than from where the match was placed
       final curr = ip;
       final shortSlot = _keyTo(view, ip, shortShift);
       final longSlot = _longKey(view, ip, longShift);
@@ -940,10 +941,9 @@ class ZstdMatchFinder {
       } else if (longHit > floor && _same8(view, longHit, ip)) {
         length = 8 + _extend(src, view, ip + 8, longHit + 8, end);
         var match = longHit;
-        // `dictStart` is `ZSTD_getLowestMatchIndex` taken at the end of the
-        // block, so it is `floor`. The lazy loops catch up to `window.lowLimit`
-        // instead, and that one is not the same number once the window has
-        // moved past a segment boundary
+        // `dictStart` is `ZSTD_getLowestMatchIndex` at the end of the block.
+        // That makes it `floor`. The lazy loops catch up to `window.lowLimit`,
+        // a different number once the window has moved past a segment boundary
         final low = match < prefix ? floor : prefix;
         while (ip > anchor && match > low && src[ip - 1] == src[match - 1]) {
           ip--;
@@ -1152,7 +1152,7 @@ class ZstdMatchFinder {
         rep0 = ip - match;
         code = rep0 + 3;
         // Writing this back is only safe while the next position is behind
-        // where the search resumes, which a step under four guarantees
+        // where the search resumes. A step under four guarantees that
         if (step < 4) {
           _hashTable[longSlot1] = ip1 + 1;
         }
@@ -1196,7 +1196,7 @@ class ZstdMatchFinder {
 
   void _parseChained(Uint8List src, ByteData view, int start, int end,
       int lowLimit, ZstdSequenceStore store, Uint32List rep, bool tree) {
-    // The row finder keeps a cache of the next eight hashes, so the reference
+    // The row finder keeps a cache of the next eight hashes. The reference
     // stops a cache short of where the other two searches stop
     final limit = end - zstdMinMatch - 4 - (_search == _searchRow ? 8 : 0);
     final depth = params.depth;
@@ -1253,8 +1253,8 @@ class ZstdMatchFinder {
         if (length < zstdMinMatch) {
           final step = (ip - anchor) >> 8;
           // The plain loop folds the one into `step` before weighing it against
-          // `kLazySkippingStep`, the extDict loop adds it after, so the two
-          // enter the skipping mode a position apart
+          // `kLazySkippingStep`. The extDict loop adds it after. The two enter
+          // the skipping mode a position apart
           _skipping = (_ext ? step : step + 1) > 8;
           ip += step + 1;
           continue;
@@ -1447,8 +1447,8 @@ class ZstdMatchFinder {
 
   /// The longest match at [ip], with [_foundOffset] set to its distance.
   ///
-  /// The candidates of one hash sit together in a row, their tags packed a byte
-  /// each, so a whole row is tested for the tag in a couple of words and only a
+  /// The candidates of one hash sit together in a row with their tags packed a
+  /// byte each. A whole row is tested for the tag in a couple of words. Only a
   /// tag hit costs a look at the input
   int _bestWeb(Uint8List src, ByteData view, int ip, int lowLimit, int end) {
     final floor = _lowestFrom(ip, lowLimit, 1 << params.windowLog);
@@ -1509,8 +1509,8 @@ class ZstdMatchFinder {
     mask = ~mask & _entryMask;
 
     final head = _tagBytes[(row << _rowLog) ^ _tagByteXor];
-    // The masks are literal so the shift counts are provably under sixty four,
-    // which is what keeps the guarded slow path out of the loop
+    // The masks are literal and the shift counts are provably under sixty
+    // four. That keeps the guarded slow path out of the loop
     var rest =
         ((mask >>> (head & 63)) | (mask << ((_rowEntries - head) & 63))) &
             _entryMask;
@@ -1525,7 +1525,7 @@ class ZstdMatchFinder {
       final candidate = _rows[
               base + ((head + _isolatedTrailingZeroBitCount(low)) & _rowMask)] -
           1;
-      // The row runs newest first, so nothing above the window follows
+      // The row runs newest first. Nothing above the window follows
       if (candidate < floor) {
         break;
       }
@@ -1546,7 +1546,7 @@ class ZstdMatchFinder {
       }
     }
 
-    // The reference inserts the position it searched, so the next search has
+    // The reference inserts the position it searched. The next search then has
     // one position less to fill
     _insertOne(row, tag, ip);
     _nextToUpdate = ip + 1;
@@ -1603,7 +1603,7 @@ class ZstdMatchFinder {
       candidates--;
     }
     // The reference drops a candidate still unsorted here rather than pay for
-    // it, which it calls detrimental to ratio and beneficial for speed
+    // it. It calls that detrimental to ratio and beneficial for speed
     if (match > unsortLimit &&
         _chain[((match & _btMask) << 1) + 1] == _unsorted) {
       final held = (match & _btMask) << 1;
@@ -1626,8 +1626,8 @@ class ZstdMatchFinder {
     var largerLength = 0;
     var best = 0;
     var found = 0;
-    // The reference starts the comparison from a code no real offset reaches,
-    // so the first match is always taken
+    // The reference starts the comparison from a code no real offset reaches.
+    // The first match is always taken
     var offBase = 999999999;
     var matchEnd = curr + 9;
     var tries = _tries;
@@ -1710,7 +1710,7 @@ class ZstdMatchFinder {
       final child = (match & _btMask) << 1;
       var length = smallerLength < largerLength ? smallerLength : largerLength;
       length += _extend(src, view, ip + length, at + length, iend);
-      // Equal to the end of the input, so which side it belongs on is unknown
+      // Equal to the end of the input. The side it belongs on is unknown
       if (ip + length == iend) {
         break;
       }
@@ -1759,7 +1759,7 @@ class ZstdMatchFinder {
   /// count.
   ///
   /// Every candidate compared becomes a child of the new node on the side it
-  /// sorts to, so the descent is the insertion
+  /// sorts to. The descent is the insertion
   int _insertTree(
       Uint8List src, ByteData view, int ip, int target, int lowLimit, int end) {
     final slot = _key(view, ip);
@@ -1796,7 +1796,7 @@ class ZstdMatchFinder {
           matchEnd = match + length;
         }
       }
-      // Equal to the end of the input, so which side it belongs on is unknown
+      // Equal to the end of the input. The side it belongs on is unknown
       if (ip + length == end) {
         break;
       }
@@ -1841,7 +1841,7 @@ class ZstdMatchFinder {
   /// [_matchLengths] and [_matchOffBases] and returned as a count.
   ///
   /// `ZSTD_insertBtAndGetAllMatches`: the repeat offsets first, then the tree
-  /// walk, which inserts [ip] as it descends exactly as [_insertTree] does
+  /// walk. The walk inserts [ip] as it descends exactly as [_insertTree] does
   int _allMatches(Uint8List src, ByteData view, int ip, int lowLimit, int end,
       Uint32List rep, bool noLiterals, int longEnough) {
     // A position the tree deliberately skipped past has nothing to offer, and
@@ -1863,7 +1863,7 @@ class ZstdMatchFinder {
     for (var code = noLiterals ? 1 : 0; code < last; code++) {
       final offset = code == 3 ? rep[0] - 1 : rep[code];
       final at = ip - offset;
-      // A repeat that stays inside the data is bounded by the window alone; one
+      // The window alone bounds a repeat that stays inside the data. A repeat
       // reaching into a dictionary may not straddle the two
       if (offset <= 0 ||
           at < windowLow ||
@@ -1896,8 +1896,8 @@ class ZstdMatchFinder {
       }
       _nextShort = ip;
       // `ZSTD_insertAndFindFirstIndexHash3` fills up to but not including this
-      // position, leaving the next call to insert it. At the end of a block
-      // there is no next call, and the position stays out of the table
+      // position. The next call inserts it. At the end of a block there is no
+      // next call and the position stays out of the table
       final held = _short[_shortKey(view, ip)];
       final match = held - 1;
       // A three byte match further back than this is never worth its offset
@@ -1977,7 +1977,7 @@ class ZstdMatchFinder {
     if (larger >= 0) {
       _chain[larger] = 0;
     }
-    // Everything a match already covers is reachable through it, so the tree
+    // Everything a match already covers is reachable through it. The tree
     // starts again past its end rather than at the next byte
     final skip = matchEnd - 8;
     _nextToUpdate = skip > ip + 1 ? skip : ip + 1;
@@ -2013,8 +2013,8 @@ class ZstdMatchFinder {
   void _parseOptimal(Uint8List src, ByteData view, int start, int end,
       int lowLimit, ZstdSequenceStore store, Uint32List rep) {
     // `ZSTD_compressBlock_btultra2` asks for `window.dictLimit == lowLimit`
-    // and for the parse to start on `dictLimit` itself, so a frame given a
-    // dictionary, and a job given a prefix, both skip the pass
+    // and for the parse to start on `dictLimit` itself. A frame given a
+    // dictionary skips the pass, and so does a job given a prefix
     if (params.depth >= 3 &&
         _prices.litLengthSum == 0 &&
         !_ext &&
@@ -2046,7 +2046,7 @@ class ZstdMatchFinder {
     if (_nextToUpdate < lowLimit) {
       _nextToUpdate = lowLimit;
     }
-    // `nextToUpdate3` is a local of `ZSTD_compressBlock_opt_generic`, so the
+    // `nextToUpdate3` is a local of `ZSTD_compressBlock_opt_generic`. The
     // three byte table starts each pass where the tree has reached rather than
     // where the last pass left it
     _nextShort = _nextToUpdate;
@@ -2322,9 +2322,9 @@ class ZstdMatchFinder {
     store.finish(src, anchor, end);
   }
 
-  /// Puts every position below [ip] in its row, so a later search sees them.
-  /// Past a long match only the first and last positions go in, the reference's
-  /// own 384, 96 and 32
+  /// Puts every position below [ip] in its row for a later search. Past a long
+  /// match only the first and last positions go in, the reference's own 384,
+  /// 96 and 32
   @pragma('vm:prefer-inline')
   void _insert(ByteData view, int ip) {
     final at = _nextToUpdate;
@@ -2349,7 +2349,7 @@ class ZstdMatchFinder {
   }
 
   /// Takes the next slot of [row], cycling backwards over everything but the
-  /// first, which the reference keeps its head in
+  /// first. The reference keeps its head in that one
   @pragma('vm:prefer-inline')
   void _insertOne(int row, int tag, int at) {
     final base = row << _rowLog;
@@ -2384,9 +2384,9 @@ class ZstdMatchFinder {
     return back;
   }
 
-  /// The same walk, inlined into the row search where it is most of the
-  /// work and the caller has registers to spare. Only there: pointing every
-  /// caller here was -0.10% and doubled `_parseChained`
+  /// The same walk, inlined into the row search where it is most of the work
+  /// and registers are free. Only there: pointing every call site here was
+  /// -0.10% and doubled `_parseChained`
   @pragma('vm:prefer-inline')
   int _extendRow(Uint8List src, ByteData view, int a, int b, int end) {
     if (!zstdUse64Bit) return zstdWebCount(src, view, a, b, end);
@@ -2465,8 +2465,8 @@ class ZstdMatchFinder {
       ? (view.getUint64(at, Endian.little) * _keyMul) >>> shift
       : zstdWebKey(view, at, _keyMul, shift);
 
-  /// The same key from a multiplier and a shift the caller already holds, so a
-  /// parse that hashes three times a pass does not reload two fields each time
+  /// The same key from a multiplier and a shift the call site already holds. A
+  /// parse that hashes three times a pass then skips two field reloads
   @pragma('vm:prefer-inline')
   static int _keyWith(ByteData view, int at, int keyMul, int shift) =>
       zstdUse64Bit

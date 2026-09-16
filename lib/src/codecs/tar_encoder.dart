@@ -53,8 +53,8 @@ class TarEncoder {
 
   /// Writes everything an entry has before its content: the GNU long name and
   /// long link blocks, then the entry's own header. What is left is the
-  /// returned file's `contentStream` and `padding`, which a caller streaming
-  /// into a `Stream` hands out a piece at a time rather than in one call
+  /// returned file's `contentStream` and `padding`. A streamed write hands
+  /// those out a piece at a time rather than in one call
   TarFile? addHeader(ArchiveFile entry) {
     if (_outputStream == null) {
       return null;

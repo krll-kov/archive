@@ -311,9 +311,9 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
 
     await archive.clear();
   } finally {
-    // The temporary tar and the handle on it are this call's, so a failure part
-    // way through takes them with it rather than leaving them in the system
-    // temporary directory
+    // The temporary tar and the handle on it belong to this call. A failure
+    // part way through takes them with it rather than leaving them in the
+    // system temporary directory
     await toClose?.close();
     final created = tempDir;
     if (created != null) {

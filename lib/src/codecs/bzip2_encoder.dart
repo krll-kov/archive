@@ -42,11 +42,11 @@ class BZip2Encoder {
   /// Sets up what one stream's blocks need and writes the signature.
   ///
   /// [BZip2ChunkedEncoder] drives this, [addByte], [endBlock] and [endStream]
-  /// itself rather than pulling from an [InputStream], so what a stream writes
-  /// is what [encodeStream] writes for the same bytes
+  /// itself rather than pulling from an [InputStream]. A stream then writes
+  /// what [encodeStream] writes for the same bytes
   void beginStream(OutputStream output, {int blockSize100k = 9}) {
-    // The header carries the size as a single digit, so anything outside one
-    // to nine writes a signature no reader accepts
+    // The header carries the size as a single digit. Anything outside one to
+    // nine writes a signature no reader accepts
     if (blockSize100k < 1 || blockSize100k > 9) {
       throw ArchiveException(
           'bzip2: block size $blockSize100k is outside the one to nine the '
@@ -91,8 +91,8 @@ class BZip2Encoder {
     _startBlock();
   }
 
-  /// Takes one byte into the block being built. True once the block is full,
-  /// which is when [endBlock] has to run before the next byte
+  /// Takes one byte into the block being built. True once the block is full.
+  /// [endBlock] has to run before the next byte then
   bool addByte(int byte) {
     _addCharToBlock(byte);
     return _nblock >= _nblockMax;

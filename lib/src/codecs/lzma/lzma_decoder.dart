@@ -169,8 +169,8 @@ class LzmaDecoder {
   }
 
   // Makes room for [uncompressedLength] more bytes and returns where they start.
-  // The dictionary doubles as the output buffer, so a block ends on a buffer the
-  // size of that block; a circular one is the fix and is deliberately not done
+  // The dictionary doubles as the output buffer. A block ends on a buffer the
+  // size of that block. A circular one is the fix and is deliberately not done
   int _reserve(int uncompressedLength) {
     final initialSize = _writePosition;
     final finalSize = initialSize + uncompressedLength;
@@ -252,7 +252,7 @@ class LzmaDecoder {
   // [uncompressedLength] bytes, appending the result directly to [output].
   //
   // This avoids the intermediate copy [decode] has to make. The range handed
-  // to [OutputStream.writeRange] is read before the call returns, so a later
+  // to [OutputStream.writeRange] is read before the call returns. A later
   // [trimDictionary] cannot invalidate it.
   void decodeToOutput(
       InputStream input, int uncompressedLength, OutputStream output) {

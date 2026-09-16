@@ -515,7 +515,7 @@ const zstdLdmGearWords = <int>[
   0x2613d8f4,
 ];
 
-/// `ZSTD_ldm_gearTab`, one word a byte value, which the rolling hash shifts in
+/// `ZSTD_ldm_gearTab`, one word a byte value. The rolling hash shifts it in
 final Uint64List zstdLdmGearTab = Uint64List.fromList([
   for (var at = 0; at < zstdLdmGearWords.length; at += 2)
     (zstdLdmGearWords[at] << 32) | zstdLdmGearWords[at + 1],

@@ -13,7 +13,7 @@ import 'zstd/zstd_window.dart';
 class ZstdDecoder {
   /// Frames declaring a window above this are rejected rather than allocated
   /// for, since the header is only as trustworthy as whoever wrote the file.
-  /// The format permits up to 3.75 TB; the default matches the reference
+  /// The format permits up to 3.75 TB. The default matches the reference
   /// decoder's own ceiling
   final int windowSizeLimit;
 
@@ -29,16 +29,16 @@ class ZstdDecoder {
     }
   }
 
-  /// Decompress [data], which must hold whole frames. A malformed archive
-  /// yields the frames that decoded whole before the failure, unless
-  /// [throwOnError]. [verify] checks the checksum of every frame carrying one,
-  /// at the cost of hashing the whole output
+  /// Decompress [data]. It must hold whole frames. A malformed archive yields
+  /// the frames that decoded whole before the failure, unless [throwOnError].
+  /// [verify] checks the checksum of every frame carrying one, at the cost of
+  /// hashing the whole output
   Uint8List decodeBytes(List<int> data,
       {bool verify = false, bool throwOnError = false}) {
     final bytes = data is Uint8List ? data : Uint8List.fromList(data);
     // One frame decodes into its own buffer and is handed back as a view of it.
     // Several would have to be joined afterwards, holding every frame and the
-    // join at once, so they go through one sink instead
+    // join at once. They go through one sink instead
     if (_frameCount(bytes) > 1) {
       final sink = OutputMemoryStream();
       final total = uncompressedSize(bytes);
@@ -66,8 +66,8 @@ class ZstdDecoder {
   }
 
   /// How many frames carry content, without decoding any of them. Anything the
-  /// walk cannot make sense of reads as one, which keeps the decode itself the
-  /// only place that reports a malformed archive
+  /// walk cannot make sense of reads as one. The decode itself stays the only
+  /// place that reports a malformed archive
   int _frameCount(Uint8List bytes) {
     var at = 0;
     var frames = 0;
@@ -110,7 +110,7 @@ class ZstdDecoder {
     }
   }
 
-  /// Walks the frames of [input] a block at a time, so neither the compressed
+  /// Walks the frames of [input] a block at a time. Neither the compressed
   /// side nor the decoded one is ever held whole
   void _stream(InputStream input, OutputStream output, bool verify) {
     Uint8List? scratch;
@@ -195,7 +195,7 @@ class ZstdDecoder {
           return null;
         }
         total += size;
-        // Only the header was read, so the blocks have to be walked to find
+        // Only the header was read. The blocks have to be walked to find
         // where the next frame starts
         at = _skipFrame(bytes, at + 4 + header.size, header);
       }
@@ -293,8 +293,8 @@ class ZstdDecoder {
   }
 
   /// A declared content size is the writer's word and buys no memory on its
-  /// own. A block costs three bytes of header and yields at most [blockSizeMax],
-  /// so [remaining] bytes of input cannot produce more than this however the
+  /// own. A block costs three bytes of header and yields at most [blockSizeMax].
+  /// [remaining] bytes of input cannot produce more than this however the
   /// header reads. Anything above it is left to the buffer's own growth
   static int _affordable(int declared, int remaining, int blockSizeMax) {
     final ceiling = ((remaining + 2) ~/ 3) * blockSizeMax;

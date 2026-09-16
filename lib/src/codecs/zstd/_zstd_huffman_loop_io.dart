@@ -105,8 +105,8 @@ void decodeHuffman4Streams(
   var o2 = dstStart + 2 * segment;
   var o3 = dstStart + 3 * segment;
 
-  // Four symbols a step, written out rather than nested in a loop: AOT leaves a
-  // `for (var u = 0; u < 4; u++)` rolled, and `>>> 1 >>> shift` is two fixed
+  // Four symbols a step, written out rather than nested in a loop. AOT leaves
+  // a `for (var u = 0; u < 4; u++)` rolled. `>>> 1 >>> shift` is two fixed
   // shifts where `>>> (63 - x)` would be a compare and a branch
   final grouped = tail - (tail & 3);
   for (var i = 0; i < grouped; i += 4) {

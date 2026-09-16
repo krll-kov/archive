@@ -22,7 +22,7 @@ Int64List _buildSlicingTables() {
   return tables;
 }
 
-/// A running CRC-64. Here an int holds the whole of it, so the halves are read
+/// A running CRC-64. Here an int holds the whole of it and the halves are read
 /// back out of the one value
 class Crc64Core {
   var _crc = 0;

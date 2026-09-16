@@ -16,12 +16,12 @@ import 'zstd_mt_parallel.dart';
 /// single threaded one
 const zstdMtChunkSize = 4 * zstdBlockMaximumSize;
 
-/// `ZSTDMT_JOBSIZE_MIN`: at or below this the reference drops its workers, so
-/// the frame is the one the single threaded encoder writes
+/// `ZSTDMT_JOBSIZE_MIN`: at or below this the reference drops its workers. The
+/// frame is then the one the single threaded encoder writes
 const zstdMtJobSizeMin = 512 * 1024;
 
-/// Whether the long distance matcher is on, which changes how a threaded frame
-/// is cut as well as where its matches come from
+/// Whether the long distance matcher is on. It changes how a threaded frame is
+/// cut as well as where its matches come from
 bool zstdMtLongRange(ZstdLevelParams params) =>
     ZstdLdm.forParams(params.refStrategy, params.windowLog) != null;
 
@@ -131,8 +131,8 @@ class ZstdMtFrameEncoder {
       _rep.setAll(0, dictionary.repeatOffsets);
     } else {
       if (start > base) {
-        // `forceMaxWindow` leaves `loadedDictEnd` at zero, so the prefix is
-        // bounded by the window like any other input
+        // `forceMaxWindow` leaves `loadedDictEnd` at zero. The window bounds
+        // the prefix like any other input
         blocks.primeRawPrefix(src, base, start);
       }
       // `ZSTD_invalidateRepCodes`: a job after the first starts with no usable
@@ -167,7 +167,7 @@ class ZstdMtFrameEncoder {
       at += take;
       // What the first block cost says what the rest will, near enough to take
       // the room once instead of doubling into it. A job never exceeds its own
-      // bound, so neither does the estimate
+      // bound and neither does the estimate
       if (at - start == take && at < end) {
         final span = end - start;
         final bound = span + (span >> 7) + 64;
@@ -178,8 +178,8 @@ class ZstdMtFrameEncoder {
     }
   }
 
-  /// `ZSTDMT_computeTargetJobLog` without the long distance matcher, which
-  /// this path does not take yet
+  /// `ZSTDMT_computeTargetJobLog` without the long distance matcher. This path
+  /// does not take that one yet
   static int _targetJobLog(ZstdLevelParams params) {
     final int log;
     if (zstdMtLongRange(params)) {
@@ -218,8 +218,8 @@ class ZstdMtFrameEncoder {
     return given < zstdMtJobSizeMin ? zstdMtJobSizeMin : given;
   }
 
-  /// `ZSTDMT_overlapLog_default`, by the reference's own strategy numbering,
-  /// which [ZstdLevelParams.refStrategy] carries
+  /// `ZSTDMT_overlapLog_default`, by the reference's own strategy numbering.
+  /// [ZstdLevelParams.refStrategy] carries that number
   static int _overlapLogDefault(ZstdLevelParams params) {
     switch (params.refStrategy) {
       case 9:
@@ -376,7 +376,7 @@ class ZstdMtLdmPass {
     return ZstdMtLdmPass._(ldm, 1 << params.windowLog, jobSize);
   }
 
-  /// The matches covering `[start, end)`, which must follow what came before
+  /// The matches covering `[start, end)`. They must follow what came before
   ZstdLdmSequences generate(Uint8List src, int start, int end) {
     _append(src, start, end);
     // `ZSTD_ldm_getMaxNbSeq` sizes the pool from the job size
@@ -407,7 +407,7 @@ class ZstdMtLdmPass {
       }
     }
     if (_filled + size > _held.length) {
-      // Nothing older than the window matches, so it goes
+      // Nothing older than the window matches. It goes
       final drop = _filled + size - _held.length;
       _held.setRange(0, _filled - drop, _held, drop);
       _filled -= drop;
@@ -419,8 +419,8 @@ class ZstdMtLdmPass {
 }
 
 /// Cuts a stream of arriving bytes into jobs. Each job carries the prefix the
-/// reference gives it, the tail of the job before, so a worker needs nothing
-/// else; the ring holds one job and one prefix at a time
+/// reference gives it, the tail of the job before. A worker needs nothing else.
+/// The ring holds one job and one prefix at a time
 class ZstdMtRing {
   final int jobSize;
   final int prefixSize;
@@ -454,7 +454,7 @@ class ZstdMtRing {
       ..setRange(0, _prefix.length, _prefix)
       ..setRange(_prefix.length, _prefix.length + body.length, body);
     final keep = body.length < prefixSize ? body.length : prefixSize;
-    // A view would keep the whole job alive behind it, so the tail is copied
+    // A view would keep the whole job alive behind it. The tail is copied
     _prefix = Uint8List.fromList(Uint8List.sublistView(job, job.length - keep));
     _jobs++;
     return job;
@@ -506,8 +506,8 @@ List<int> _jobStarts(int size, int job) {
   return starts;
 }
 
-/// The pool a run gets: what was asked for, or one worker a core with one left
-/// for the caller, lowered to what the budget affords and never below one
+/// The pool a run gets: what was asked for, or one worker a core with one core
+/// left free, lowered to what the budget affords and never below one
 int zstdMtPoolSize(int workers, int cores, int cap) {
   var pool = workers > 0 ? workers : cores - 1;
   if (cap > 0 && pool > cap) {
@@ -563,8 +563,8 @@ void _writeChecksum(OutputStream out, int digest) {
 }
 
 /// The threaded frame, its jobs compressed wherever [zstdMtCompressJobs] puts
-/// them and pasted together in job order. The header and the checksum are the
-/// caller's, since a job writes neither
+/// them and pasted together in job order. The header and the checksum are
+/// written outside, since a job writes neither
 Future<Uint8List> zstdMtCompress(Uint8List src, int level,
     {bool checksum = true,
     int jobSize = 0,
@@ -582,14 +582,14 @@ Future<Uint8List> zstdMtCompress(Uint8List src, int level,
     starts.add(at);
   }
   final cap = zstdMtWorkerCap(memoryBudget, level, sized, geometry);
-  // The reference gives the dictionary to job zero only, so that one is done
-  // here rather than plumbed through the port, and the rest go to the pool
+  // The reference gives the dictionary to job zero only. That job is done here
+  // rather than plumbed through the port, and the rest go to the pool
   Uint8List? firstPart;
   var rest = starts;
   ZstdMtLdmPass? ldmPass;
   if (dictionary != null) {
     // `ZSTDMT_serialState_genSequences` runs one long distance pass over every
-    // job in order. Job zero is in it, so the pass starts here
+    // job in order. Job zero is in it and the pass starts here
     ldmPass = ZstdMtLdmPass.forParams(
         zstdParamsForLevel(level, sized), jobSize > 0 ? jobSize : src.length);
     final firstEnd = starts.length > 1 ? starts[1] : src.length;

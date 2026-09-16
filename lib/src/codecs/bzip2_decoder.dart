@@ -90,8 +90,8 @@ class BZip2Decoder {
         combinedCrc = ((combinedCrc << 1) | (combinedCrc >> 31)) & 0xffffffff;
         combinedCrc ^= blockCrc;
       } else if (type == blockEos) {
-        // A file reads zeros past its end, so a cut inside the stream check is
-        // only seen by counting the bits that are left
+        // A file reads zeros past its end. A cut inside the stream check shows
+        // up only by counting the bits that are left
         if (br.bitsLeft + input.length * 8 < 32) {
           return false;
         }
@@ -118,7 +118,7 @@ class BZip2Decoder {
   /// Allocates what one stream's blocks need.
   ///
   /// [BZip2ChunkedDecoder] walks the blocks itself, one per arrival of enough
-  /// input, so it sets this up rather than [decodeStream]
+  /// input. It sets this up rather than [decodeStream]
   void beginStream(int blockSize100k) {
     _blockSize100k = blockSize100k;
     _tt = Uint32List(_blockSize100k * 100000);

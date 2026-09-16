@@ -11,14 +11,14 @@ import 'output_stream.dart';
 /// A codec that is handed bytes rather than asking for them.
 ///
 /// The decoders in this package pull: they ask their input for the next field
-/// and the input blocks until it has it. A `Stream` cannot be read that way, so
-/// this turns the loop around. A subclass keeps its position in fields rather
+/// and the input blocks until it has it. A `Stream` cannot be read that way.
+/// This turns the loop around. A subclass keeps its position in fields rather
 /// than on the stack, reads whatever has arrived in [step], and returns as soon
-/// as a field is short; the next arrival carries on where it stopped.
+/// as a field is short. The next arrival carries on where it stopped.
 ///
-/// What the base owns is everything that is not the format: holding what has
-/// arrived and not been read, handing the parse the caller's own buffer where
-/// nothing is held, and what a failure means afterwards.
+/// The base owns everything that is not the format: holding what has arrived
+/// and not been read, handing the parse the incoming buffer where nothing is
+/// held, and what a failure means afterwards.
 abstract class ChunkedSink extends ByteConversionSink {
   /// Where the result goes, one piece at a time
   final Sink<List<int>> output;
@@ -29,7 +29,7 @@ abstract class ChunkedSink extends ByteConversionSink {
   /// unit of the format, never everything that has come past
   Uint8List _carry = Uint8List(0);
 
-  /// The buffer this sink owns. [_carry] is the caller's piece while a call is
+  /// The buffer this sink owns. [_carry] is the incoming piece while a call is
   /// running and this one between calls
   Uint8List _owned = Uint8List(0);
   int _at = 0;
@@ -54,7 +54,7 @@ abstract class ChunkedSink extends ByteConversionSink {
   int get available => _end - _at;
 
   /// The next [count] bytes without copying them. Only valid until the call
-  /// that reads them returns, since the buffer under it may be the caller's
+  /// that reads them returns. The buffer under it may be the incoming piece
   Uint8List view(int count) => Uint8List.sublistView(_carry, _at, _at + count);
 
   /// Marks [count] bytes as read
@@ -66,13 +66,13 @@ abstract class ChunkedSink extends ByteConversionSink {
   @override
   void add(List<int> chunk) => addSlice(chunk, 0, chunk.length, false);
 
-  /// Takes part of a buffer without the caller having to cut a view of it,
-  /// which is what a `ByteConversionSink` is for
+  /// Takes part of a buffer with no view cut in front of it. That is what a
+  /// `ByteConversionSink` is for
   @override
   void addSlice(List<int> chunk, int start, int end, bool isLast) {
     RangeError.checkValidRange(start, end, chunk.length);
-    // One copy, not two. Whatever the parse does not read is moved to our own
-    // buffer before this returns, so this copy is safe to keep
+    // One copy, not two. Whatever the parse does not read moves into this
+    // sink's own buffer before the call returns. This copy is safe to keep
     _add(chunk is Uint8List
         ? Uint8List.sublistView(chunk, start, end)
         : (Uint8List(end - start)..setRange(0, end - start, chunk, start)));
@@ -93,9 +93,9 @@ abstract class ChunkedSink extends ByteConversionSink {
       return;
     }
     if (_at == _end) {
-      // Nothing is held, so the parse reads out of what arrived rather than
-      // out of a copy of it. The caller owns its buffer again the moment this
-      // returns. So we keep whatever the parse did not reach
+      // Nothing is held. The parse reads out of what arrived rather than out
+      // of a copy of it. That buffer belongs to the sender again the moment
+      // this returns. Whatever the parse did not reach is kept here
       _carry = bytes;
       _at = 0;
       _end = bytes.length;
@@ -124,10 +124,11 @@ abstract class ChunkedSink extends ByteConversionSink {
   }
 
   /// Closes [output] only if the input ended cleanly. On a failed parse it
-  /// stays open, the same as `gzip.decoder` and `zlib.decoder` in `dart:io`,
-  /// so the caller has to close its own file or socket. The first close after a
-  /// failure reports it, and a close after that returns without doing anything,
-  /// as `dart:io` does. `add` after a failure reports it every time
+  /// stays open, the same as `gzip.decoder` and `zlib.decoder` in `dart:io`.
+  /// Closing the file or socket behind it is then someone else's job. The
+  /// first close after a failure reports it, and a close after that returns
+  /// without doing anything, as `dart:io` does. `add` after a failure reports
+  /// it every time
   @override
   void close() {
     if (_closed) {
@@ -143,10 +144,10 @@ abstract class ChunkedSink extends ByteConversionSink {
     output.close();
   }
 
-  /// Runs a piece of the parse and remembers a failure, so that the next call
-  /// reports the same one rather than reading what follows it as if nothing
-  /// had happened. What a codec's core throws at corrupt data is whatever it
-  /// ran into, and this is where that becomes one kind of failure
+  /// Runs a piece of the parse and remembers a failure. The next call reports
+  /// the same one rather than reading what follows it as if nothing had
+  /// happened. A codec's core throws whatever it ran into at corrupt data.
+  /// This is where that becomes one kind of failure
   void _guarded(void Function() body) {
     try {
       body();
@@ -178,8 +179,8 @@ abstract class ChunkedSink extends ByteConversionSink {
     _end += chunk.length;
   }
 
-  /// Moves what the parse did not reach into this sink's own buffer, so that
-  /// no view of the caller's piece outlives the call
+  /// Moves what the parse did not reach into this sink's own buffer. No view
+  /// of the incoming piece then outlives the call
   void _keepRest() {
     final rest = _end - _at;
     if (rest > _owned.length) {
@@ -199,7 +200,7 @@ abstract class ChunkedSink extends ByteConversionSink {
 }
 
 /// A `Converter` over a [ChunkedSink]. Whole input conversion goes through the
-/// chunked path. `ZLibDecoder` does the same, so there is one behaviour rather
+/// chunked path. `ZLibDecoder` does the same. That leaves one behaviour rather
 /// than two
 abstract class ChunkedConverter extends Converter<List<int>, List<int>> {
   const ChunkedConverter();
@@ -217,7 +218,7 @@ abstract class ChunkedConverter extends Converter<List<int>, List<int>> {
   }
 
   /// A stream hears a failure once. The sink throws it again on every later
-  /// call, so the input after it is dropped here, as gzip and zlib in dart:io
+  /// call. The input after it is dropped here, as gzip and zlib in dart:io
   /// drop it
   @override
   Stream<List<int>> bind(Stream<List<int>> stream) =>
@@ -294,7 +295,7 @@ const _streamPiece = 1 << 16;
 /// `OutputStream`, handed to a `Sink` piece by piece.
 ///
 /// Every range is copied on the way out. The core writes ranges of a buffer it
-/// keeps using, so a sink that held a view of one would see it change
+/// keeps using. A sink holding a view of one would see it change
 class SinkOutputStream extends OutputStream {
   final Sink<List<int>> sink;
 
@@ -435,15 +436,15 @@ class SinkOutputStream extends OutputStream {
   /// length to zero and `OutputFileStream.clear` closes the file. `dart:io` has
   /// no such method to follow. Nothing in the package calls this on a sink:
   /// `Inflate` clears only an [OutputMemoryStream], and `Deflate` clears from
-  /// `takeBytes`, which no streamed path reaches
+  /// `takeBytes`. No streamed path reaches that one
   @override
   void clear() {
     written = 0;
     _queued = 0;
   }
 
-  /// Hands over whatever is queued. Every codec calls this when it is done,
-  /// which is what makes the gathering safe
+  /// Hands over whatever is queued. Every codec calls this when it is done.
+  /// That is what makes the gathering safe
   @override
   void flush() => _drain();
 }

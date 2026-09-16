@@ -13,9 +13,9 @@ class Bz2BitReader {
   int get bitsLeft => _bitPos;
 
   /// Set once a read went past the end of the input. An archive cut inside a
-  /// block asks for bytes that are not there, and the two input streams answer
-  /// differently: a file reads zeros past its end, memory throws. So we stop
-  /// here instead and the decoder returns a failure either way
+  /// block asks for bytes that are not there and the two input streams answer
+  /// differently. A file reads zeros past its end, memory throws. The read
+  /// stops here instead and the decoder returns a failure either way
   bool get overrun => _overrun;
 
   int _nextByte() {

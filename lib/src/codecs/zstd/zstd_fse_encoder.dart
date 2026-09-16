@@ -30,7 +30,7 @@ int zstdOptimalTableLog(int maxLog, int total, int maxSymbol) {
     return 5;
   }
   var log = maxLog;
-  // The reference holds this in an unsigned word, so a total of four or less
+  // The reference holds this in an unsigned word. A total of four or less
   // wraps it past every table log instead of shrinking one
   final fromSize = zstdHighestBit(total - 1) - 2;
   if (fromSize >= 0 && fromSize < log) {
@@ -48,16 +48,16 @@ int zstdOptimalTableLog(int maxLog, int total, int maxSymbol) {
 
 /// Scales [counts] to exactly `1 << accuracyLog` points in [into].
 ///
-/// A symbol too rare to earn a point gets -1, which the format reads as less
-/// than one and which costs a full state reset. Returns false when one symbol
-/// takes everything, which the caller should write as an RLE table instead
+/// A symbol too rare to earn a point gets -1. The format reads that as less
+/// than one and it costs a full state reset. Returns false when one symbol
+/// takes everything. Such a table goes out as RLE instead
 bool zstdNormalizeCount(Int16List into, Uint32List counts, int total,
     int maxSymbol, int accuracyLog,
     {bool useLowProbCount = true}) {
   final lowProb = useLowProbCount ? -1 : 1;
   final lowThreshold = total >> accuracyLog;
-  // The reference's own fixed point: a step of `2^62 / total` truncated once,
-  // which is not the same as dividing per symbol and rounds a knife edge down
+  // The reference's own fixed point: a step of `2^62 / total` truncated once.
+  // That is not the same as dividing per symbol and rounds a knife edge down
   final scale = 62 - accuracyLog;
   final step = (1 << 62) ~/ total;
   final vStep = 1 << (scale - 20);
@@ -298,7 +298,7 @@ int zstdWriteNCount(
 class ZstdFseCTable {
   final Uint16List nextState;
 
-  /// `FSE_symbolCompressionTransform`, which the reference reads as one eight
+  /// `FSE_symbolCompressionTransform`. The reference reads it as one eight
   /// byte value: the bit delta in the high half, the state delta in the low
   final TypedData symbolTT;
   int accuracyLog = 0;
@@ -370,7 +370,7 @@ class ZstdFseCTable {
           1) >>
       16;
 
-  /// The state the last symbol of a stream starts from, which costs no bits
+  /// The state the last symbol of a stream starts from. It costs no bits
   @pragma('vm:prefer-inline')
   int initialState(int symbol) {
     if (!zstdUse64Bit) {

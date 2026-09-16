@@ -45,8 +45,8 @@ class Crc64Core {
     _low = 0;
   }
 
-  /// The state is the finished value, so the initial and final inversions go
-  /// on and come off around each call, the way [getCrc64_] chains
+  /// The state is the finished value. The initial and final inversions go on
+  /// and come off around each call, the way [getCrc64_] chains
   void update(List<int> array) {
     final tableHigh = _tableHigh;
     final tableLow = _tableLow;
