@@ -25,8 +25,8 @@ final Int16List zstdPredefinedOffset = Int16List.fromList(const [
 typedef ZstdTableBuilder = void Function(
     int base, int slot, Int16List counts, int maxSymbol, int accuracyLog);
 
-/// Builds the three predefined tables at their own bases, once per decoder, so
-/// a block that selects one only has to point at it
+/// Builds the three predefined tables at their own bases, once per decoder. A
+/// block that selects one only has to point at it
 void zstdBuildPredefinedTables(ZstdTableBuilder build) {
   build(
       zstdPredefinedLiteralsLengthTableBase,

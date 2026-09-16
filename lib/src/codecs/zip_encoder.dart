@@ -31,8 +31,8 @@ class _ZipFileData {
   /// the output rather than into a buffer first
   InputStream? source;
 
-  /// What [source] is deflated at, resolved where the entry is added: the
-  /// buffered path reads the same three places and must not disagree with it
+  /// The level [source] is deflated at, resolved where the entry is added. The
+  /// buffered path reads the same three places and must not disagree
   int level = 6;
 
   /// General purpose bit 3. It says the check and the sizes follow the data.

@@ -20,15 +20,11 @@ export 'xz/xz_multithread_options.dart';
 /// the work over isolates, one xz block at a time
 class XZDecoder {
   /// The biggest output allocated up front from the size in the stream index.
-  /// The index comes from the archive. A hostile one can name a size that is
-  /// not there. An honest one can name hundreds of gigabytes, since 6000:1 is
-  /// a normal ratio for repetitive data. Over this limit the buffer grows as
-  /// the bytes arrive. That costs some copying and makes a wrong size
-  /// harmless. It does not cap decoding. [uncompressedSize] returns null over
-  /// this limit instead of an unusable number.
-  ///
-  /// The default is much lower on the web. A failed allocation there kills the
-  /// page instead of throwing
+  /// The index comes from the archive and can name a size that is not there,
+  /// or hundreds of gigabytes for repetitive data at 6000:1. Over this limit
+  /// the buffer grows as the bytes arrive and [uncompressedSize] returns null.
+  /// Decoding itself is not capped. The default is much lower on the web,
+  /// where a failed allocation kills the page
   final int maxPreallocateSize;
 
   XZDecoder({int? maxPreallocateSize})
@@ -42,23 +38,14 @@ class XZDecoder {
   /// Decodes [bytes].
   ///
   /// A broken or truncated archive gives back whatever decoded before the
-  /// failure. Nothing marks it as partial. Set [throwOnError] to get an
-  /// [ArchiveException] instead. There is no other way to report a failure
-  /// here. The return value is already taken.
-  ///
-  /// [verify] checks the checksum stored with each block. It costs time. It
-  /// only changes whether a failure is noticed.
-  ///
-  /// [throwOnError] covers a bad archive, nothing else. A bad argument throws
-  /// [ArgumentError] either way.
+  /// failure, with nothing to mark it partial. [throwOnError] turns that into
+  /// an [ArchiveException]. [verify] checks the checksum stored with each
+  /// block. A bad argument throws [ArgumentError] either way.
   ///
   /// With [multithread] the call returns an empty list at once. The result
-  /// goes to [XZMultithreadOptions.onDone]. [throwOnError] still works, but
-  /// the exception goes to [XZMultithreadOptions.onError]. The call has
-  /// already returned by then.
-  ///
-  /// Splitting only helps if the archive has several blocks. That is what
-  /// `xz --block-size=...` writes. Measured on 1.1 GB in six 192 MB blocks:
+  /// goes to [XZMultithreadOptions.onDone], a failure to its `onError`.
+  /// Splitting helps only on several blocks, what `xz --block-size=...`
+  /// writes. Measured on 1.1 GB in six 192 MB blocks:
   ///
   /// | call | peak memory | time |
   /// |---|---|---|
@@ -66,11 +53,10 @@ class XZDecoder {
   /// | with `multithread` | 3.9 GB | 8.0 s |
   /// | with `multithread`, six workers | 4.4 GB | 5.1 s |
   ///
-  /// The default memory budget allowed three workers here. This method is the
-  /// expensive one. It keeps the archive and the output in memory, and every
-  /// worker holds a copy of its block. [decodeStream] over an
-  /// `InputFileStream` and an `OutputFileStream` does the same archive in the
-  /// same time and uses under a third of the memory
+  /// The budget allowed three workers here. This method keeps the archive and
+  /// the output in memory and every worker holds a copy of its block.
+  /// [decodeStream] over files does the same archive in the same time on under
+  /// a third of the memory
   Uint8List decodeBytes(List<int> data,
       {bool verify = false,
       bool throwOnError = false,
@@ -99,26 +85,19 @@ class XZDecoder {
 
   /// Decodes [input] into [output].
   ///
-  /// Returns false if the archive is broken or truncated. [output] then holds
-  /// whatever decoded before the failure. Throw it away. Set [throwOnError] to
-  /// get an [ArchiveException] instead. The partial data lands in [output]
-  /// either way. Written bytes cannot be taken back.
-  ///
-  /// [verify] checks the checksum stored with each block. It costs time. It
-  /// only changes whether a failure is noticed.
-  ///
-  /// [throwOnError] covers a bad archive, nothing else. A bad argument throws
+  /// Returns false on a broken or truncated archive. [output] then holds
+  /// whatever decoded before the failure, and written bytes cannot be taken
+  /// back. [throwOnError] turns that into an [ArchiveException]. [verify]
+  /// checks the checksum stored with each block. A bad argument throws
   /// [ArgumentError] either way.
   ///
   /// With [multithread] the call returns false at once. The outcome goes to
-  /// [XZMultithreadOptions.onDone]. [throwOnError] still works, but the
-  /// exception goes to [XZMultithreadOptions.onError]. The call has already
-  /// returned by then.
+  /// [XZMultithreadOptions.onDone], a failure to its `onError`.
   ///
-  /// This method is the cheap one. How cheap depends on the two streams. With
-  /// an `InputFileStream` every worker reads its own block from the file while
-  /// it decodes it. Neither the archive nor a block is ever held whole.
-  /// Measured on 1.1 GB in six 192 MB blocks, at the default memory budget:
+  /// This method is the cheap one. With an `InputFileStream` every worker
+  /// reads its own block from the file as it decodes. Neither the archive nor
+  /// a block is ever held whole. Measured on 1.1 GB in six 192 MB blocks, at
+  /// the default memory budget:
   ///
   /// | input, output | peak memory | time |
   /// |---|---|---|
@@ -128,10 +107,9 @@ class XZDecoder {
   /// | `InputMemoryStream`, `OutputFileStream` | 2.6 GB | 10.1 s |
   ///
   /// The first row holds only the LZMA dictionary and the two stream buffers.
-  /// No split run can match it. Every worker needs its own dictionary. Every
-  /// row below it buys time with memory. On a drive that pays for seeks it may
-  /// buy nothing. Workers read different parts of the file at once. One thread
-  /// can then win outright. See [XZMultithreadOptions.fileReadBufferSize].
+  /// No split run matches it, since every worker needs its own dictionary.
+  /// Every row below buys time with memory, and on a drive that pays for seeks
+  /// it may buy nothing. See [XZMultithreadOptions.fileReadBufferSize].
   ///
   /// Any other [input] gives the workers no random access. It decodes on the
   /// calling isolate and reports through [XZMultithreadOptions.onDone]
@@ -214,13 +192,9 @@ class XZDecoder {
     final layout = parseXZLayout(XZMemorySource(bytes));
 
     if (layout == null || layout.uncompressedSize > maxPreallocateSize) {
-      // There is no readable index here, or it claims more output than is safe
-      // to trust. The archive supplies the index and a hostile one can claim
-      // any size. The buffer grows as the bytes arrive instead
-      //
-      // Blocks still decode in parallel once the layout is known. They finish
-      // out of order. An OutputMemoryStream only appends. The ordered writer
-      // holds a block that ran ahead
+      // No readable index here, or it claims more output than is safe to
+      // trust. The buffer grows as the bytes arrive instead. Blocks still
+      // decode in parallel and the ordered writer holds one that ran ahead
       final output = OutputMemoryStream();
       final writer = layout == null ? null : _OrderedWriter(output);
       String? reason;
@@ -314,13 +288,11 @@ class XZDecoder {
       throw _invalid(reason);
     }
 
-    // Blocks decode out of order. The output is cut where one thread would
-    // have given up: at the first block that is not whole and good, that block
-    // included. A block that failed part way keeps what it managed. Chunks
-    // inside one block arrive in order. A block that decoded fully and then
-    // failed its check keeps all of it. That is what one thread writing
-    // straight to an output stream leaves behind. Either way these bytes are
-    // not vouched for and the decode reported failure
+    // Blocks decode out of order. The output is cut at the first block that
+    // is not whole and good, that block included, where one thread would have
+    // given up. A block that failed part way keeps what it managed, since
+    // chunks inside one block arrive in order. A block that failed only its
+    // check keeps all of it. These bytes are not vouched for either way
     var end = 0;
     for (var i = 0; i < blocks.length; i++) {
       final whole = received[i] == blocks[i].uncompressedLength;

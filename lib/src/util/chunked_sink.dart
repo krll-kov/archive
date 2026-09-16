@@ -10,15 +10,13 @@ import 'output_stream.dart';
 
 /// A codec that is handed bytes rather than asking for them.
 ///
-/// The decoders in this package pull: they ask their input for the next field
-/// and the input blocks until it has it. A `Stream` cannot be read that way.
-/// This turns the loop around. A subclass keeps its position in fields rather
-/// than on the stack, reads whatever has arrived in [step], and returns as soon
-/// as a field is short. The next arrival carries on where it stopped.
+/// The decoders in this package pull. A `Stream` cannot be read that way, and
+/// this turns the loop around. A subclass keeps its position in fields rather
+/// than on the stack, reads what arrived in [step] and returns as soon as a
+/// field is short.
 ///
-/// The base owns everything that is not the format: holding what has arrived
-/// and not been read, handing the parse the incoming buffer where nothing is
-/// held, and what a failure means afterwards.
+/// The base holds what arrived and was not read, hands the parse the incoming
+/// buffer where nothing is held, and decides what a failure means afterwards.
 abstract class ChunkedSink extends ByteConversionSink {
   /// Where the result goes, one piece at a time
   final Sink<List<int>> output;
@@ -46,8 +44,8 @@ abstract class ChunkedSink extends ByteConversionSink {
   /// here yet. Called again with more bytes behind it
   void step();
 
-  /// What the format needs before the input may end. Called once, after the
-  /// last [step], and only when nothing has failed
+  /// The last thing the format needs before the input may end. Called once,
+  /// after the last [step], and only when nothing has failed
   void finish();
 
   /// How many bytes have arrived and not been read
@@ -124,11 +122,9 @@ abstract class ChunkedSink extends ByteConversionSink {
   }
 
   /// Closes [output] only if the input ended cleanly. On a failed parse it
-  /// stays open, the same as `gzip.decoder` and `zlib.decoder` in `dart:io`.
-  /// Closing the file or socket behind it is then someone else's job. The
-  /// first close after a failure reports it, and a close after that returns
-  /// without doing anything, as `dart:io` does. `add` after a failure reports
-  /// it every time
+  /// stays open, as `gzip.decoder` and `zlib.decoder` do in `dart:io`. The
+  /// first close after a failure reports it, later ones do nothing, and `add`
+  /// after a failure reports it every time
   @override
   void close() {
     if (_closed) {
@@ -145,9 +141,8 @@ abstract class ChunkedSink extends ByteConversionSink {
   }
 
   /// Runs a piece of the parse and remembers a failure. The next call reports
-  /// the same one rather than reading what follows it as if nothing had
-  /// happened. A codec's core throws whatever it ran into at corrupt data.
-  /// This is where that becomes one kind of failure
+  /// the same one rather than reading on. Whatever a codec's core throws at
+  /// corrupt data becomes one kind of failure here
   void _guarded(void Function() body) {
     try {
       body();
@@ -291,11 +286,9 @@ class _Collected implements Sink<List<int>> {
 /// Under the block every codec here gathers into
 const _streamPiece = 1 << 16;
 
-/// The output side of a chunked codec: what a codec's core writes into an
-/// `OutputStream`, handed to a `Sink` piece by piece.
-///
-/// Every range is copied on the way out. The core writes ranges of a buffer it
-/// keeps using. A sink holding a view of one would see it change
+/// The output side of a chunked codec. A codec's core writes into an
+/// `OutputStream` and the bytes reach a `Sink` piece by piece. Every range is
+/// copied on the way out, since the core keeps writing the buffer behind it
 class SinkOutputStream extends OutputStream {
   final Sink<List<int>> sink;
 
@@ -311,7 +304,7 @@ class SinkOutputStream extends OutputStream {
   OutputMemoryStream? _divert;
 
   set divert(OutputMemoryStream? held) {
-    // What is queued belongs in front of what is about to be diverted
+    // The queued bytes belong in front of the ones about to be diverted
     _drain();
     _divert = held;
   }
@@ -432,11 +425,9 @@ class SinkOutputStream extends OutputStream {
   /// Drops the count and anything still buffered. Bytes already sent to the
   /// sink cannot be taken back.
   ///
-  /// Dropping is what the other outputs do: `OutputMemoryStream.clear` sets its
-  /// length to zero and `OutputFileStream.clear` closes the file. `dart:io` has
-  /// no such method to follow. Nothing in the package calls this on a sink:
-  /// `Inflate` clears only an [OutputMemoryStream], and `Deflate` clears from
-  /// `takeBytes`. No streamed path reaches that one
+  /// The other outputs drop too: `OutputMemoryStream.clear` sets its length to
+  /// zero and `OutputFileStream.clear` closes the file. Nothing in the package
+  /// calls this on a sink
   @override
   void clear() {
     written = 0;

@@ -80,7 +80,7 @@ Stream<T> cancellableStream<S, T>(Stream<S> input,
       signal.cancelled = true;
       signal._wake?.call();
       await iterator.cancel();
-      // What the body throws once its input is cut is the cancel's own doing
+      // Anything the body throws once its input is cut is the cancel's doing
       await innerCancel?.catchError((Object _) {});
     },
   );

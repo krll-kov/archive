@@ -12,18 +12,13 @@ import '../lzma/lzma_decoder.dart';
 // https://tukaani.org/xz/xz-file-format.txt.
 
 /// Decodes a single xz block that starts at the current position of [input].
+/// Every block resets the LZMA2 dictionary and carries no state from the ones
+/// before it.
 ///
-/// Every block resets the LZMA2 dictionary. A block carries no state from the
-/// blocks before it and can go to an isolate of its own.
-///
-/// [input] must cover the block from its header to the end of the check field.
-/// [XZBlockLayout.compressedLength] measures exactly that. [input] does not
-/// have to be in memory. A block read from a file as it decodes never lands
-/// there whole.
-///
-/// [streamFlags] comes from the stream header or footer. Its low four bits
-/// pick the check type. The check is read here and not verified. A decode into
-/// a stream that cannot seek computes it as the bytes go past
+/// [input] covers the block from its header to the end of the check field,
+/// [XZBlockLayout.compressedLength] exactly. [streamFlags] comes from the
+/// stream header or footer and its low four bits pick the check type. The
+/// check is read here and not verified
 ({bool ok, String? reason}) decodeXZBlock(
     InputStream input, int streamFlags, OutputStream output,
     {required int maxPreallocateSize}) {
@@ -55,11 +50,9 @@ class XZStreamDecoder {
   // aligns to this, not to the start of [input]. [input] can start anywhere
   var _streamStart = 0;
 
-  /// Why the last decode gave up, or null if it has not given up.
-  ///
-  /// Every rejection sets this. The reason then comes back with the failure
-  /// and not only the fact of it. It costs one string. Failure still travels
-  /// by return value and a successful decode allocates nothing
+  /// Why the last decode gave up, or null if it has not given up. Every
+  /// rejection sets it, at the cost of one string. Failure still travels by
+  /// return value
   String? failureReason;
 
   // Upper bound on a buffer sized from a length the archive declares.
@@ -219,10 +212,9 @@ class XZStreamDecoder {
     Uint8List? blockData;
 
     if (needsBlockData && output is! OutputMemoryStream) {
-      // A stream with no contiguous buffer behind it cannot be read back once
-      // written to. The block decodes into a temporary buffer and lands there
-      // afterwards. The declared length is only a hint and is not trusted past
-      // [maxPreallocateSize]. The stream grows into what the block needs
+      // A stream with no contiguous buffer cannot be read back once written
+      // to. The block decodes into a temporary buffer first. The declared
+      // length is a hint and is not trusted past [maxPreallocateSize]
       final block = OutputMemoryStream(
           size: uncompressedLength != null &&
                   uncompressedLength <= maxPreallocateSize
@@ -233,10 +225,8 @@ class XZStreamDecoder {
         read = _readLZMA2(input, block, dictionarySize);
       } catch (_) {
         // A failure part way through leaves the temporary buffer holding what
-        // decoded before it. Hand that over. The output then matches a block
-        // written straight through, and a corrupt archive leaves the same
-        // bytes whichever stream took it. The filter is not applied to it. The
-        // branch below also gives up before filtering
+        // decoded before it. Hand that over unfiltered. The output then
+        // matches a block written straight through
         output.writeBytes(block.getBytes());
         rethrow;
       }
@@ -581,10 +571,9 @@ class XZStreamDecoder {
 
       decoder.decodeToOutput(
           input.readBytes(compressedLength), uncompressedLength, output);
-      // Checking this can catch some corrupt files, especially if they don't
-      // have any other integrity check. An end of payload marker is not
-      // allowed in LZMA2. A chunk that reached its uncompressed size without
-      // emptying the range coder is a data error
+      // An end of payload marker is not allowed in LZMA2. A chunk that reached
+      // its uncompressed size without emptying the range coder is a data
+      // error. This catches corrupt files that carry no integrity check
       if (!decoder.isRangeCoderFinished) {
         return _fail('LZMA data is corrupt');
       }

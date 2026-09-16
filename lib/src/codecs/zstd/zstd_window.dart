@@ -61,8 +61,8 @@ class ZstdWindow {
       }
       // `ZSTD_decompressStream` restarts at the head of its buffer rather than
       // sliding. The pass just written stays put and becomes the history a
-      // match reaches back into. Nothing is ever moved. What is overwritten
-      // from here on is only what has fallen out of the window
+      // match reaches back into. Nothing is ever moved. Only bytes that have
+      // fallen out of the window are overwritten from here on
       // The pass has to end far enough in that a match at the widest offset
       // still lands above what this pass will overwrite. The buffer carries
       // two blocks' room rather than one

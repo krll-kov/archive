@@ -56,7 +56,7 @@ bool zstdNormalizeCount(Int16List into, Uint32List counts, int total,
     {bool useLowProbCount = true}) {
   final lowProb = useLowProbCount ? -1 : 1;
   final lowThreshold = total >> accuracyLog;
-  // The reference's own fixed point: a step of `2^62 / total` truncated once.
+  // The reference's own fixed point, a step of `2^62 / total` truncated once.
   // That is not the same as dividing per symbol and rounds a knife edge down
   final scale = 62 - accuracyLog;
   final step = (1 << 62) ~/ total;
@@ -290,9 +290,8 @@ int zstdWriteNCount(
   return write + ((bits + 7) >> 3) - at;
 }
 
-/// The encoding side of an FSE table: where each state goes and what it costs.
-///
-/// `nbBits` out of a state is `(state + deltaNbBits) >> 16`. That trick turns a
+/// The encoding side of an FSE table, where each state goes and what it costs.
+/// `nbBits` out of a state is `(state + deltaNbBits) >> 16`. That turns a
 /// comparison into an add. The next state is
 /// `nextState[(state >> nbBits) + deltaFindState]`
 class ZstdFseCTable {

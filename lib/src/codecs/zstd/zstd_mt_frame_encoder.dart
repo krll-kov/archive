@@ -16,7 +16,7 @@ import 'zstd_mt_parallel.dart';
 /// single threaded one
 const zstdMtChunkSize = 4 * zstdBlockMaximumSize;
 
-/// `ZSTDMT_JOBSIZE_MIN`: at or below this the reference drops its workers. The
+/// `ZSTDMT_JOBSIZE_MIN`. At or below this the reference drops its workers. The
 /// frame is then the one the single threaded encoder writes
 const zstdMtJobSizeMin = 512 * 1024;
 
@@ -32,9 +32,9 @@ const _jobLogMax = 29;
 /// row from this and leaves the window unclamped
 const zstdMtSizeUnknown = 1099511627776;
 
-/// Writes the frame `ZSTD_compress2` writes with `nbWorkers` above zero: the
-/// input cut into jobs, each parsed from its own tables over a prefix of the
-/// one before, and every job fed to the block loop a chunk at a time.
+/// Writes the frame `ZSTD_compress2` writes with `nbWorkers` above zero. The
+/// input is cut into jobs, each parsed from its own tables over a prefix of
+/// the one before, and every job is fed to the block loop a chunk at a time.
 ///
 /// This is the single threaded form of that. It exists to be compared against
 /// the reference before any isolate does the work, and it shares no state with
@@ -525,10 +525,10 @@ int zstdMtWorkerCap(int memoryBudget, int level, int size, List<int> geometry) {
   return cap < 1 ? 1 : cap;
 }
 
-/// The header a streamed frame opens with: no content size, because it is not
-/// known when the header is written, and the level's window unclamped. With
-/// [empty] it is nothing, the one case `ZSTD_CCtx_init_compressStream2` knows
-/// the size in: the call that ends the frame is also the first
+/// The header a streamed frame opens with. It names no content size, unknown
+/// when the header is written, and leaves the level's window unclamped. With
+/// [empty] it is nothing. `ZSTD_CCtx_init_compressStream2` knows the size only
+/// there, where the call that ends the frame is also the first
 void writeZstdMtStreamHeader(OutputStream out, bool checksum, int level,
     [int dictionaryId = 0, bool empty = false]) {
   final params = zstdParamsForLevel(level, zstdMtSizeUnknown);

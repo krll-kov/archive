@@ -18,7 +18,7 @@ const _weightLog = 6;
 /// Fewer literals than this go into one stream rather than four
 const zstdFourStreamsFrom = 256;
 
-/// `HUF_sort`'s buckets: a bucket per count below [_logBucketsFrom] and one per
+/// `HUF_sort`'s buckets, one per count below [_logBucketsFrom] and one per
 /// power of two above it. Ordering symbols by count is then a two pass scatter
 /// rather than a comparison sort, worth 3.1% of the encoder
 const _buckets = 192;
@@ -39,7 +39,7 @@ class ZstdHuffmanEncoder {
   /// Where a description is written only to be measured
   final Uint8List _probe = Uint8List(1024);
 
-  /// `HUF_CElt`: the code of a symbol and its width in one value. The encoding
+  /// `HUF_CElt`, the code of a symbol and its width in one value. The encoding
   /// loop reads it with a single load
   final Uint32List _elt = Uint32List(zstdHuffmanSymbolCount);
   int tableLog = 0;

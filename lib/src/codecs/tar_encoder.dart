@@ -51,18 +51,18 @@ class TarEncoder {
     }
   }
 
-  /// Writes everything an entry has before its content: the GNU long name and
-  /// long link blocks, then the entry's own header. What is left is the
-  /// returned file's `contentStream` and `padding`. A streamed write hands
-  /// those out a piece at a time rather than in one call
+  /// Writes everything an entry has before its content, the GNU long name and
+  /// long link blocks and then its own header. The rest is the returned
+  /// file's `contentStream` and `padding`. A streamed write hands those out a
+  /// piece at a time rather than in one call
   TarFile? addHeader(ArchiveFile entry) {
     if (_outputStream == null) {
       return null;
     }
 
     // GNU tar files store extra long file names in a separate file. Long in
-    // bytes as encoded, the number the header field holds, and the size of the
-    // separate file
+    // bytes as encoded, which is what the header field holds, and the size
+    // of the separate file
     final name = filenameEncoding.encode(entry.name);
     if (name.length > 100) {
       final ts = TarFile();
@@ -78,7 +78,7 @@ class TarEncoder {
       ts.write(_outputStream!, filenameEncoder: filenameEncoding);
     }
 
-    // After the name, the order GNU writes the two in
+    // After the name, which is the order GNU writes the two in
     if (entry.isSymbolicLink) {
       final link = filenameEncoding.encode(entry.symbolicLink!);
       if (link.length > 100) {

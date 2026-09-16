@@ -73,10 +73,9 @@ int zstdLiteralsLengthCode(int length) => length < 64
 int zstdMatchLengthCode(int base) =>
     base < 128 ? zstdMatchLengthCodes[base] : zstdHighestBitFast(base) + 36;
 
-/// The sequences of one block, plus the literals they leave behind.
-///
-/// An offset is held the way the format writes it: one to three name a repeat
-/// offset, anything above is the real distance plus three
+/// The sequences of one block, plus the literals they leave behind. An offset
+/// is held the way the format writes it, one to three naming a repeat offset
+/// and anything above the real distance plus three
 class ZstdSequenceStore {
   final Uint8List literals;
   final ByteData _view;
@@ -84,10 +83,9 @@ class ZstdSequenceStore {
   ByteData? _heldView;
   int literalsLength = 0;
 
-  /// Four words a sequence: the literal run, the match length above the
-  /// format's floor, the stored offset, and the codes the encoder packs into
-  /// the fourth. One array rather than four keeps a single base pointer and a
-  /// single length live through the loops that walk them
+  /// Four words a sequence, the literal run, the match length above the
+  /// format's floor, the stored offset and the packed codes. One array rather
+  /// than four keeps a single base pointer live through the loops
   final Uint32List seq;
   int count = 0;
 
@@ -111,9 +109,9 @@ class ZstdSequenceStore {
       int matchBaseValue) {
     if (length > 0) {
       // A literal run is usually a handful of bytes, where two moves that may
-      // write past the run cost less than a call that has to be exact.
-      // `litLimit_w`: near the end of the input there is nothing to over read
-      // into. The exact copy is the only safe one there
+      // write past the run cost less than an exact call. Near the end of the
+      // input there is nothing to over read into, `litLimit_w`, and the exact
+      // copy is the only safe one
       if (zstdUse64Bit &&
           length <= 16 &&
           from + 16 <= src.length &&
@@ -176,8 +174,7 @@ class ZstdSequenceStore {
 
 /// Words a sequence takes in the store, and where its codes sit inside the
 /// last of them. A code fits in six bits and a count of extra bits in five
-/// `WILDCOPY_OVERLENGTH`, the room a copy that writes in whole words may run
-/// past the run it was asked for
+/// `WILDCOPY_OVERLENGTH`, the room a whole word copy may run past its run
 const _wildcopy = 32;
 
 const _stride = 4;
@@ -297,10 +294,9 @@ class ZstdSequencesEncoder {
     return _writeBitstream(out, write, store, from, last) - at;
   }
 
-  /// `ZSTD_estimateBlockSize_sequences`: what this section would cost, tables
-  /// and all, without writing the bitstream. The splitter weighs partitions
-  /// with this and needs the reference's estimate rather than the real encode.
-  /// It decides where the block is cut
+  /// `ZSTD_estimateBlockSize_sequences`. What this section would cost, tables
+  /// and all, without writing the bitstream. The splitter cuts the block on
+  /// this and needs the reference's estimate rather than the real encode
   int estimate(Uint8List scratch, ZstdSequenceStore store, int from, int to) {
     final count = to - from;
     final header = 2 + (count >= 128 ? 1 : 0) + (count >= 0x7f00 ? 1 : 0);
@@ -333,9 +329,9 @@ class ZstdSequencesEncoder {
     return total;
   }
 
-  /// `ZSTD_estimateBlockSize_symbolType`, in bytes: the codes through whichever
+  /// `ZSTD_estimateBlockSize_symbolType`, in bytes. The codes through whichever
   /// table was chosen for them, plus the extra bits they carry. An offset code
-  /// is itself the count of its extra bits. [extraBits] may then be null
+  /// is itself the count of its extra bits and [extraBits] may be null
   static int _symbolCost(
       int mode,
       Uint32List counts,
@@ -372,10 +368,9 @@ class ZstdSequencesEncoder {
     return bits >> 3;
   }
 
-  /// A block with no sequences describes no table. Committing it must leave
-  /// the ones the decoder holds exactly as they are. `ZSTD_entropyCompressSeqStore`
-  /// copies the whole of `prevEntropy->fse` over on `nbSeq == 0`. That carries
-  /// the repeat mode of each table and not only whether one is there
+  /// A block with no sequences describes no table and must leave the decoder's
+  /// tables exactly as they are. `ZSTD_entropyCompressSeqStore` copies all of
+  /// `prevEntropy->fse` on `nbSeq == 0`, repeat modes and all
   void _holdSlots() {
     for (final slot in [_llSlot, _ofSlot, _mlSlot]) {
       slot.swap = false;
@@ -569,9 +564,9 @@ class ZstdSequencesEncoder {
   /// any other rather than taken outright
   static const _staticRepeatMax = 1000;
 
-  /// `ZSTD_NCountCost`: what describing these counts would take. The
-  /// description finally written takes less, since that one leaves out the
-  /// last sequence's symbol
+  /// `ZSTD_NCountCost`. What describing these counts would take. The
+  /// description finally written takes less, since it leaves out the last
+  /// sequence's symbol
   int _ncountCost(Uint32List counts, int count, int top, int log) {
     zstdNormalizeCount(_normalized, counts, count, top, log,
         useLowProbCount: count >= 2048);
@@ -591,7 +586,7 @@ class ZstdSequencesEncoder {
     return cost >> 8;
   }
 
-  /// `ZSTD_entropyCost`, in bits: the bound a table of its own would reach. It
+  /// `ZSTD_entropyCost`, in bits. The bound a table of its own would reach. It
   /// stands in for building one and weighing it
   static int _entropyCost(Uint32List counts, int top, int total) {
     var cost = 0;
@@ -655,12 +650,12 @@ class ZstdSequencesEncoder {
 
   /// Keeps the tables this block described. Only a block that is written out
   /// may do that
-  /// `ZSTD_loadCEntropy`: the three tables a dictionary carries become the ones
-  /// the decoder already holds. A first block can then repeat rather than
-  /// describe them. The offset table is built over every code the format has,
-  /// since a table that stops short cannot price the codes above it
-  /// The reference trusts a dictionary's offset table for one block only, since
-  /// past that the offsets in the data can outgrow the codes it holds
+  /// `ZSTD_loadCEntropy`. The three tables a dictionary carries become the ones
+  /// the decoder already holds. A first block repeats rather than describes
+  /// them. The offset table covers every code the format has, since a shorter
+  /// one cannot price the codes above it
+  /// The reference trusts a dictionary's offset table for one block only. Past
+  /// that the offsets in the data can outgrow the codes it holds
   void dropOffsetTrust() {
     _ofSlot.trusted = false;
   }

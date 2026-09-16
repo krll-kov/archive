@@ -60,12 +60,9 @@ class BZip2EncoderConverter extends ChunkedConverter {
           blockSize100k: blockSize100k);
 }
 
-/// Writes a bzip2 archive over data that arrives in pieces.
-///
-/// A block is filled a byte at a time and coded once it is full. [BZip2Encoder]
-/// does the same with the bytes it pulls. The archive this writes is the one
-/// `encodeBytes` writes for the same input. It holds one block, whatever the
-/// input weighs
+/// Writes a bzip2 archive over data that arrives in pieces. A block is filled a
+/// byte at a time and coded once it is full, the same way [BZip2Encoder] does
+/// it. It holds one block, whatever the input weighs
 class BZip2ChunkedEncoder extends ChunkedSink {
   final int blockSize100k;
 
@@ -126,14 +123,10 @@ class BZip2ChunkedEncoder extends ChunkedSink {
 
 /// Decodes a bzip2 archive that arrives in pieces.
 ///
-/// The format is a bit stream. A block does not start on a byte boundary and
-/// carries no length. The marker that follows it is the only sign that it is
-/// all here. This holds one block of input and one of output, whatever the
-/// archive weighs.
-///
-/// A marker can also turn up inside a block by chance. The decode of that block
-/// then runs out of input and the scan carries on to the next marker. A block's
-/// output is held back until it is whole
+/// The format is a bit stream. A block carries no length and the marker that
+/// follows it is the only sign that it is all here. This holds one block of
+/// input and one of output. A marker can also turn up inside a block by
+/// chance. A block's output is held back until it is whole
 class BZip2ChunkedDecoder extends ChunkedSink {
   final bool verify;
 
@@ -333,8 +326,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
     if (verify && stored != _combinedCrc) {
       throw ArchiveException('bzip2: stream checksum does not match');
     }
-    // What follows the check is padding to the end of the byte, and then
-    // whatever the input carries next
+    // Padding to the end of the byte follows the check, then whatever the
+    // input carries next
     _bitAt = (_bitAt + 7) & ~7;
     _drop();
     _streams++;

@@ -248,7 +248,7 @@ class LzmaDecoder {
   // uncompressed size, rather than a plain LZMA stream that may stop early.
   bool get isRangeCoderFinished => _rc.code == 0;
 
-  // Decode [input], which contains compressed LZMA data that unpacks to
+  // Decode [input], compressed LZMA data that unpacks to
   // [uncompressedLength] bytes, appending the result directly to [output].
   //
   // This avoids the intermediate copy [decode] has to make. The range handed

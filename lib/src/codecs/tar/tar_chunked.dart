@@ -16,8 +16,8 @@ import 'tar_file.dart';
 class TarChunkedEncoder {
   final Sink<List<int>> output;
 
-  /// What a name is written as, the same field [TarDecoderTransformer] reads it back
-  /// through
+  /// The encoding a name is written in, the one [TarDecoderTransformer] reads it
+  /// back through
   final Encoding filenameEncoding;
 
   TarChunkedEncoder(this.output, {this.filenameEncoding = const Utf8Codec()}) {
@@ -94,8 +94,8 @@ class TarEncoderTransformer
   const TarEncoderTransformer(
       {this.filenameEncoding = const Utf8Codec(), this.autoClose = false});
 
-  /// What an entry's content is handed out in. An entry is not held whole.
-  /// This is all the encoder owes beyond the header it has already written
+  /// The piece an entry's content is handed out in. An entry is not held whole.
+  /// This is all the encoder owes beyond the header it wrote
   static const _piece = 64 * 1024;
 
   @override
@@ -168,10 +168,9 @@ class _Pieces implements Sink<List<int>> {
 }
 
 /// `tarCodec.decoder`, a `StreamTransformer` and not a `Converter`, since it
-/// hands back entries and not bytes. It reads one entry at a time and holds one
-/// entry's header rather than the archive. [TarEntry.content] has to be read
-/// before the loop moves on, the bytes are gone by then. What is left unread is
-/// skipped. Over a source that can seek, `TarDecoder` is already lazy
+/// hands back entries and not bytes. It holds one entry's header rather than
+/// the archive. [TarEntry.content] has to be read before the loop moves on and
+/// anything left unread is skipped
 class TarDecoderTransformer extends StreamTransformerBase<List<int>, TarEntry> {
   final Encoding filenameEncoding;
 
@@ -183,7 +182,7 @@ class TarDecoderTransformer extends StreamTransformerBase<List<int>, TarEntry> {
           stream, (input, _) => _read(_Reader(input), filenameEncoding));
 }
 
-/// What an entry is, as the header's type flag names it. Old archives leave
+/// The kind of entry, as the header's type flag names it. Old archives leave
 /// the field empty for a plain file. That flag is not only `'0'`
 enum TarEntryType {
   file,
@@ -222,7 +221,7 @@ class TarEntry {
   final int groupId;
   final int lastModTime;
 
-  /// What the entry is. [typeFlag] is the raw field behind it, for the flags
+  /// The kind of entry. [typeFlag] is the raw field behind it, for the flags
   /// this has no name for
   final TarEntryType type;
   final String typeFlag;

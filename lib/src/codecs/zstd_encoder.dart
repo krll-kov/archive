@@ -51,7 +51,7 @@ class ZstdEncoder {
     return Uint8List(0);
   }
 
-  /// `ZSTDMT_JOBSIZE_MIN`: the reference turns its workers off below this. The
+  /// `ZSTDMT_JOBSIZE_MIN`. The reference turns its workers off below this. The
   /// frame is then the single threaded one
   Future<Uint8List> _multithreadBytes(
       Uint8List bytes, int level, ZstdMultithreadOptions<Object?> options) {

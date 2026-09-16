@@ -28,7 +28,7 @@ class ZstdLdmSequences {
   final Uint32List offset;
   int size = 0;
 
-  /// `RawSeqStore_t.pos` and `posInSequence`: where a reader of this store has
+  /// `RawSeqStore_t.pos` and `posInSequence`, where a reader of this store has
   /// got to. A store generated for one block is read whole and the cursor never
   /// moves off zero. One generated for a whole job is read a block at a time
   int pos = 0;
@@ -45,8 +45,8 @@ class ZstdLdmSequences {
     inSequence = 0;
   }
 
-  /// `ZSTD_ldm_skipRawSeqStoreBytes`: moves the cursor past [bytes] of the
-  /// input the store covers. A block leaves that much behind it
+  /// `ZSTD_ldm_skipRawSeqStoreBytes`. Moves the cursor past [bytes] of the
+  /// input the store covers, what a block leaves behind it
   void skipBytes(int bytes) {
     var at = inSequence + bytes;
     while (at != 0 && pos < size) {
@@ -80,10 +80,9 @@ class ZstdOptLdm {
   int _end = 0;
   int _offset = 0;
 
-  /// Points the cursor at a block's matches. Each pass over the block walks
-  /// them from the beginning. The reference takes its first match here rather
-  /// than on the first candidate. That moves the cursor one sequence on before
-  /// the parse starts and keeps a block's last match out of the parse
+  /// Points the cursor at a block's matches, walked from the beginning on each
+  /// pass. The reference takes its first match here rather than on the first
+  /// candidate. That keeps a block's last match out of the parse
   void begin(ZstdLdmSequences? store, int size) {
     _store = store;
     // The reference copies the store by value, cursor and all. A parse over
@@ -99,8 +98,8 @@ class ZstdOptLdm {
     }
   }
 
-  /// `ZSTD_optLdm_processMatchCandidate`: adds the match covering [at], when
-  /// there is one and it is long enough. Returns the new candidate count
+  /// `ZSTD_optLdm_processMatchCandidate`. Adds the match covering [at] when
+  /// there is one and it is long enough, and returns the new candidate count
   int process(Uint32List lengths, Uint32List offBases, int count, int at,
       int remaining, int minMatch) {
     final store = _store;
@@ -245,8 +244,8 @@ class ZstdLdm {
     return ldm;
   }
 
-  /// `ZSTD_ldm_gear_init`: the mask takes the bits the rolling hash gives the
-  /// most weight to. A split point depends on a whole match's worth of bytes
+  /// `ZSTD_ldm_gear_init`. The mask takes the bits the rolling hash gives the
+  /// most weight to. A split point depends on a whole match of bytes
   static int _stopMaskFor(int minMatch, int rateLog) {
     if (!zstdUse64Bit) return _webMask(minMatch, rateLog, 0);
     final width = minMatch < 64 ? minMatch : 64;
@@ -268,8 +267,8 @@ class ZstdLdm {
     _dictLimit = _dictLimit > delta + 1 ? _dictLimit - delta : 1;
   }
 
-  /// `ZSTD_ldm_fillHashTable`: a dictionary's split points, registered without
-  /// looking for a match. The first block can then reach into it
+  /// `ZSTD_ldm_fillHashTable`. A dictionary's split points, registered without
+  /// looking for a match. The first block reaches into it
   void fill(Uint8List src, int start, int end) {
     final hashMask = (1 << hashBits) - 1;
     var ip = start;
@@ -410,8 +409,8 @@ class ZstdLdm {
     return end - anchor < 0 ? 0 : end - anchor;
   }
 
-  /// `ZSTD_ldm_gear_feed`: records where the hash lands on the mask, and stops
-  /// once a batch is full. Returns how many bytes it read
+  /// `ZSTD_ldm_gear_feed`. Records where the hash lands on the mask and stops
+  /// once a batch is full, returning how many bytes it read
   static int _webMask(int minMatch, int rateLog, int half) {
     final width = minMatch < 64 ? minMatch : 64;
     final start = rateLog > 0 && rateLog <= width ? width - rateLog : 0;

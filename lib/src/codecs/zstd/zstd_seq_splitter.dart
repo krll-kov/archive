@@ -8,7 +8,7 @@ const _minSequences = 300;
 const _maxSplits = 196;
 const _blockHeader = 3;
 
-/// `ZSTD_deriveBlockSplits`: where a block's sequences are better sent as
+/// `ZSTD_deriveBlockSplits`. Where a block's sequences are better sent as
 /// separate blocks, each with its own tables. A window is estimated whole and
 /// in halves, and halves that together come out smaller win and recurse
 class ZstdSeqSplitter {
@@ -93,7 +93,7 @@ int _rawOffset(Uint32List rep, int offBase, bool noLiterals) {
   return code == 3 ? rep[0] - 1 : rep[code];
 }
 
-/// `ZSTD_seqStore_resolveOffCodes`: a partition sent raw or as one repeated
+/// `ZSTD_seqStore_resolveOffCodes`. A partition sent raw or as one repeated
 /// byte leaves [decoded], what the decoder will hold, behind [coded], what the
 /// sequences imply. A repeat that resolves differently names its offset
 void zstdResolveOffCodes(Uint32List decoded, Uint32List coded,

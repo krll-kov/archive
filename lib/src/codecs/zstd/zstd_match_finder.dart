@@ -176,8 +176,8 @@ class ZstdMatchFinder {
   final int _entryMask;
   final int _words;
 
-  /// What a row and tag key is shifted down by: enough bits for the row index
-  /// and eight more for the tag
+  /// The shift a row and tag key takes, enough bits for the row index and
+  /// eight more for the tag
   final int _rowShift;
 
   /// The mask that addresses a node. Half the tree's node count less one
@@ -248,7 +248,7 @@ class ZstdMatchFinder {
   /// a block has left it further behind than the window is wide
   int dictionaryEnd = 0;
 
-  /// `ZSTD_getLowestMatchIndex`: a whole dictionary stays reachable while any
+  /// `ZSTD_getLowestMatchIndex`. A whole dictionary stays reachable while any
   /// byte of it is in the window. The bound waits until the frame drops it
   @pragma('vm:prefer-inline')
   int _lowestFrom(int at, int lowLimit, int maxDistance) {
@@ -265,10 +265,10 @@ class ZstdMatchFinder {
   int _repFloor(int at, int lowLimit) =>
       _ext ? _lowestFrom(at, lowLimit, 1 << params.windowLog) : lowLimit;
 
-  /// `prefixStartIndex == dictStartIndex`: the two fastest loops drop back to
-  /// their plain variant when the window, measured from the end of the block,
-  /// has caught up with the segment boundary and left nothing outside it. The
-  /// deeper strategies have no such line and run their ext loop either way
+  /// `prefixStartIndex == dictStartIndex`. The two fastest loops drop back to
+  /// their plain variant once the window, measured from the end of the block,
+  /// has caught up with the segment boundary. The deeper strategies run their
+  /// ext loop either way
   @pragma('vm:prefer-inline')
   bool _reaches(int end, int lowLimit) =>
       prefixStart > _lowestFrom(end, lowLimit, 1 << params.windowLog);
@@ -387,7 +387,7 @@ class ZstdMatchFinder {
     dictionaryEnd = 0;
   }
 
-  /// `ZSTD_cycleLog`: the chain and the tree address a node by the low bits of
+  /// `ZSTD_cycleLog`. The chain and the tree address a node by the low bits of
   /// a position. Only a slide that leaves those bits alone keeps them
   /// reachable. The other searches key on the bytes and take any slide
   int get slideStep {
@@ -402,7 +402,7 @@ class ZstdMatchFinder {
   int get slideCost =>
       _hashTable.length + _chain.length + _rows.length + _short.length;
 
-  /// `ZSTD_reduceIndex`: the buffer moved [delta] bytes down. Every stored
+  /// `ZSTD_reduceIndex`. The buffer moved [delta] bytes down. Every stored
   /// position moves with it and whatever fell off the front is dropped
   void slide(int delta) {
     if (params.strategy >= zstdStrategyBinaryTree) {
@@ -429,7 +429,7 @@ class ZstdMatchFinder {
     }
   }
 
-  /// `ZSTD_reduceTable_btlazy2`: the tree raises a position by [_lift] and
+  /// `ZSTD_reduceTable_btlazy2`. The tree raises a position by [_lift] and
   /// keeps [_unsorted] as a mark of its own. That mark is not a position
   static void _reduceTree(Uint32List table, int delta) {
     for (var at = 0; at < table.length; at++) {
@@ -583,10 +583,9 @@ class ZstdMatchFinder {
         start == _prefixFrom(floor) && floor >= prefixStart ? start + 1 : start;
     var rep0 = rep[0];
     var rep1 = rep[1];
-    // A repeat that reaches outside the window is not usable here, and zero
-    // says so without a bounds test in the loop. `ZSTD_getLowestPrefixIndex`
-    // measures from where the block starts, not from where it ends, and stops
-    // at the segment the data is in rather than at the whole window
+    // A repeat reaching outside the window is not usable here, and zero says
+    // so without a bounds test in the loop. `ZSTD_getLowestPrefixIndex`
+    // measures from the start of the block and stops at its own segment
     final maxRep = ip0 - _prefixFrom(_lowestFrom(ip0, lowLimit, maxDistance));
     var saved0 = 0;
     var saved1 = 0;
@@ -1445,11 +1444,9 @@ class ZstdMatchFinder {
     return _hashTable[_key(view, ip)];
   }
 
-  /// The longest match at [ip], with [_foundOffset] set to its distance.
-  ///
-  /// The candidates of one hash sit together in a row with their tags packed a
-  /// byte each. A whole row is tested for the tag in a couple of words. Only a
-  /// tag hit costs a look at the input
+  /// The longest match at [ip], with [_foundOffset] set to its distance. The
+  /// candidates of one hash sit in a row with their tags packed a byte each. A
+  /// whole row is tested in a couple of words and only a tag hit reads input
   int _bestWeb(Uint8List src, ByteData view, int ip, int lowLimit, int end) {
     final floor = _lowestFrom(ip, lowLimit, 1 << params.windowLog);
     var best = zstdMinMatch - 1;
@@ -1554,9 +1551,9 @@ class ZstdMatchFinder {
     return best;
   }
 
-  /// `ZSTD_BtFindBestMatch`: the longest match at [ip], with [_foundOffset] set
+  /// `ZSTD_BtFindBestMatch`. The longest match at [ip], with [_foundOffset] set
   /// to its distance. A position joins the front of its hash's list unsorted
-  /// and only takes its place in the tree when a later search walks over it
+  /// and takes its place in the tree when a later search walks over it
   int _bestTree(Uint8List src, ByteData view, int ip, int lowLimit, int end) {
     _foundOffset = 0;
     if (ip < _nextToUpdate) {
@@ -1754,12 +1751,10 @@ class ZstdMatchFinder {
     _nextToUpdate = ip;
   }
 
-  /// `ZSTD_insertBt1`: puts one position in the tree and returns how many
+  /// `ZSTD_insertBt1`. Puts one position in the tree and returns how many
   /// positions that covers. A fill skips a repetitive stretch through that
-  /// count.
-  ///
-  /// Every candidate compared becomes a child of the new node on the side it
-  /// sorts to. The descent is the insertion
+  /// count. Every candidate compared becomes a child of the new node, and the
+  /// descent is the insertion
   int _insertTree(
       Uint8List src, ByteData view, int ip, int target, int lowLimit, int end) {
     final slot = _key(view, ip);
@@ -1839,9 +1834,8 @@ class ZstdMatchFinder {
 
   /// Every match at [ip] worth considering, longest last, written into
   /// [_matchLengths] and [_matchOffBases] and returned as a count.
-  ///
-  /// `ZSTD_insertBtAndGetAllMatches`: the repeat offsets first, then the tree
-  /// walk. The walk inserts [ip] as it descends exactly as [_insertTree] does
+  /// `ZSTD_insertBtAndGetAllMatches` does the repeat offsets first, then a tree
+  /// walk that inserts [ip] as it descends exactly as [_insertTree] does
   int _allMatches(Uint8List src, ByteData view, int ip, int lowLimit, int end,
       Uint32List rep, bool noLiterals, int longEnough) {
     // A position the tree deliberately skipped past has nothing to offer, and

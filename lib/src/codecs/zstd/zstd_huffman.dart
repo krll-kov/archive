@@ -172,7 +172,7 @@ void _buildFromWeights(ZstdHuffmanTable table, Uint8List weights,
       rankStart[w] += 1 << (w - 1);
     }
   }
-  // `HUF_readStats_body`: weight one is the longest code. A complete tree pairs
+  // `HUF_readStats_body`. Weight one is the longest code. A complete tree pairs
   // them off and cannot hold fewer than two. The rank holds one slot per such
   // symbol and is the count
   final ones = rankStart[1];

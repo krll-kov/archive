@@ -19,10 +19,9 @@ import 'zstd_window.dart';
 
 /// zstd for data that arrives in pieces, the way a `Stream` gives it.
 ///
-/// A frame written this way names no content size, since a stream does not know
-/// it, and takes its parameters from the row the reference picks when the size
-/// is unknown. That is a different archive from the one [ZstdEncoder] writes for
-/// the same bytes, and the same one `ZSTD_compressStream2` writes
+/// A frame written this way names no content size and takes the parameters the
+/// reference picks when the size is unknown. That is a different archive from
+/// the one [ZstdEncoder] writes, and the one `ZSTD_compressStream2` writes
 class ZstdCodec extends Codec<List<int>, List<int>> {
   /// Checks the XXH64 of every frame that carries one
   final bool verify;
@@ -184,21 +183,16 @@ class ZstdEncoderConverter extends ChunkedConverter {
   }
 }
 
-/// Writes one zstd frame over data that arrives in pieces.
-///
-/// `ZSTD_compressStream2` hands its own buffer one block of input at a time and
-/// lets the block splitter cut inside that one block. That is what makes a
-/// streamed archive differ from the one the whole input would give. This does
-/// the same: it gathers a block, then encodes what has gathered
+/// Writes one zstd frame over data that arrives in pieces. It gathers a block,
+/// then encodes what gathered. `ZSTD_compressStream2` does the same. A streamed
+/// archive differs from one over the whole input for that reason
 class ZstdChunkedEncoder extends ChunkedSink {
   final int level;
   final bool checksum;
 
-  /// Placed before the content so the first blocks can reach into it, and
-  /// named in the frame header. The bytes are the ones
-  /// `ZSTD_compress_usingDict` writes, not the ones `zstd -D` writes. The
-  /// reference's streaming path goes through a cdict and that one chooses
-  /// differently
+  /// Placed before the content so the first blocks can reach into it, and named
+  /// in the frame header. The bytes are the ones `ZSTD_compress_usingDict`
+  /// writes. `zstd -D` goes through a cdict and chooses differently
   final ZstdDictionary? dictionary;
 
   /// A level is resolved here rather than at the first block. A level this
@@ -238,7 +232,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
   /// one would not fit. It wraps on every multiple of this
   late final int _ring = _matchWindow + _blockSizeMax;
 
-  /// What the reference reads for a size it does not know. It picks the level
+  /// The size the reference reads when it does not know one. It picks the level
   /// row from this and leaves the window unclamped
   static const _sizeUnknown = 1099511627776;
 
@@ -325,9 +319,9 @@ class ZstdChunkedEncoder extends ChunkedSink {
         _blocks.slide(delta);
       }
     }
-    // On a wrap the reference writes over the oldest bytes of the ring. What
-    // it still holds stops being contiguous with what comes now. The window it
-    // reaches over is unchanged, only its low part is now a segment of its own
+    // On a wrap the reference writes over the oldest bytes of the ring. The
+    // bytes it still holds stop being contiguous with what comes now. The
+    // window is unchanged, only its low part is now a segment of its own
     if (_content > 0 && _content % _ring == 0) {
       _blocks.cut(_filled);
     }
@@ -390,10 +384,9 @@ class ZstdChunkedEncoder extends ChunkedSink {
   }
 }
 
-/// Decodes a zstd archive that arrives in pieces.
-///
-/// The unit of progress is one block, at most 128 KiB. It holds the frame's
-/// window and one block, whatever the archive weighs
+/// Decodes a zstd archive that arrives in pieces. The unit of progress is one
+/// block, at most 128 KiB. It holds the frame's window and one block, whatever
+/// the archive weighs
 class ZstdChunkedDecoder extends ChunkedSink {
   final bool verify;
   final ZstdDictionary? dictionary;

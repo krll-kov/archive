@@ -504,8 +504,8 @@ Stream<Uint8List> _zstdMtCompressStream(
         while (ready.isNotEmpty) {
           yield ready.removeAt(0);
         }
-        // No more jobs in flight than workers: each one holds its own buffer,
-        // so a looser gate is paid for in memory
+        // No more jobs in flight than workers. Each one holds its own buffer
+        // and a looser gate is paid for in memory
         while (failure == null && !signal.cancelled && sent - back >= pool) {
           waiting = Completer<void>();
           await waiting!.future;

@@ -95,7 +95,7 @@ class ZstdLiteralsEncoder {
     // A block whose literals barely broke into sequences is probably not
     // compressible, and two samples say so for a sixteenth of the counting
     if (suspect && size >= _probeFrom) {
-      // Two counts, not one over both samples: the reference takes the largest
+      // Two counts, not one over both samples. The reference takes the largest
       // of each end and adds them. That is not the largest of their sum
       final seen = _probe(src, start) + _probe(src, end - _probeSize);
       if (seen <= ((2 * _probeSize) >> 7) + 4) {
@@ -166,10 +166,10 @@ class ZstdLiteralsEncoder {
   }
 
   /// `ZSTD_buildBlockEntropyStats_literals` and `ZSTD_estimateBlockSize_literal`
-  /// together: what this run would take, tree and all, without writing any of
-  /// it. The block splitter weighs partitions with this, and its rules are not
-  /// [encode]'s: no probe, no minimum gain, and a floor of
-  /// `COMPRESS_LITERALS_SIZE_MIN`. A valid tree lowers that floor as in [encode]
+  /// together. What this run would take, tree and all, without writing any of
+  /// it. The block splitter weighs partitions with this under its own rules,
+  /// no probe, no minimum gain, and a floor of `COMPRESS_LITERALS_SIZE_MIN`.
+  /// A valid tree lowers that floor as in [encode]
   int estimate(Uint8List scratch, Uint8List src, int start, int end) {
     final size = end - start;
     if (size <= (_trusted ? 6 : 63)) {

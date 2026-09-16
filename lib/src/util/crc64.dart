@@ -1,20 +1,12 @@
-// [getCrc64] returns the check as one int. That needs an int wide enough to
-// hold it and exists only on the backends where an int is a real 64 bit
-// integer. Everywhere else [isCrc64Supported] reports false. [Crc64] carries
-// the same check on every backend. It keeps two halves and hands them back as
-// bytes. xz wants it as bytes anyway.
+// [getCrc64] returns the check as one int. Only a backend whose int is a real
+// 64 bit integer has that, and [isCrc64Supported] reports false elsewhere.
+// [Crc64] keeps two halves instead and hands them back as bytes. xz wants
+// bytes anyway.
 //
-// The condition asks about integer width, not about dart:io. The
-// implementation below imports nothing but dart:typed_data. dart:isolate is
-// available on exactly the VM and wasm, and those are exactly the backends
-// whose ints are 64 bit. It selects them. The unsupported stub is the default
-// and an unrecognised backend loses the one int form rather than
-// miscompiling.
-//
-// This used to key off dart.library.html. That is false on JavaScript targets
-// that have no dart:html, such as dart2js targeting Node. Those ended up with
-// the 64 bit table and failed to compile at all, on literals like
-// 0xb32e4cbe03a75f6f that JavaScript cannot represent.
+// The condition below picks on integer width, not on dart:io. dart:isolate
+// exists on exactly the VM and wasm. dart.library.html is false on dart2js
+// targeting Node. Node then took the 64 bit table and failed to compile on
+// literals like 0xb32e4cbe03a75f6f.
 import 'dart:typed_data';
 
 import '_crc64_html.dart' if (dart.library.isolate) '_crc64_io.dart';
@@ -24,8 +16,8 @@ int getCrc64(List<int> array, [int crc = 0]) => getCrc64_(array, crc);
 bool isCrc64Supported() => isCrc64Supported_();
 
 /// A running CRC-64 over however many pieces the bytes arrive in, on every
-/// backend. The value leaves as eight little endian bytes rather than as an
-/// int, since an int does not hold it where dart2js compiles
+/// backend. The value leaves as eight little endian bytes. An int does not
+/// hold it where dart2js compiles
 class Crc64 {
   final Crc64Core _core = Crc64Core();
 

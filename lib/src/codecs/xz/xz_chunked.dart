@@ -31,11 +31,9 @@ class XzDecoderConverter extends ChunkedConverter {
   final bool verify;
 
   /// Decodes blocks on isolates once this converter is bound to a stream. Only
-  /// a block whose header declares both lengths can go to a worker. `xz`
-  /// writes those in threaded mode. Any other block decodes here, once the
-  /// blocks in front of it are out. `startChunkedConversion` cannot take this
-  /// option. Its sink owes its output before it returns and a worker answers
-  /// later
+  /// a block whose header declares both lengths can go to a worker, the ones
+  /// `xz` writes in threaded mode. `startChunkedConversion` refuses this
+  /// option: its sink owes output before a worker answers
   final XZMultithreadOptions<Object?>? multithread;
 
   const XzDecoderConverter({this.verify = true, this.multithread});
@@ -85,11 +83,9 @@ class XzDecoderConverter extends ChunkedConverter {
   }
 }
 
-/// xz for data that arrives in pieces, the way a `Stream` gives it.
-///
-/// Same shape as gzip in `dart:io`, one converter per direction. A pipeline
-/// reads `stream.transform(xzCodec.decoder)`. A whole buffer reads
-/// `xzCodec.decode(bytes)`
+/// xz for data that arrives in pieces, the way a `Stream` gives it. Same shape
+/// as gzip in `dart:io`, one converter per direction. A pipeline reads
+/// `stream.transform(xzCodec.decoder)`, a whole buffer `xzCodec.decode(bytes)`
 class XzCodec extends Codec<List<int>, List<int>> {
   /// Checks the CRC of every block that carries one it can compute
   final bool verify;
@@ -118,13 +114,9 @@ const xzCodec = XzCodec();
 /// Decodes an xz archive that arrives in pieces, the way a `Stream` of bytes
 /// gives it.
 ///
-/// The pull decoder asks its input for the next field and blocks until it has
-/// it. This one takes whatever arrived and stops at the first field that is
-/// not there yet. Nothing waits inside the parse.
-///
-/// It moves one LZMA2 chunk at a time and the format caps a chunk at 64 KiB
-/// compressed. It holds the dictionary the archive asks for plus one chunk,
-/// however big the archive is
+/// It reads what arrived and stops at the first field that is not there yet.
+/// It moves one LZMA2 chunk at a time. It holds the dictionary the archive
+/// asks for plus one 64 KiB chunk, however big the archive is
 class XzChunkedDecoder extends ChunkedSink {
   /// Checks the CRC of every block that carries one it can compute, on by
   /// default for the reason [XzDecoderConverter.verify] gives
@@ -555,8 +547,8 @@ class XzChunkedDecoder extends ChunkedSink {
     // to a worker next is written out behind this one
     _sink.flush();
 
-    // What the index records is the block without its padding: the header, the
-    // data and the check
+    // The index records the block without its padding: the header, the data
+    // and the check
     _blocks.add(_BlockSize(
         _streamPosition - _blockStart - _blockPadding, _blockLength));
     _stage = _Stage.blockOrIndex;
@@ -739,8 +731,8 @@ class XzEncoderConverter extends ChunkedConverter {
           check: check);
 }
 
-/// The sink behind [XzEncoderConverter]. What it holds is one LZMA2 chunk of
-/// input, whatever the archive weighs
+/// The sink behind [XzEncoderConverter]. It holds one LZMA2 chunk of input,
+/// whatever the archive weighs
 class XzChunkedEncoder extends ChunkedSink {
   final XZCheck check;
 

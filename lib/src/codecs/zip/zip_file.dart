@@ -149,17 +149,16 @@ class ZipFile extends FileContent {
         crc32 = sigOrCrc;
       }
 
-      // APPNOTE 4.3.9.2: the sizes are 8 bytes each when a zip64 extra field is
-      // present for the file. Only the local field says that. A central one can
-      // carry an offset past 4 GB while the sizes here stay 4 bytes, and an
-      // entry whose central field holds the sizes needs nothing from here
+      // APPNOTE 4.3.9.2. The sizes are 8 bytes each when a zip64 extra field
+      // is present for the file. Only the local field says that. A central one
+      // can carry an offset past 4 GB while the sizes here stay 4 bytes
       final central = header;
       final zip64 = _hasZip64(extraField);
       final descriptorCompressed =
           zip64 ? input.readUint64() : input.readUint32();
       final descriptorUncompressed =
           zip64 ? input.readUint64() : input.readUint32();
-      // APPNOTE 4.4.8: the correct sizes go in both the descriptor and the
+      // APPNOTE 4.4.8. The correct sizes go in both the descriptor and the
       // central directory. The central ones win and these fill in only what it
       // left at zero. Do not drop the read. An archive whose central directory
       // carries no sizes has them nowhere else

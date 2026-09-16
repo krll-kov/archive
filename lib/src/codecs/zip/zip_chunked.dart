@@ -7,10 +7,9 @@ import '../../util/chunked_sink.dart';
 import '../zip_encoder.dart';
 import '../zlib/deflate.dart';
 
-/// zip through `transform`, writing only. The encoder is a `StreamTransformer`
-/// rather than a `Converter`, since its input is entries and not bytes. There is
-/// no decoder. Reading needs the central directory and it sits at the end of the
-/// archive, out of reach of a forward-only source
+/// zip through `transform`, writing only. The encoder takes entries and not
+/// bytes. That makes it a `StreamTransformer`. There is no decoder, since
+/// reading needs the central directory at the end of the archive
 class ZipCodec {
   final int level;
   final String? password;

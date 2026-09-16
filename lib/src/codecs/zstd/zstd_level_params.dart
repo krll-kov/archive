@@ -188,7 +188,7 @@ const _tables = <List<int>>[_large, _upTo256k, _upTo128k, _upTo16k];
 const zstdDefaultLevel = 3;
 const zstdMaxLevel = 22;
 
-/// `ZSTD_c_compressionLevel`: zero is the reference's own default and a level
+/// `ZSTD_c_compressionLevel`. Zero is the reference's own default and a level
 /// above the table is clamped. Below zero selects the `--fast` parse, a match
 /// finder this does not carry. Such a level is refused, not read as level one
 int zstdEffectiveLevel(int level) {
@@ -202,7 +202,7 @@ int zstdEffectiveLevel(int level) {
   return level > zstdMaxLevel ? zstdMaxLevel : level;
 }
 
-/// `ZSTD_minGain`'s shift. What a block or a literals section has to save
+/// `ZSTD_minGain`'s shift. A block or a literals section has to save this much
 /// before it is worth sending coded rather than as it stands, a sixty fourth
 /// of it and two bytes, less as the level searches harder
 int zstdGainLog(ZstdLevelParams params) =>
@@ -210,7 +210,7 @@ int zstdGainLog(ZstdLevelParams params) =>
         ? params.depth + 5
         : 6;
 
-/// `ZSTD_minLiteralsToCompress`: below this many literals a tree cannot pay
+/// `ZSTD_minLiteralsToCompress`. Below this many literals a tree cannot pay
 /// for its own description. The bytes go as they stand
 int zstdMinLiteralsToCompress(ZstdLevelParams params) {
   if (params.strategy != zstdStrategyOptimal) {

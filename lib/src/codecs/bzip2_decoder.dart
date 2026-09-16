@@ -20,7 +20,7 @@ class BZip2Decoder {
   bool decodeStream(InputStream input, OutputStream output,
       {bool verify = false}) {
     // bzip2 -d reads streams written back to back, and pbzip2 writes one per
-    // block. What follows the last stream and does not start one is ignored,
+    // block. Anything after the last stream that starts no stream is ignored,
     // as it always was
     while (true) {
       if (!_decodeStream(input, output, verify: verify)) {

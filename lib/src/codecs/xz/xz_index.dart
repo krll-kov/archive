@@ -2,12 +2,9 @@ import 'dart:typed_data';
 
 import '../../util/crc32.dart';
 
-// Reads the stream index of an xz archive. It describes every block and none
-// of them decode on the way.
-//
-// The index is what makes parallel decoding possible. It gives the compressed
-// and uncompressed size of every block and blocks do not depend on each other.
-// Where each one sits in the input and in the output is then known up front
+// Reads the stream index of an xz archive without decoding a block. It gives
+// the compressed and uncompressed size of every block, and blocks do not
+// depend on each other. That is what makes parallel decoding possible
 
 /// Random access over the compressed bytes of an xz archive.
 ///
@@ -82,10 +79,8 @@ class XZLayout {
   const XZLayout(this.blocks, this.uncompressedSize);
 }
 
-/// The size in bytes of the check field for [checkType].
-///
-/// The check types are grouped in threes by size. An unrecognised check is
-/// still skipped over that way
+/// The size in bytes of the check field for [checkType]. The check types are
+/// grouped in threes by size. An unrecognised check is still skipped
 int xzCheckSize(int checkType) {
   if (checkType == 0) {
     return 0;
@@ -104,12 +99,9 @@ int xzCheckSize(int checkType) {
 /// Reads the layout of every block in [source] from the stream indexes.
 ///
 /// Returns null when the layout cannot be worked out. This only feeds buffer
-/// sizes and work scheduling. Anything unexpected makes it give up instead of
-/// failing. The data itself is validated during the decode.
-///
-/// [maxUncompressedSize] caps the total decoded size reported here. A valid
-/// index can describe an output far larger than the memory on hand. Passing a
-/// ceiling gives null instead of an unusable answer
+/// sizes and work scheduling, and the data itself is validated during the
+/// decode. [maxUncompressedSize] caps the total reported here. A valid index
+/// can describe an output far larger than the memory on hand
 XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
   try {
     var end = _skipTrailingZeroPadding(source, source.length);
@@ -266,10 +258,9 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
       if (header[6] != 0 || header[7] != streamFlags) {
         return null;
       }
-      // And covers them with its own CRC32. Nothing else guards a damaged
-      // header here. The blocks are found through the index and nothing
-      // downstream reads these bytes again. Without this check an archive that
-      // xz rejects decodes here without complaint
+      // And covers them with its own CRC32. Nothing downstream reads these
+      // bytes again. Without this check an archive that xz rejects decodes
+      // here without complaint
       final headerCrc =
           header[8] | header[9] << 8 | header[10] << 16 | header[11] << 24;
       if (getCrc32(Uint8List.sublistView(header, 6, 8)) != headerCrc) {
@@ -321,11 +312,9 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
   }
 }
 
-/// Reads the LZMA2 dictionary size out of a block [header].
-///
-/// Whoever decodes that block has to allocate a dictionary of this size. The
-/// parallel decoder uses it to count how many blocks fit in its memory budget,
-/// instead of guessing. Returns 0 if the header does not name one
+/// Reads the LZMA2 dictionary size out of a block [header]. Decoding that
+/// block allocates a dictionary that size, and the parallel decoder counts
+/// blocks against its budget with it. Returns 0 when the header names none
 int xzBlockDictionarySize(Uint8List header) {
   try {
     if (header.isEmpty) {
