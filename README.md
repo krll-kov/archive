@@ -119,7 +119,7 @@ void main() {
 `ProgressOutputStream` wraps any `OutputStream` and calls back with the number of bytes written
 through it so far, at most once per 64 KiB.
 
-Extracting a zip, with progress over the whole archive:
+This example extracts a zip and prints progress over the whole archive:
 ```dart
 import 'package:archive/archive.dart';
 
@@ -141,8 +141,8 @@ void main() async {
 }
 ```
 
-Unpacking a `.tar.gz` into a `.tar`. A gzip stream does not say how big it unpacks, so the
-progress is how much of the compressed file has been read:
+This example unpacks a `.tar.gz` into a `.tar`. A gzip stream does not store its uncompressed
+size up front, so the progress shows how much of the compressed file has been read:
 ```dart
 import 'package:archive/archive.dart';
 
@@ -164,14 +164,14 @@ Decoding is synchronous, so in Flutter run it in `Isolate.run` and send the prog
 ### Dart async* StreamTransformers/ByteConversionSink/Converter support
 
 Codecs that take data as it arrives expose a `Codec` with a converter for each
-direction, the shape `dart:io` uses for `gzip`. Everything named `...Converter`
-takes bytes and writes bytes, the way `dart:convert` means it. tar and zip carry
-entries on one side, so their two sides are `StreamTransformer`s instead,
+direction, the same layout `dart:io` uses for `gzip`. Every class named `...Converter`
+converts bytes to bytes, like a `dart:convert` `Converter`. tar and zip work with
+entries on one side, so they use `StreamTransformer`s instead:
 `TarDecoderTransformer`, `TarEncoderTransformer` and `ZipEncoderTransformer`.
-Both shapes are used the same way, through `.transform`.
+Both kinds are used the same way, through `.transform`.
 
-None of this is `decodeStream` or `encodeStream`: those take an `InputStream`
-and an `OutputStream`, read the whole archive in one call, and are not fed by a
+This is separate from `decodeStream` and `encodeStream`. Those take an `InputStream`
+and an `OutputStream`, process the whole archive in one call, and do not read a
 Dart `Stream`.
 
 | codec | decoding                             | encoding                                     |
@@ -183,14 +183,16 @@ Dart `Stream`.
 | zip   | `-- (impractical by format)*`        | `zipCodec.encoder**`                         |
 | zlib  | `-- (dart already has zlib.decoder)` | `-- (dart already has zlib.encoder)`         |
 | gzip  | `-- (dart already has gzip.decoder)` | `-- (dart already has gzip.encoder)`         |
-> *Zip stores its central directory at the end of the file so decode converter is of no use here. 
-> It needs to access data from the end of archive, while converter does not provide such access.
-> **ZipCodec for encoder uses `streamed = true` by default, this means it enabled 3 general purpose flag, CRC remains
-> filled with zeroes and goes to data descriptor with real data to consume less RAM. If default format is needed, use as 
-> const ZipCodec(streamed: false);
+> *Zip stores its central directory at the end of the file, so a decoder converter is of no use.
+> Reading a zip needs the end of the archive, and a `Stream` can only be read forward.
+>
+> **`zipCodec.encoder` uses `streamed: true` by default. For a deflated entry without a password it
+> sets general purpose bit 3, writes zeros for the CRC and sizes in the local header, and writes the
+> real values in a data descriptor after the entry, so the entry is not held in memory. For the
+> layout `ZipEncoder` writes, use `const ZipCodec(streamed: false)`.
 
-Decoding as the bytes arrive, single-threaded, holding the window the archive
-asks for and one chunk rather than the archive:
+This decodes an xz file as the bytes arrive, on one thread. It holds the dictionary size set
+in the archive and one chunk, not the whole archive:
 
 ```dart
 import 'package:archive/archive.dart';
@@ -202,7 +204,8 @@ await for (final piece
 }
 ```
 
-A `.tar.zst` downloaded and unpacked as it arrives, without holding the body:
+This downloads a `.tar.zst` and unpacks it as it arrives, without holding the response body
+in memory:
 
 ```dart
 import 'package:archive/archive.dart';
@@ -226,11 +229,12 @@ await for (final TarEntry entry in response
 ```
 
 An entry's `content` reads the bytes that follow its header in the same stream,
-so read it inside the loop body, before the next entry. A skipped entry is
-passed over for you. Kept for later, its `content` throws `StateError`.
+so read it inside the loop body, before the next entry. The content of a skipped entry
+is discarded automatically. If you keep an entry and read its `content` after the loop
+has moved on, it throws `StateError`.
 
-Encoding the other way, so that a source and a destination that are themselves
-streams need no buffer between them:
+Encoding works the same way. A stream source and a stream destination need no buffer
+between them:
 
 ```dart
 import 'package:archive/archive.dart';
@@ -244,10 +248,10 @@ await File('data')
 ```
 
 If reading or encoding fails, `pipe` throws and `out` is closed, but `data.xz`
-stays on disk. It is empty when the failure comes before the first output, and
-cut short when it comes later. Delete it if a partial file is of no use to you.
+stays on disk. It is empty if the failure happens before any output is written, and
+truncated if it happens later. Delete it if you do not need a partial file.
 
-A `.tar.zst` packed straight into an upload, with no temporary file:
+This packs a directory into a `.tar.zst` and uploads it without a temporary file:
 
 ```dart
 Stream<ArchiveFile> filesOf(Directory dir) async* {
@@ -258,7 +262,7 @@ Stream<ArchiveFile> filesOf(Directory dir) async* {
         yield ArchiveFile.stream(
             p.relative(entity.path, from: dir.path), input);
       } finally {
-        // Runs once the encoder has written the entry, or when it is cancelled
+        // Runs once the encoder has written the entry, or when the stream is cancelled
         await input.close();
       }
     }
@@ -291,17 +295,15 @@ The encoders leave an entry open by default, the same as `ZipEncoder.encodeStrea
 written, and also when the stream is cancelled part way through one.
 
 
-Both directions also take a whole buffer: `xzCodec.decode(bytes)` and
-`xzCodec.encode(bytes)`, or the sinks directly through
-`startChunkedConversion` for code that pushes rather than awaits.
+Both directions also accept a whole buffer, `xzCodec.decode(bytes)` and
+`xzCodec.encode(bytes)`. Code that calls `add` itself can use the sinks from
+`startChunkedConversion`.
 
-The block checks are verified by default when decoding through a converter,
-unlike `decodeBytes` and `decodeStream`: the compressed bytes are handed back as they pass, so there
-is no second chance at the check. `XzCodec(verify: false)` skips them, which is
-worth about 6% of the decode.
+Converters verify the block checks by default, unlike `decodeBytes` and `decodeStream`.
+A converter sends decoded data out before the stream ends, so it cannot check that data
+again later. `XzCodec(verify: false)` skips the checks and saves about 6% of decode time.
 
-Through a sink, a failure is thrown out of `add` or `close`, and the input
-after it is not read. The sink you passed in stays open, as it does with
+With a sink, `add` or `close` throws on failure, and the rest of the input is not read. The sink you passed in stays open, as it does with
 `gzip.decoder` in `dart:io`. If it holds a file or a socket, close it yourself:
 
 ```dart
@@ -315,7 +317,7 @@ try {
 }
 ```
 
-Through a `Stream`, a failure arrives as an error event. The `xzCodec`,
+With a `Stream`, a failure is reported as an error event. The `xzCodec`,
 `zstdCodec` and `bzip2Codec` converters then leave the stream open, as
 `gzip.decoder` and `gzip.encoder` do. `tarCodec`, `zipCodec` and the threaded
 converters close it. Treat the first error as the end either way. `await for`,
@@ -324,9 +326,9 @@ has to cancel the subscription in `onError`.
 
 ### Running a codec off the UI isolate
 
-The converters are asynchronous in shape only: the work for a piece runs to
-completion synchronously. Longest single call over 3 MB fed in 16 KiB pieces,
-AOT on an Apple M-series:
+The converters only look asynchronous. Each piece is processed synchronously to the end.
+The table shows the longest single call for 3 MB of input added in 16 KiB pieces, AOT on
+an Apple M-series:
 
 | call | worst single call |
 | --- | --- |
@@ -339,14 +341,15 @@ AOT on an Apple M-series:
 | `ZstdEncoderConverter(level: 19)` | 98 ms |
 | `zipCodec.encoder` | one entry: 2.0 ms per 256 KiB, 4.2 ms per 4 MiB |
 
-The zip number is the checksum pass, which reads the entry before the deflate
-does. The deflate itself now goes out in 64 KiB steps, so an entry is neither
-held nor blocked on whole. On the web it still is, because `Deflate` there runs
-to the end of its input in one call.
-tar is not in the table: reading 20000 entries costs 42 ms in total, so the
-cost of a `.tar.zst` is the zstd row. A frame is 16 ms at 60 Hz, so use an
-isolate for the lower half of that table and for anything large. Keep the whole pipeline on the worker, so only paths
-cross the boundary rather than every piece:
+The zip number is the checksum pass, which reads the entry before deflate runs. Deflate
+itself runs in 64 KiB steps, so an entry is not held in memory or compressed in one
+blocking call. On the web the entry is still deflated in one call, because `Deflate`
+there processes its whole input at once.
+
+tar is not in the table: reading 20000 entries takes 42 ms in total, so a `.tar.zst`
+costs about the same as the zstd row. A frame at 60 Hz is 16 ms, so use an isolate for
+the lower half of the table and for large inputs. Run the whole pipeline in the isolate,
+so only the file paths are sent to it:
 
 ```dart
 await Isolate.run(() async {
@@ -358,16 +361,16 @@ await Isolate.run(() async {
 ### Spreading one call over isolates
 
 Two codecs split a single call across isolates: xz decoding and zstd
-compression. Pass the options and the call returns at once, with the result
-arriving through `onDone`, since an isolate cannot be waited on synchronously.
-Where isolates do not exist, dart2js and dart2wasm, the same code runs in the
-calling isolate and writes the same bytes.
+compression. With the options set, the call returns at once and the result is passed
+to `onDone`, since an isolate cannot be waited on synchronously. On dart2js and
+dart2wasm, which have no isolates, the same code runs in the calling isolate and
+produces the same bytes.
 
-zstd writes the frame `zstd -T` writes, which is not the frame the single
-threaded encoder writes, and it is the same for any number of workers. Prefer
-the file form: each worker reads its own job straight from disk, so the input
-never sits in the calling isolate, and a gigabyte at level 6 costs 151 MB this
-way against 2 GB through `encodeBytes`:
+Multithreaded zstd writes the same frame as `zstd -T`. That frame differs from the
+single threaded output, but it does not depend on the number of workers. Prefer the
+file form. Each worker reads its own job from disk, so the input is never loaded into
+the calling isolate. Compressing 1 GB at level 6 this way uses 151 MB of memory,
+compared with 2 GB through `encodeBytes`:
 
 ```dart
 final input = InputFileStream('data.bin');
@@ -384,7 +387,7 @@ await output.close();
 await input.close();
 ```
 
-xz over a whole buffer, one block to a worker:
+xz decoding of a whole buffer sends one block to each worker:
 
 ```dart
 final completer = Completer<Uint8List>();
@@ -399,11 +402,10 @@ XZDecoder().decodeBytes(compressed,
 final data = await completer.future;
 ```
 
-`decodeStream` takes the same options, and over an `InputFileStream` a worker
-reads its own block through a window rather than holding the archive.
+`decodeStream` takes the same options. With an `InputFileStream`, each worker reads its
+own block from the file through a read buffer, so the archive is not held in memory.
 
-A zstd `Stream` takes them too, through the codec, and then `transform` reads
-the way it always did:
+A zstd `Stream` accepts the options through the codec, and `transform` is used as usual:
 
 ```dart
 await File('data.bin')
@@ -415,26 +417,25 @@ await File('data.bin')
     .pipe(File('data.bin.zst').openWrite());
 ```
 
-The stream carries its own end and its own errors, so `onDone` stays empty
-here. `startChunkedConversion` refuses the options rather than quietly falling
-back: a sink owes its output before it returns, and a worker answers later.
+The stream reports its own end and errors, so `ZstdMultithreadOptions.converter` has no
+`onDone`. `startChunkedConversion` throws `ArgumentError` with these options, because a
+sink must write its output before `add` returns and a worker finishes later.
 
-`workers` never changes the bytes, only the time, and `memoryBudget` caps how
-many of them run at once, a gigabyte by default: a zstd worker is charged for
-its job, its prefix, its output and the level's tables, an xz one for the
-dictionary its block names and the block itself, and at least one always runs.
-xz adds `fileReadBufferSize`, the window a worker reads its block through when
-it opens the file itself.
+`workers` changes only the time, never the output bytes. `memoryBudget` limits how many
+workers run at once and defaults to 1 GB. A zstd worker counts its job, its prefix, its
+output and the level's tables. An xz worker counts the dictionary size from its block
+header and the block itself. At least one worker always runs. xz also has
+`fileReadBufferSize`, the buffer a worker uses to read its block when it opens the file
+itself.
 
-zstd's `jobSize` and `overlapLog` are the two that do change the bytes, the way
-`zstd -T` does. A value that cannot be honoured throws `ArgumentError` at the
-call rather than reaching `onError`, and an input too small to be worth
-splitting takes the single threaded path on its own.
+zstd's `jobSize` and `overlapLog` do change the output bytes, as they do in `zstd -T`.
+An invalid value throws `ArgumentError` synchronously from the call, and `onError` is not
+called. An input too small to split is compressed on the single threaded path
+automatically.
 
 ### Recognizing a format from its first bytes
 
-`CodecsRecognizer` reads a header and says what wrote it, without decoding
-anything:
+`CodecsRecognizer` detects the format from the header without decoding anything:
 
 ```dart
 import 'package:archive/archive.dart';
@@ -453,26 +454,26 @@ switch (CodecsRecognizer.recognize(head)) {
 }
 ```
 
-Each format is also its own check: `isGZip`, `isZLib`, `isBZip2`, `isXZ`,
+Each format also has its own check: `isGZip`, `isZLib`, `isBZip2`, `isXZ`,
 `isZstd`, `isZip`, `isTar`.
 
-How much of the file is needed depends on the format. A check gives an answer
-from 2 bytes for zlib **(if withZLib is set to true, by default it's false because zlib can give false positives)**,
-3 for gzip, 4 for bzip2, zstd and zip, and 6 for xz. With more bytes passed this check also refuses reserved flag
-bits and broken fields: 7 bytes for zlib, 4 for gzip, 5 for zstd, 10 for bzip2 and 12 for xz. With fewer bytes a check
-skips the fields it has not reached. So it can pass data that a whole header
-would fail. Only tar needs more, since a header written before the ustar versions carries no magic
-at all and is identified by the checksum over its whole 512 byte block. 263
-bytes are enough for a ustar tar, `CodecsRecognizer.headerBytes` for any of
-them.
+The number of bytes needed depends on the format. A check can answer after 2 bytes for
+zlib, 3 for gzip, 4 for bzip2, zstd and zip, and 6 for xz. zlib is checked only when
+`withZLib` is true. It is false by default because the zlib check can give false
+positives. With more bytes, a check also rejects reserved flag bits and invalid fields:
+7 bytes for zlib, 4 for gzip, 5 for zstd, 10 for bzip2 and 12 for xz. With fewer bytes,
+a check skips the fields it has not reached, so it can accept data that a full header
+would reject. Only tar needs more. A tar header from before ustar has no magic and is
+identified by the checksum over the whole 512-byte block. 263 bytes are enough for a
+ustar tar, and `CodecsRecognizer.headerBytes` is enough for every format.
 
-Formats with no header of their own, raw LZMA and raw deflate among them, cannot
-be recognized this way.
+Formats without a header, such as raw LZMA and raw deflate, cannot be recognized this
+way.
 
 #### extractFileToDisk
 `extractFileToDisk` is a convenience function to extract the contents of
 an archive file directory to an output directory.
-The type of archive is read from its header, or from the file extension when the header is not recognised.
+The type of archive is read from its header, or from the file extension when the header is not recognized.
 ```dart
 import 'package:archive/archive_io.dart';
 // ...
@@ -494,8 +495,9 @@ await inputStream.close();
 ```
 #### Zstandard
 
-A dictionary, trained by `zstd --train`, is passed to both sides and named in
-the frame header, so only the same dictionary reads the frame back:
+A dictionary trained with `zstd --train` is passed to both the encoder and the decoder.
+The frame header stores the dictionary ID, so the frame can only be decoded with the same
+dictionary:
 
 ```dart
 final dictionary = ZstdDictionary(File('dict').readAsBytesSync());
@@ -504,4 +506,4 @@ final compressed =
 final data = ZstdDecoder(dictionary: dictionary).decodeBytes(compressed);
 ```
 
-Unlike original zstd lib, compressions levels 19-22 do not require --ultra flag to work
+Unlike original zstd CLI, compression levels 20-22 do not require --ultra flag to work
