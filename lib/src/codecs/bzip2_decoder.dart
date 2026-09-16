@@ -19,9 +19,8 @@ class BZip2Decoder {
 
   bool decodeStream(InputStream input, OutputStream output,
       {bool verify = false}) {
-    // bzip2 -d reads streams written back to back, and pbzip2 writes one per
-    // block. What follows the last stream and does not start one is ignored,
-    // as it always was
+    // Support concatenated streams (like pbzip2, which writes one stream per
+    // block). Any trailing data that doesn't start a new stream is safely ignored
     while (true) {
       if (!_decodeStream(input, output, verify: verify)) {
         return false;
@@ -30,7 +29,7 @@ class BZip2Decoder {
         return true;
       }
       // After a stream bzip2 1.0.8 reads BZh and a digit from 1 to 9. If a byte
-      // differs, bzip2 ignores the rest as trailing garbage and exits 0
+      // differs, bzip2 ignores the rest as trailing garbage and exits
       if (BZip2.breaksSignature(input.peekBytes(4).toUint8List())) {
         return true;
       }
@@ -90,8 +89,8 @@ class BZip2Decoder {
         combinedCrc = ((combinedCrc << 1) | (combinedCrc >> 31)) & 0xffffffff;
         combinedCrc ^= blockCrc;
       } else if (type == blockEos) {
-        // A file reads zeros past its end, so a cut inside the stream check is
-        // only seen by counting the bits that are left
+        // Prevent false positives from zero-padding at EOF. We manually check
+        // the remaining bits to ensure the file wasn't truncated during the checksum
         if (br.bitsLeft + input.length * 8 < 32) {
           return false;
         }
@@ -115,10 +114,9 @@ class BZip2Decoder {
     return false;
   }
 
-  /// Allocates what one stream's blocks need.
-  ///
-  /// [BZip2ChunkedDecoder] walks the blocks itself, one per arrival of enough
-  /// input, so it sets this up rather than [decodeStream]
+  /// [BZip2ChunkedDecoder] calls this directly because it processes blocks
+  /// one at a time as data arrives, rather than relying on [decodeStream]
+  /// to do the setup
   void beginStream(int blockSize100k) {
     _blockSize100k = blockSize100k;
     _tt = Uint32List(_blockSize100k * 100000);
@@ -128,8 +126,8 @@ class BZip2Decoder {
     _gMinlen = 0;
   }
 
-  /// Decodes one block whose 48 bit marker and stored check have already been
-  /// read, and returns that block's finalized check, or -1 if it is malformed
+  /// Decodes a block (expecting the 48-bit marker and CRC we already read).
+  /// Returns the computed CRC, or -1 on error.
   int decodeBlock(Bz2BitReader br, OutputStream output) {
     final crc = _readCompressed(br, output);
     return crc < 0 ? -1 : BZip2.finalizeCrc(crc);

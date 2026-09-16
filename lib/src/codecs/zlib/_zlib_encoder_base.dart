@@ -11,8 +11,7 @@ abstract class ZLibEncoderBase {
   void encodeStream(InputStream input, OutputStream output,
       {int? level, int? windowBits, bool raw = false});
 
-  /// A sink that compresses into [output] piece by piece. Null where the
-  /// backend only runs whole, and then [encodeStream] is all there is
+  /// A sink that compresses into [output] piece by piece.
   Sink<List<int>>? startEncode(OutputStream output,
           {int? level, int? windowBits, bool raw = false}) =>
       null;
@@ -23,7 +22,8 @@ abstract class ZLibEncoderBase {
 class ZLibOutputSink implements Sink<List<int>> {
   final OutputStream _output;
 
-  /// Bytes this sink put into [_output], whose own length may count more
+  /// Number of bytes this sink has written to [_output]; [_output] may already
+  /// hold other data, so its length can be larger
   var written = 0;
 
   ZLibOutputSink(this._output);

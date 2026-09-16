@@ -17,12 +17,11 @@ import 'zstd_mt_parallel.dart';
 import 'zstd_multithread_options.dart';
 import 'zstd_window.dart';
 
-/// zstd for data that arrives in pieces, the way a `Stream` gives it.
+/// {@macro archive.codecs.general}
 ///
-/// A frame written this way names no content size, since a stream does not know
-/// it, and takes its parameters from the row the reference picks when the size
-/// is unknown. That is a different archive from the one [ZstdEncoder] writes for
-/// the same bytes, and the same one `ZSTD_compressStream2` writes
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
+/// {@macro archive.converters.encoder}
 class ZstdCodec extends Codec<List<int>, List<int>> {
   /// Checks the XXH64 of every frame that carries one
   final bool verify;
@@ -52,9 +51,7 @@ class ZstdCodec extends Codec<List<int>, List<int>> {
   /// Whether a frame this writes carries an XXH64 of its content
   final bool frameChecksum;
 
-  /// Spreads the frame's jobs over isolates, and then the bytes are the ones
-  /// `zstd -T` writes rather than the single threaded ones. Only `transform`
-  /// takes it, since a sink cannot wait for a worker
+  /// {@macro archive.yield_codecs_multithreaded_example}
   final ZstdMultithreadOptions<Object?>? multithread;
 
   @override
@@ -65,10 +62,17 @@ class ZstdCodec extends Codec<List<int>, List<int>> {
       dictionary: dictionary);
 }
 
-/// The codec with its defaults, for `stream.transform(zstdCodec.decoder)`
+/// {@macro archive.codecs.general}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
+/// {@macro archive.converters.encoder}
 const zstdCodec = ZstdCodec();
 
-/// Decodes zstd from a `Stream` of pieces into a `Stream` of pieces
+/// {@macro archive.codecs.general}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
 class ZstdDecoderConverter extends ChunkedConverter {
   /// Checks the XXH64 of every frame that carries one. On by default: a caller
   /// reading a stream has handed the compressed bytes back by the time the
@@ -92,16 +96,18 @@ class ZstdDecoderConverter extends ChunkedConverter {
           windowSizeLimit: windowSizeLimit);
 }
 
-/// Writes zstd from a `Stream` of pieces into a `Stream` of pieces
+/// {@macro archive.codecs.general}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.encoder}
 class ZstdEncoderConverter extends ChunkedConverter {
   final int level;
 
   /// Whether the frame carries an XXH64 of its content
   final bool checksum;
 
-  /// Spreads the jobs of the frame over isolates when this converter is bound
-  /// to a stream. `startChunkedConversion` cannot take it: its sink owes its
-  /// output before it returns, and a worker answers later
+  /// `startChunkedConversion` cannot take this option. Its sink owes its output
+  /// before it returns, and a worker answers later
   final ZstdMultithreadOptions<Object?>? multithread;
 
   /// Placed before the content, as [ZstdChunkedEncoder.dictionary] describes
@@ -157,9 +163,9 @@ class ZstdEncoderConverter extends ChunkedConverter {
       }
       return bytes;
     });
-    // The header goes out with the first part rather than ahead of the stream:
-    // only by then is whether anything arrived at all settled, and an empty
-    // frame carries its size where a streamed one carries a window
+    // The header is written with the first chunk, not up front: only then do
+    // we know whether any input came, and an empty frame records its content
+    // size instead of a window size.
     yield* zstdMtCompressStream(counted, level,
         jobSize: options.jobSize,
         overlapLog: options.overlapLog,
@@ -507,7 +513,7 @@ class ZstdChunkedDecoder extends ChunkedSink {
   @override
   void finish() {
     if (_stage != _Stage.magic || available != 0) {
-      throw ArchiveException('zstd: the archive ended part way through');
+      throw ArchiveException('zstd: unexpected end of archive');
     }
     // Skippable frames on their own decode to nothing rather than failing,
     // which is what the reference does with them

@@ -295,11 +295,12 @@ void main() {
                 verify: true, workers: 4),
             isFalse);
 
-        // Both stop at the same place, the end of the block whose check
-        // failed. Writing straight to an output stream cannot take those bytes
-        // back, so the single threaded decode leaves them there. The parallel
-        // one matches it instead of making up a stricter rule. Neither vouches
-        // for those bytes. Both reported the failure above
+        // Both stop in the same place, and that place is the end of the block
+        // whose check failed: writing straight through to an output stream
+        // cannot take those bytes back, so the single threaded decode leaves
+        // them behind and the parallel one matches it rather than inventing a
+        // stricter rule for itself. Neither vouches for them; both reported
+        // the failure above.
         final sequential = XZDecoder().decodeBytes(data, verify: true);
         final parallel =
             await decodeBytesOnIsolates(data, verify: true, workers: 4);
@@ -525,11 +526,9 @@ void main() {
 
     test('splits an archive whose output is too large to preallocate',
         () async {
-      // Over the preallocation ceiling, decodeBytes cannot trust the size in
-      // the index, so it grows its buffer instead. That changes the buffer,
-      // not the work. We still hand the blocks out to isolates. An earlier
-      // version fell back to one isolate here and cost about ninefold on a
-      // three gigabyte archive.
+      // Above the preallocation ceiling, decodeBytes grows its buffer instead of
+      // trusting the index size, but blocks still go to multiple isolates: falling
+      // back to one was ~9x slower on a 3 GB archive.
       //
       // Off by default. It allocates over three gigabytes. Zeros compress at
       // ratios in the thousands, so the fixture itself stays small
@@ -631,11 +630,11 @@ void main() {
     });
 
     group('archive wrapper', () {
-      // To split an archive we find the blocks through the index and decode
-      // each one on its own. Nothing after that looks at the stream header or
-      // footer again. So we have to check here whatever the single threaded
-      // decode checks in them. Otherwise a damaged archive that xz rejects
-      // decodes here without complaint
+      // Splitting an archive up means finding the blocks through the index and
+      // decoding each one on its own, so nothing afterwards ever looks at the
+      // stream header or footer again. Whatever the single threaded decode
+      // checks in them has to be checked here instead, or a damaged archive
+      // that xz rejects decodes without complaint.
       late Uint8List pristine;
 
       setUp(() {
@@ -883,12 +882,12 @@ void main() {
 
     group('a block that outgrows its record in the index', () {
       // Damage inside a block header can raise the uncompressed size it
-      // declares, above what the index records for that block. decodeBytes
-      // preallocates from the index, so such a block has more to write than
-      // the buffer holds. We have to report that like every other damaged
-      // archive, not throw from inside the chunk callback. The caller's stack
-      // is gone by then, so a throw would arrive as a bare RangeError even
-      // when they asked for failures by return value.
+      // declares, leaving it larger than what the index records for that block.
+      // decodeBytes preallocates from the index, so such a block has more to
+      // write than the buffer holds. That has to be reported the way every
+      // other damaged archive is, not raised from inside the chunk callback:
+      // the caller's stack is gone by then, so a throw would arrive as a bare
+      // RangeError even when failures were asked for by return value.
       //
       // The offsets come from test/_data/xz/good-1-lzma2-1.xz, which is
       // checked in, so they do not move. 31 of its 424 bytes have this effect.

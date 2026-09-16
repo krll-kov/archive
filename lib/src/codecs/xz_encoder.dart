@@ -9,21 +9,22 @@ import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
 import '../util/output_stream.dart';
 
+// The XZ specification can be found at https://tukaani.org/xz/xz-file-format.txt.
+
 /// Checksum used for compressed data.
 enum XZCheck { none, crc32, crc64, sha256 }
 
-/// The most an uncompressed LZMA2 chunk may carry. Its length field is two
+/// The most an uncompressed LZMA2 chunk can hold. Its length field is two
 /// bytes wide
 const _lzma2ChunkMax = 1 << 16;
 
-/// How far back a block says a match may reach. We store data instead of
-/// compressing it, so no match reaches anywhere. The decoder still has to
-/// accept the number. Both encoders name the same one, so both write the same
-/// archive
+/// Dictionary size written to the block header: stored chunks don't need a
+/// dictionary, but decoders require one, and both encoders use the same value
+/// so their output is identical
 const xzDefaultDictionarySize = 0x800000;
 
-/// A dictionary size as the format encodes it. The low bit is the mantissa
-/// above two. The rest is the exponent above eleven
+/// LZMA2 dictionary size byte: size = (2 + low bit) << (remaining bits + 11),
+/// with 40 meaning 4 GiB - 1.
 int xzDictionarySizeValue(int dictionarySize) {
   if (dictionarySize == 0) {
     throw ArchiveException('Invalid dictionary size $dictionarySize');

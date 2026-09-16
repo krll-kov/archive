@@ -237,17 +237,17 @@ void main() {
       });
 
       test('refuses a match that reaches past the declared dictionary', () {
-        // The same archive with one byte changed. The block header now
-        // declares a 4 KiB dictionary, and we recomputed the header CRC so the
-        // header itself is well formed. The matches still reach 8 KiB back. xz
-        // rejects this file as corrupt, so this decoder must too.
+        // The same archive with one byte changed: the block header now
+        // declares a 4 KiB dictionary, with the header CRC recomputed so the
+        // header itself is well formed. The matches still reach 8 KiB back, so
+        // xz rejects this file as corrupt and so must this decoder.
         //
-        // Accepting it does more than give wrong output. The dictionary buffer
-        // is larger than the declared dictionary, so we remember a distance
-        // that is too long. trimDictionary then moves the write position back
+        // Accepting it is not only wrong output. The dictionary buffer is
+        // larger than the declared dictionary, so an over long distance is
+        // remembered, and trimDictionary then moves the write position back
         // below it. The next literal decoded in matched state indexes the
-        // dictionary at a negative offset, and a pragma turns off the bounds
-        // check on that read
+        // dictionary at a negative offset, and that read has its bounds check
+        // disabled by a pragma.
         final compressed = archiveBytes('dict_overrun.xz');
         expect(
             XZDecoder().decodeStream(

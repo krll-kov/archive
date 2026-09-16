@@ -4,8 +4,8 @@ bool isCrc64Supported_() => true;
 
 // Slice-by-eight tables derived from [_crc64Table]. Table k holds the
 // contribution of a byte that sits k positions from the end of the eight byte
-// window. The eight lookups are independent of each other that way, and the
-// loop below folds eight bytes at a time.
+// window, which is what makes the eight lookups independent of each other and
+// lets the loop below fold eight bytes at a time.
 final Int64List _slicingTables = _buildSlicingTables();
 
 Int64List _buildSlicingTables() {

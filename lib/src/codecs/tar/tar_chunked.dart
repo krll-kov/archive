@@ -10,14 +10,16 @@ import '../../util/input_memory_stream.dart';
 import '../tar_encoder.dart';
 import 'tar_file.dart';
 
-/// Writes a tar into a `Sink` an entry at a time, so neither the archive nor an
-/// entry exists whole. An entry's size goes in the header before its bytes, so
-/// a length not known until the content is generated has to be measured first
+/// {@macro archive.codecs.not_converter}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
+/// {@macro archive.yield_codecs.encoder}
 class TarChunkedEncoder {
   final Sink<List<int>> output;
 
-  /// What a name is written as, the same field [TarDecoderTransformer] reads it back
-  /// through
+  /// The encoding used to write the entry name, matching what
+  /// [TarDecoderTransformer] uses to read it back
   final Encoding filenameEncoding;
 
   TarChunkedEncoder(this.output, {this.filenameEncoding = const Utf8Codec()}) {
@@ -35,8 +37,8 @@ class TarChunkedEncoder {
     _encoder.add(entry);
   }
 
-  /// Writes an entry's header and returns what is left of it, for a caller that
-  /// hands the content out itself rather than in one call
+  /// Writes the entry header and returns the payload stream for callers
+  /// that need to provide the content piece-by-piece
   TarFile? addHeader(ArchiveFile entry) {
     if (_closed) {
       throw StateError('Cannot add to a closed encoder');
@@ -58,13 +60,15 @@ class TarChunkedEncoder {
   }
 }
 
-/// tar through `transform` both ways, the shape the other codecs use. Its two
-/// sides are `StreamTransformer`s rather than `Converter`s, and this is not a
-/// `dart:convert` `Codec`, since neither side is bytes to bytes
+/// {@macro archive.codecs.not_converter}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
+/// {@macro archive.yield_codecs.encoder}
 class TarCodec {
   final Encoding filenameEncoding;
 
-  /// See [TarEncoderTransformer.autoClose]
+  /// {@macro archive.codecs.auto_close}
   final bool autoClose;
 
   const TarCodec(
@@ -77,25 +81,29 @@ class TarCodec {
       filenameEncoding: filenameEncoding, autoClose: autoClose);
 }
 
-/// The codec with its defaults, for `stream.transform(tarCodec.decoder)`
+/// {@macro archive.codecs.not_converter}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
+/// {@macro archive.yield_codecs.encoder}
 const tarCodec = TarCodec();
 
-/// [TarChunkedEncoder] behind `tarCodec.encoder`. It takes entries and writes
-/// bytes, so it is a `StreamTransformer` and not a `Converter`
+/// {@macro archive.codecs.not_converter}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.encoder}
 class TarEncoderTransformer
     extends StreamTransformerBase<ArchiveFile, List<int>> {
   final Encoding filenameEncoding;
 
-  /// Closes each entry once it is written, the way `ZipEncoder.add` does. Off
-  /// by default, as it is on `ZipEncoder.encodeStream`: the entries are the
-  /// caller's, and whoever opened a file closes it
+  /// {@macro archive.codecs.auto_close}
   final bool autoClose;
 
   const TarEncoderTransformer(
       {this.filenameEncoding = const Utf8Codec(), this.autoClose = false});
 
-  /// What an entry's content is handed out in. An entry is not held whole, so
-  /// this is all the encoder owes beyond the header it has already written
+  /// The chunk size used to stream the entry's payload. Since entries aren't
+  /// buffered in full, the encoder yields the content in pieces of this size
   static const _piece = 64 * 1024;
 
   @override
@@ -111,9 +119,8 @@ class TarEncoderTransformer
     while (await input.moveNext()) {
       final entry = input.current;
       try {
-        // The header goes through the encoder, the content does not: a yield
-        // in between is what lets a reader have the first bytes before the
-        // last of the entry has been read
+        // We process the header but leave the content raw. Yielding here lets
+        // the reader start consuming the payload before the entire entry is buffered
         final file = encoder.addHeader(entry);
         encoder.flush();
         while (held.isNotEmpty) {
@@ -139,7 +146,8 @@ class TarEncoderTransformer
           yield Uint8List(pad);
         }
       } finally {
-        // A cancel lands on a yield above, so this is a finally
+        // Runs as finally block to catch stream cancellations
+        // triggered at the yield
         if (autoClose) {
           entry.closeSync();
         }
@@ -167,11 +175,12 @@ class _Pieces implements Sink<List<int>> {
   void close() {}
 }
 
-/// `tarCodec.decoder`, a `StreamTransformer` and not a `Converter`, since it
-/// hands back entries and not bytes. It reads one entry at a time and holds one
-/// entry's header rather than the archive. [TarEntry.content] has to be read
-/// before the loop moves on, the bytes are gone by then. What is left unread is
-/// skipped. Over a source that can seek, `TarDecoder` is already lazy
+
+/// {@macro archive.codecs.not_converter}
+/// {@macro archive.yield_codecs.one_at_time}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.encoder}
 class TarDecoderTransformer extends StreamTransformerBase<List<int>, TarEntry> {
   final Encoding filenameEncoding;
 
@@ -183,8 +192,8 @@ class TarDecoderTransformer extends StreamTransformerBase<List<int>, TarEntry> {
           stream, (input, _) => _read(_Reader(input), filenameEncoding));
 }
 
-/// What an entry is, as the header's type flag names it. Old archives leave
-/// the field empty for a plain file, so that flag is not only `'0'`
+/// The parsed type flag. Note that older tar files often use an empty field
+/// for plain files rather than the standard '0'
 enum TarEntryType {
   file,
   hardLink,
@@ -211,19 +220,18 @@ enum TarEntryType {
       };
 }
 
-/// One entry of a tar being read out of a `Stream`
+/// A single tar entry parsed from a Stream
 class TarEntry {
   final String name;
 
-  /// What the header says the entry holds. [content] carries that much
+  /// The size specified in the header, matching the byte count of [content]
   final int size;
   final int mode;
   final int ownerId;
   final int groupId;
   final int lastModTime;
 
-  /// What the entry is. [typeFlag] is the raw field behind it, for the flags
-  /// this has no name for
+  /// The entry type. Use [typeFlag] to access raw or unmapped flags directly
   final TarEntryType type;
   final String typeFlag;
   final String? symbolicLink;
@@ -245,20 +253,21 @@ class TarEntry {
   var _taken = false;
   var _done = false;
 
-  /// Set once the reader skipped bytes this entry still owed its content
+  /// Indicates that the reader skipped over this entry's unread bytes
   var _gone = false;
 
-  /// Done once a content read has stopped touching the reader
+  /// Resolves when the content stream stops pulling from the reader
   Future<void> _settled = Future.value();
 
-  /// A plain file, and only that: a link or a device is not one
+  /// A standard file only (not a link or a device)
   bool get isFile => type == TarEntryType.file;
 
   bool get isDirectory => type == TarEntryType.directory;
 
   bool get isSymbolicLink => type == TarEntryType.symbolicLink;
 
-  /// The entry's bytes as they arrive, once and while it is the current entry
+  /// Yields the entry's data on the fly. The bytes can only be consumed once,
+  /// and only while the parser is actively on this entry
   Stream<List<int>> get content {
     if (_done) {
       throw StateError(
@@ -271,8 +280,9 @@ class TarEntry {
     return _detached(_pieces());
   }
 
-  /// [pieces] behind a cancel that returns at once, so a timeout on a silent
-  /// input gets its caller out; a read still pending ends at its next piece
+  /// Canceling [pieces] is synchronous so the caller can easily time out on a
+  /// dead stream. Any active read is left to gracefully fail whenever its
+  /// next piece arrives
   Stream<List<int>> _detached(Stream<List<int>> pieces) {
     StreamSubscription<List<int>>? inner;
     late final StreamController<List<int>> out;
@@ -314,7 +324,7 @@ class TarEntry {
     while (_left > 0) {
       final piece = await _reader.some(_left);
       if (piece.isEmpty) {
-        throw ArchiveException('tar: the archive ended part way through $name');
+        throw ArchiveException('tar: unexpected end of archive $name');
       }
       _left -= piece.length;
       yield piece;
@@ -331,19 +341,20 @@ Stream<TarEntry> _read(_Reader reader, Encoding encoding) async* {
       if (header == null || _allZero(header)) {
         break;
       }
-      // Nothing here can seek back, so a header read from junk is content
-      // already lost. The sum is what says this block is a header at all
+      // Since seeking backwards isn't supported, accidentally parsing payload
+      // as a header consumes and destroys that data. The checksum is the
+      // sole indicator that we're looking at a real header
       if (!tarHeaderChecksumMatches(header)) {
         throw ArchiveException('tar: invalid header checksum');
       }
-      // A header describing the next entry is read again with its content
-      // behind it, where `TarMetadata` looks for it
+      // The header is read again, followed immediately by its content,
+      // exactly where `TarMetadata` expects to find it
       var file = TarFile.read(InputMemoryStream(header),
           storeData: false, encoding: encoding, size: metadata.size);
       if (TarMetadata.describesNext(file)) {
         final body = await reader.exact(_padded(file.fileSize));
         if (body == null) {
-          throw ArchiveException('tar: the archive ended part way through');
+          throw ArchiveException('tar: unexpected end of archive');
         }
         final whole = Uint8List(512 + file.fileSize)
           ..setRange(0, 512, header)
@@ -358,7 +369,8 @@ Stream<TarEntry> _read(_Reader reader, Encoding encoding) async* {
       final entry = TarEntry._(file, reader);
       yield entry;
       entry._done = true;
-      // A content read still under way shares the reader, so it ends first
+      // We share the reader with the active content read, meaning
+      // it must complete before we can proceed
       await entry._settled;
       entry._gone = entry._left > 0;
       await reader.skip(entry._left + _padding(entry.size));
@@ -369,7 +381,7 @@ Stream<TarEntry> _read(_Reader reader, Encoding encoding) async* {
   }
 }
 
-/// What the whole of an entry weighs, its content rounded up to a block
+/// The full entry size, padded to the nearest block
 int _padded(int size) => size + _padding(size);
 
 int _padding(int size) => (512 - (size % 512)) % 512;
@@ -383,7 +395,7 @@ bool _allZero(Uint8List block) {
   return true;
 }
 
-/// Bytes out of a `Stream`, by the count the format names
+/// Pulls a format-specified number of bytes from the `Stream`
 class _Reader {
   _Reader(this._it);
 
@@ -417,9 +429,7 @@ class _Reader {
     return piece;
   }
 
-  /// A header can claim any size. Under this we believe it and allocate up
-  /// front, over it we grow the buffer as the bytes really arrive. Every real
-  /// header and long name is far under it
+  /// {@macro archive.header_size_trust}
   static const _reserve = 1 << 16;
 
   /// Exactly [count] bytes, or null if the input ended before any arrived
@@ -435,7 +445,7 @@ class _Reader {
         if (got == 0) {
           return null;
         }
-        throw ArchiveException('tar: the archive ended part way through');
+        throw ArchiveException('tar: unexpected end of archive');
       }
       if (got + piece.length > out.length) {
         var size = out.length;
@@ -455,7 +465,7 @@ class _Reader {
     while (left > 0) {
       final piece = await some(left);
       if (piece.isEmpty) {
-        throw ArchiveException('tar: the archive ended part way through');
+        throw ArchiveException('tar: unexpected end of archive');
       }
       left -= piece.length;
     }

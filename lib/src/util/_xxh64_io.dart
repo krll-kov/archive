@@ -1,7 +1,3 @@
-// These constants and the 64 bit multiplication below have no JavaScript
-// equivalent, and a literal above 2^63 does not even compile there. So
-// xxh64.dart selects this file on integer width. dart:isolate is available
-// on exactly the VM and wasm, the backends whose int is a real 64 bit integer.
 import 'dart:typed_data';
 
 const _prime1 = 0x9e3779b185ebca87;

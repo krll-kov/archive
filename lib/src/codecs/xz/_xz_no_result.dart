@@ -1,3 +1,2 @@
-/// What `XZMultithreadOptions.onDone` is when the caller gives none. A stream
-/// carries its own result. Every call that returns at once refuses it
+/// Replaces XZMultithreadOptions.onDone for MultiThread mode in converter
 void xzNoResult(Object? result) {}

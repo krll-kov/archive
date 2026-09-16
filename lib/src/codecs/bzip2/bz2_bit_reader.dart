@@ -8,14 +8,11 @@ class Bz2BitReader {
 
   int readByte() => readBits(8);
 
-  /// Bits still unread in the byte being taken apart. A caller resuming at a
-  /// bit that is not on a byte boundary accounts for them
+  /// Remaining amount of bits of the current byte are not read yet
   int get bitsLeft => _bitPos;
 
-  /// Set once a read went past the end of the input. An archive cut inside a
-  /// block asks for bytes that are not there, and the two input streams answer
-  /// differently: a file reads zeros past its end, memory throws. So we stop
-  /// here instead and the decoder returns a failure either way
+  /// Without this flag, reading from a file would return zeros and reading
+  /// from memory would throw. With it, both cases simply fail the same way
   bool get overrun => _overrun;
 
   int _nextByte() {

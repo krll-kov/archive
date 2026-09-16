@@ -11,20 +11,8 @@ import '../lzma/lzma_decoder.dart';
 // The XZ specification can be found at
 // https://tukaani.org/xz/xz-file-format.txt.
 
-/// Decodes a single xz block that starts at the current position of [input].
-///
-/// Every block resets the LZMA2 dictionary. A block carries no state from the
-/// blocks before it, so we can hand blocks to separate isolates.
-///
-/// [input] must cover the block from its header to the end of the check field.
-/// [XZBlockLayout.compressedLength] measures exactly that. [input] does not
-/// have to be in memory. Reading a block from a file while we decode it keeps
-/// the compressed block out of memory.
-///
-/// [streamFlags] comes from the stream header or footer. Its low four bits
-/// pick the check type. We read the check but do not verify it. A caller
-/// decoding into a stream it cannot seek computes the check as the bytes go
-/// past
+/// Decodes the xz block at [input]'s current position, without verifying its check.
+/// Blocks are independent, so they can run in separate isolates.
 ({bool ok, String? reason}) decodeXZBlock(
     InputStream input, int streamFlags, OutputStream output,
     {required int maxPreallocateSize}) {
@@ -46,22 +34,19 @@ class XZStreamDecoder {
   // LZMA decoder.
   final decoder = LzmaDecoder();
 
-  // Stream flags. The header and the footer both carry them
+  // Stream flags, which are sent in both the header and the footer.
   var streamFlags = 0;
 
   // Block sizes.
   final _blockSizes = <_XZBlockSize>[];
 
   // Position of the start of the stream being decoded. Padding inside a stream
-  // aligns to this, not to the start of [input]. [input] can start anywhere
+  // is aligned to this, not to the start of [input], which may have been
+  // positioned elsewhere by the caller.
   var _streamStart = 0;
 
-  /// Why the last decode gave up, or null if it has not given up.
-  ///
-  /// Every rejection sets this. A caller who asked about failures then gets
-  /// the reason, not just the fact. It costs one string. We still report
-  /// failure by returning, so a successful decode throws and allocates
-  /// nothing
+  // We still report failure by returning, so a successful decode throws
+  // and allocates nothing
   String? failureReason;
 
   // Upper bound on a buffer sized from a length the archive declares.
@@ -83,8 +68,8 @@ class XZStreamDecoder {
   XZStreamDecoder({this.verify = false, required this.maxPreallocateSize});
 
   // Records why the decode gave up and reports the failure. The first reason
-  // is the innermost one and it stays. The returns above it only pass the
-  // failure outwards
+  // is kept, because it is the innermost one: the returns above it only pass
+  // the failure outwards and have nothing of their own to add.
   bool _fail(String reason) {
     failureReason ??= reason;
     return false;
@@ -105,7 +90,7 @@ class XZStreamDecoder {
         return false;
       }
 
-      // Streams can be concatenated. Padding can follow each one
+      // Streams can be concatenated, and each one may be followed by padding.
       if (!_skipStreamPadding(input)) {
         return false;
       }
@@ -151,7 +136,8 @@ class XZStreamDecoder {
   }
 
   // Skips the padding that may follow a stream. Padding is zero bytes in
-  // multiples of four. Another stream or the end of the input follows it
+  // multiples of four, and is followed by another stream or the end of the
+  // input.
   bool _skipStreamPadding(InputStream input) {
     var count = 0;
     while (!input.isEOS) {
@@ -184,8 +170,9 @@ class XZStreamDecoder {
       return _fail('Invalid stream flags');
     }
     streamFlags = header.readByte();
-    // The check id is the low nibble and the rest is reserved, so a stream that
-    // sets any of it asks for something this decoder cannot promise
+    // Only the low 4 bits of the second byte are the check ID and everything
+    // else is reserved, so if any reserved bit is set we don't know how
+    // to read this stream
     if (streamFlags & 0xf0 != 0) {
       return _fail('Invalid stream flags');
     }
@@ -221,10 +208,11 @@ class XZStreamDecoder {
     Uint8List? blockData;
 
     if (needsBlockData && output is! OutputMemoryStream) {
-      // A stream with no contiguous buffer behind it cannot be read back after
-      // we write to it. So decode the block into a temporary buffer and append
-      // it afterwards. The declared length is only a hint. We do not trust it
-      // past [maxPreallocateSize]. The stream grows into what the block needs
+      // Streams that are not backed by a contiguous buffer cannot be read back
+      // after the data has been written, so the block is decoded into a
+      // temporary buffer and appended afterwards.
+      // The declared length is only a hint, so it is not trusted past
+      // [maxPreallocateSize]; the stream grows into what the block needs.
       final block = OutputMemoryStream(
           size: uncompressedLength != null &&
                   uncompressedLength <= maxPreallocateSize
@@ -234,12 +222,12 @@ class XZStreamDecoder {
       try {
         read = _readLZMA2(input, block, dictionarySize);
       } catch (_) {
-        // A failure part way through leaves the temporary buffer holding what
-        // decoded before it. Hand that over. The caller then gets the same
-        // output as if we had written the block straight through, so a corrupt
-        // archive leaves the same bytes whichever stream they passed in. We do
-        // not apply the filter to it. The branch below also gives up before
-        // filtering
+        // A failure part way through leaves the temporary buffer holding
+        // whatever was decoded before it. Handing that over leaves the caller
+        // with the same output they would have got had the block been written
+        // straight through, so what survives a corrupt archive does not depend
+        // on which kind of stream was passed in. The filter is not applied to
+        // it, matching the branch below, which gives up before filtering too.
         output.writeBytes(block.getBytes());
         rethrow;
       }
@@ -257,8 +245,8 @@ class XZStreamDecoder {
         return false;
       }
       if (hasX86) {
-        // subset() returns a view into the output buffer. The filter runs in
-        // place and allocates no copy of the block
+        // subset() returns a view into the output buffer, so the filter is
+        // applied in place without allocating a copy of the block.
         bcjX86Decode(output.subset(startDataLength), x86StartOffset);
       }
     }
@@ -664,9 +652,8 @@ class XZStreamDecoder {
     return true;
   }
 
-  // Reads a multibyte integer from [input]. Returns -1 when there is no valid
-  // one there. Nine bytes is the format's cap. Past it the multiplier
-  // overflows
+  // Reads a multibyte integer from [input], or -1 if there is not a valid one
+  // there. Nine bytes is the format's cap; past it the multiplier overflows.
   int _readMultibyteInteger(InputStream input) {
     var value = 0;
     var multiplier = 1;

@@ -37,7 +37,7 @@ class _ZipFileData {
 
   /// General purpose bit 3, which says the check and the sizes follow the
   /// data. The central directory has to carry it too, or a reader that
-  /// compares the two headers calls the pair broken
+  /// compares the two headers identifies the pair broken
   bool deferred = false;
 
   /// Set on a streamed entry that deflate may grow past 4 GB. Its local header
@@ -91,15 +91,9 @@ class ZipEncoder {
   late final Random _random = Random.secure();
   final String? password;
 
-  /// Deflates an entry straight into the output instead of into a buffer, and
-  /// writes its check and its sizes behind the data rather than in front of
-  /// it. That is what general purpose bit 3 is for. The peak is then one
-  /// deflate buffer rather than the largest entry.
-  ///
-  /// It costs a second pass over the source for the check. An entry that
-  /// deflate may grow past 4 GB is written with zip64, and its sizes behind
-  /// the data take 8 bytes each. Off by default: the bytes differ from what
-  /// [encodeBytes] has always written
+  /// Streams each entry's deflated data straight to the output and writes its
+  /// CRC and sizes after it (bit 3), so memory stays at one deflate buffer.
+  /// Off by default because the output differs from [encodeBytes].
   final bool streamed;
 
   ZipEncoder(
@@ -296,7 +290,7 @@ class ZipEncoder {
         final chosen = level ?? file.compressionLevel ?? _data.level ?? 6;
         // An entry with no content at all cannot be deflated: a zero length
         // deflate stream is two bytes, not none, and a reader handed neither
-        // calls the entry corrupt
+        // identifies the entry corrupt
         if (file.rawContent == null) {
           compressionType = CompressionType.none;
         } else if (streamed &&

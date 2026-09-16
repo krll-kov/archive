@@ -39,14 +39,12 @@ class BZip2Encoder {
     return true;
   }
 
-  /// Sets up what one stream's blocks need and writes the signature.
-  ///
-  /// [BZip2ChunkedEncoder] drives this, [addByte], [endBlock] and [endStream]
-  /// itself rather than pulling from an [InputStream], so what a stream writes
-  /// is what [encodeStream] writes for the same bytes
+  /// Instead of consuming an [InputStream], [BZip2ChunkedEncoder] drives this
+  /// method directly alongside [addByte], [endBlock], and [endStream]. This
+  /// guarantees identical output to [encodeStream]
   void beginStream(OutputStream output, {int blockSize100k = 9}) {
-    // The header carries the size as a single digit, so anything outside one
-    // to nine writes a signature no reader accepts
+    // The format requires the block size to be a single digit (1-9).
+    // Invalid values will silently corrupt the header signature. 0 is error
     if (blockSize100k < 1 || blockSize100k > 9) {
       throw ArchiveException(
           'bzip2: block size $blockSize100k is outside the one to nine the '
@@ -91,16 +89,15 @@ class BZip2Encoder {
     _startBlock();
   }
 
-  /// Takes one byte into the block being built. True once the block is full,
-  /// which is when [endBlock] has to run before the next byte
+  /// Adds a byte to the current block. Returns true if block is full,
+  /// meaning [endBlock] must be called before adding any more data
   bool addByte(int byte) {
     _addCharToBlock(byte);
     return _nblock >= _nblockMax;
   }
 
-  /// Codes the block built so far and folds its check into the stream's. A
-  /// block no byte reached is not written, since an empty one would still turn
-  /// the combined check
+  /// Compresses the block and updates the overall stream checksum.
+  /// We skip empty blocks to avoid altering and breaking the combined CRC
   bool endBlock() {
     if (_nblock == 0 && _stateInCh == 256) {
       return true;
@@ -121,8 +118,7 @@ class BZip2Encoder {
     return true;
   }
 
-  /// The end of stream marker, the combined check, and the padding that takes
-  /// the last byte whole
+  /// The EOF marker, the combined stream checksum, and padding to finish the byte
   void endStream() {
     bw.writeBytes(BZip2.eosMagic);
     bw.writeUint32(_combinedCRC);
@@ -2102,8 +2098,7 @@ class BZip2Encoder {
   late Bz2BitWriter bw;
   late int _nblockMax;
 
-  /// The checks of the blocks written so far, rolled together the way the
-  /// footer names them
+  /// Combined stream checksum from all blocks, ready for the footer
   var _combinedCRC = 0;
   late int _stateInCh;
   late int _stateInLen;

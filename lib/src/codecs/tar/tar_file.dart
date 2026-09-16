@@ -248,9 +248,8 @@ class TarFile {
     }
   }
 
-  /// What follows the header, through a subset so that writing never moves the
-  /// position of the stream the entry was given: a file output reads it in
-  /// chunks
+  /// The payload stream following the header, read in chunks to avoid
+  /// altering the read position of the original input
   InputStream? get contentStream {
     if (_content != null) {
       return _content!.getStream().subset();
@@ -315,10 +314,10 @@ class TarFile {
     return x;
   }
 
-  /// A field is NUL terminated, or fills its width. [trim] additionally drops
-  /// the spaces the ustar magic and the owner fields are padded with; a name
-  /// keeps them, since a space is a legal character in one and a file called
-  /// `" .codecov.yml"` is not the same file as `".codecov.yml"`
+  /// Parses a NUL-terminated or fixed-width field. Enabling [trim] drops
+  /// space padding used in ustar magic and owner fields, but shouldn't
+  /// be used for file names where spaces are significant. " .codecov.yml"`
+  /// is not the same file as `".codecov.yml"`
   String _parseString(InputStream input, int numBytes,
       [Encoding? encoding, bool trim = true]) {
     final codes = input.readBytes(numBytes).toUint8List();
@@ -374,9 +373,9 @@ class TarFile {
   }
 }
 
-/// What the headers carrying no data of their own say about the entry that
-/// follows: GNU long names and links, and PAX extended records. Both
-/// `TarDecoder` and the streamed reader walk them, so they live here
+/// Metadata from headers that carry no payload but describe the next entry,
+/// such as GNU long names, links, and PAX records. Shared here for both
+/// TarDecoder and the streamed reader
 class TarMetadata {
   static const _space = 0x20;
   static const _equals = 0x3d;
@@ -388,7 +387,7 @@ class TarMetadata {
   int? ownerId;
   int? groupId;
 
-  /// A PAX size record, read before the entry whose length it gives
+  /// A PAX size record that overrides the size of the upcoming entry
   int? size;
 
   /// True where [file] is one of those headers rather than an entry
@@ -429,7 +428,8 @@ class TarMetadata {
     return false;
   }
 
-  /// Puts it on the entry it described, then forgets it: one entry only
+  /// Applies the parsed metadata to the entry it describes and clears the state,
+  /// ensuring it only affects a single entry
   void applyTo(TarFile file) {
     size = null;
     if (name != null) {
@@ -539,10 +539,10 @@ class TarMetadata {
   }
 }
 
-/// Whether [header]'s own checksum field agrees with its 512 bytes, the eight
-/// bytes of that field taken as spaces. It is the only thing that tells a tar
-/// apart from an unrelated file, since every other field is free-form enough to
-/// read as something
+/// Validates the 512-byte [header] against its own checksum
+/// (calculated with the checksum field replaced by spaces).
+/// Because tar headers lack strict magic numbers, this is the
+/// only proof that the block is actually a tar header
 bool tarHeaderChecksumMatches(Uint8List header) {
   const space = 0x20;
   if (header.length < 512) {

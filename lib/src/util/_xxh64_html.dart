@@ -1,7 +1,3 @@
-// XXH64 is defined over 64 bit arithmetic, which a JavaScript number cannot
-// carry, so every value here is a pair of unsigned 32 bit halves and the
-// multiplication is done in 16 bit pieces to stay inside the 53 bits a double
-// holds exactly. xxh64.dart selects this file on integer width.
 import 'dart:typed_data';
 
 const _p1Hi = 0x9e3779b1, _p1Lo = 0x85ebca87;

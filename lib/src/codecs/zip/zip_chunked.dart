@@ -7,10 +7,11 @@ import '../../util/chunked_sink.dart';
 import '../zip_encoder.dart';
 import '../zlib/deflate.dart';
 
-/// zip through `transform`, writing only. The encoder is a `StreamTransformer`
-/// rather than a `Converter`, since its input is entries and not bytes. There is
-/// no decoder: reading needs the central directory, which sits at the end of the
-/// archive, so a forward-only source cannot be read
+
+/// {@macro archive.codecs.not_converter}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.encoder}
 class ZipCodec {
   final int level;
   final String? password;
@@ -19,7 +20,7 @@ class ZipCodec {
   /// See [ZipChunkedEncoder.streamed]
   final bool streamed;
 
-  /// See [ZipEncoderTransformer.autoClose]
+  /// {@macro archive.codecs.auto_close}
   final bool autoClose;
 
   const ZipCodec(
@@ -37,11 +38,16 @@ class ZipCodec {
       autoClose: autoClose);
 }
 
-/// The codec with its defaults, for `entries.transform(zipCodec.encoder)`
+/// {@macro archive.codecs.not_converter}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.encoder}
 const zipCodec = ZipCodec();
 
-/// [ZipChunkedEncoder] behind `zipCodec.encoder`. It takes entries and writes
-/// bytes, so it is a `StreamTransformer` and not a `Converter`
+/// {@macro archive.codecs.not_converter}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.encoder}
 class ZipEncoderTransformer
     extends StreamTransformerBase<ArchiveFile, List<int>> {
   final int level;
@@ -49,9 +55,7 @@ class ZipEncoderTransformer
   final Encoding filenameEncoding;
   final bool streamed;
 
-  /// Closes each entry once it is written, the way `ZipEncoder.add` does. Off
-  /// by default, as it is on `ZipEncoder.encodeStream`: the entries are the
-  /// caller's, and whoever opened a file closes it
+  /// {@macro archive.codecs.auto_close}
   final bool autoClose;
 
   const ZipEncoderTransformer(
@@ -79,7 +83,7 @@ class ZipEncoderTransformer
       try {
         // Header first, then the content in pieces, so a reader gets the first
         // bytes before the entry is fully deflated. On the web the body is one
-        // step, because deflate there only runs whole
+        // step
         final body = encoder.addHeader(entry);
         while (held.isNotEmpty) {
           yield held.removeAt(0);
@@ -102,7 +106,8 @@ class ZipEncoderTransformer
           body.cancel();
         }
       } finally {
-        // A cancel lands on a yield above, so this is a finally
+        // Runs as finally block to catch stream cancellations
+        // triggered at the yield
         if (autoClose) {
           entry.closeSync();
         }
@@ -130,16 +135,16 @@ class _Pieces implements Sink<List<int>> {
   void close() {}
 }
 
-/// Writes a zip into a `Sink` an entry at a time, reading nothing back. One
-/// entry is held, since a local header carries the check and the compressed
-/// size ahead of the bytes they describe, unless [streamed] moves them behind
+/// Writes a zip archive to a [Sink] entry by entry. By default, it buffers
+/// each entry to compute the CRC and sizes for the local header,
+/// unless [streamed] is enabled to write them after the payload instead
 class ZipChunkedEncoder {
-  /// Where the archive goes. [close] closes it, which flushes a codec under it
   final Sink<List<int>> output;
 
-  /// Deflates an entry straight into [output], its check and sizes behind the
-  /// data, so the peak is one deflate buffer rather than the largest entry.
-  /// Turn it off to get the bytes `ZipEncoder.encodeBytes` writes
+  /// Deflates data directly into [output] and appends the CRC and sizes
+  /// afterward. This keeps memory usage down to a single deflate buffer
+  /// rather than the full entry size. Disable this to match the exact
+  /// byte output of `ZipEncoder.encodeBytes`
   final bool streamed;
 
   ZipChunkedEncoder(this.output,

@@ -15,27 +15,18 @@ import 'xz_multithread_options.dart';
 import 'xz_parallel.dart';
 import 'xz_stream_decoder.dart';
 
-/// Decodes xz from a `Stream` of pieces into a `Stream` of pieces:
+/// {@macro archive.codecs.not_converter}
 ///
-/// ```dart
-/// await for (final piece in file.openRead().transform(xzCodec.decoder)) {
-///   ...
-/// }
-/// ```
-///
-/// The format does not care where the input is cut, so any pieces will do
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
+/// {@macro archive.yield_codecs.encoder}
 class XzDecoderConverter extends ChunkedConverter {
-  /// Checks the CRC of every block that carries one it can compute. On by
-  /// default: a caller reading a stream has handed the compressed bytes back
-  /// by the time the check would be made, so there is no second chance at it
+  /// Unlike default decodeStream/decodeBytes, verify is on by default to match
+  /// gzip and zlib behaviour. Checks CRC of evert block.
   final bool verify;
 
-  /// Decodes blocks on isolates when you bind this converter to a stream. We
-  /// can only send ahead a block whose header declares both lengths. `xz`
-  /// writes those in threaded mode. Any other block we decode here, once the
-  /// blocks in front of it are out. `startChunkedConversion` cannot take this
-  /// option. Its sink owes its output before it returns, and a worker answers
-  /// later
+  /// `startChunkedConversion` cannot take this option. Its sink owes its output
+  /// before it returns, and a worker answers later
   final XZMultithreadOptions<Object?>? multithread;
 
   const XzDecoderConverter({this.verify = true, this.multithread});
@@ -85,20 +76,20 @@ class XzDecoderConverter extends ChunkedConverter {
   }
 }
 
-/// xz for data that arrives in pieces, the way a `Stream` gives it.
+/// {@macro archive.codecs.not_converter}
 ///
-/// Same shape as gzip in `dart:io`, one converter per direction. A pipeline
-/// reads `stream.transform(xzCodec.decoder)`. A whole buffer reads
-/// `xzCodec.decode(bytes)`
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
+/// {@macro archive.yield_codecs.encoder}
 class XzCodec extends Codec<List<int>, List<int>> {
-  /// Checks the CRC of every block that carries one it can compute
+  /// Unlike default decodeStream/decodeBytes, verify is on by default to match
+  /// gzip and zlib behaviour. Checks CRC of evert block.
   final bool verify;
 
-  /// Which check the blocks this writes carry
+  /// Only crc32 and crc64 are supported right now
   final XZCheck check;
 
-  /// Decodes on isolates when [decoder] is bound to a stream, as
-  /// [XzDecoderConverter.multithread] describes
+  /// {@macro archive.yield_codecs_multithreaded_example}
   final XZMultithreadOptions<Object?>? multithread;
 
   const XzCodec(
@@ -112,30 +103,28 @@ class XzCodec extends Codec<List<int>, List<int>> {
   XzEncoderConverter get encoder => XzEncoderConverter(check: check);
 }
 
-/// The codec with its defaults, for `stream.transform(xzCodec.decoder)`
+/// {@macro archive.codecs.not_converter}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
+/// {@macro archive.yield_codecs.encoder}
 const xzCodec = XzCodec();
 
-/// Decodes an xz archive that arrives in pieces, the way a `Stream` of bytes
-/// gives it.
+/// {@macro archive.codecs.not_converter}
 ///
-/// The pull decoder asks its input for the next field and blocks until it has
-/// it. This one takes whatever arrived and stops at the first field that is
-/// not there yet, so nothing waits inside the parse.
-///
-/// It moves one LZMA2 chunk at a time, and the format caps a chunk at 64 KiB
-/// compressed. So we hold the dictionary the archive asks for plus one chunk,
-/// however big the archive is
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
 class XzChunkedDecoder extends ChunkedSink {
-  /// Checks the CRC of every block that carries one it can compute, on by
-  /// default for the reason [XzDecoderConverter.verify] gives
+  /// Unlike default decodeStream/decodeBytes, verify is on by default to match
+  /// gzip and zlib behaviour. Checks CRC of evert block.
   final bool verify;
 
   /// Takes the blocks that can be decoded elsewhere. The threaded stream
-  /// decoder shares this parse through it rather than repeating it
+  /// decoder shares this through it rather than repeating it
   final XzBlockDispatch? dispatch;
 
-  /// Set while the parse waits for [dispatch] to go idle before a block it has
-  /// to decode itself
+  /// Set while the parse waits for [dispatch] to go idle
+  /// before decoding a block
   bool get waitingForIdle => _waitingForIdle;
   var _waitingForIdle = false;
 
@@ -146,10 +135,11 @@ class XzChunkedDecoder extends ChunkedSink {
   // The LZMA decoder, the block header parse and the LZMA2 chunk rules are the
   // whole buffer decoder's, so the two cannot drift apart
   final _xz = XZStreamDecoder(maxPreallocateSize: 0);
+
   LzmaDecoder get _decoder => _xz.decoder;
   late final SinkOutputStream _sink;
 
-  /// Where the parse is, and what the state it is in still needs
+  /// Current parser state and how many bytes it still needs
   _Stage _stage = _Stage.streamHeader;
 
   /// Position within the current stream. Block and index padding is aligned to
@@ -175,7 +165,8 @@ class XzChunkedDecoder extends ChunkedSink {
   var _chunkControl = 0;
   var _chunkLength = 0;
 
-  /// The block's check, folded in as the bytes go past rather than held
+  /// Running check for the current block, updated as bytes come in instead
+  /// of buffering the block
   var _blockCrc32 = 0;
   final _blockCrc64 = Crc64();
   var _blockLength = 0;
@@ -189,21 +180,22 @@ class XzChunkedDecoder extends ChunkedSink {
     }
   }
 
-  /// The index, checked against what the blocks actually were
+  /// State for reading the index and comparing it with the
+  /// blocks we actually decoded
   var _indexRecords = 0;
   var _indexRead = 0;
   var _indexStart = 0;
   var _indexSize = 0;
   var _indexCrc = 0;
 
-  /// Where the current stream began, since padding is aligned to that and not
-  /// to the start of everything that has come past
+  /// Offset where the current stream starts, since padding is aligned relative
+  /// to the stream, not the whole input
   int get _streamPosition => consumed - _streamStart;
 
   @override
   void finish() {
     if (_stage != _Stage.streamPadding || available != 0) {
-      throw ArchiveException('xz: the archive ended part way through');
+      throw ArchiveException('xz: unexpected end of archive');
     }
     if ((_paddingCount & 3) != 0) {
       throw ArchiveException(
@@ -371,8 +363,9 @@ class XzChunkedDecoder extends ChunkedSink {
     }
     skip(6);
     final flags = view(2);
-    // The check id is the low nibble of the second byte and the rest is
-    // reserved, so a stream that sets any of it asks for something else
+    // Only the low 4 bits of the second byte are the check ID and everything
+    // else is reserved, so if any reserved bit is set we don't know
+    // how to read this stream
     if (flags[0] != 0 || flags[1] & 0xf0 != 0) {
       throw ArchiveException('xz: invalid stream flags');
     }
@@ -385,8 +378,8 @@ class XzChunkedDecoder extends ChunkedSink {
     _stage = _Stage.blockOrIndex;
   }
 
-  /// False while it waits: for the rest of a block it hands over, or for the
-  /// dispatch to go idle before a block it decodes itself
+  /// False while waiting for the rest of a block to hand to a worker,
+  /// or for workers to finish before decoding a block itself
   bool _readBlockHeader(int size) {
     _blockStart = _streamPosition;
     _xz.failureReason = null;
@@ -404,8 +397,9 @@ class XzChunkedDecoder extends ChunkedSink {
       _waitingForIdle = false;
       final compressed = _declaredCompressedLength;
       final uncompressed = _declaredUncompressedLength;
-      // Past the limit a claimed length would make the parse hold the rest of
-      // the stream while it waits, so such a block is decoded here instead
+      // If a block claims more than the limit, handing it to a worker would
+      // mean buffering the whole thing first, so we decode it here as it
+      // streams in
       final limit = dispatch.maxBlockBytes;
       if (compressed != null &&
           uncompressed != null &&
@@ -421,8 +415,8 @@ class XzChunkedDecoder extends ChunkedSink {
         }
         dispatch.block(Uint8List.fromList(view(total)), _streamFlags,
             uncompressed, _dictionarySize);
-        // The worker holds the block to its declared lengths, so they are what
-        // the index is checked against
+        // Worker won't let a block go past its declared sizes, so we
+        // check the index against those
         _blocks.add(_BlockSize(size + compressed + checkSize, uncompressed));
         skip(total);
         _stage = _Stage.blockOrIndex;
@@ -436,11 +430,11 @@ class XzChunkedDecoder extends ChunkedSink {
 
     skip(size);
 
-    // The x86 filter reads the block back, so that block alone is held. Every
-    // other block is handed to the sink as its chunks come out
+    // Only an x86-filtered block is buffered, others stream to the sink
+    // chunk by chunk
     _blockBuffer = _x86Filter ? OutputMemoryStream() : null;
-    // A filtered block is checked over what the filter leaves, so the running
-    // check is only worth keeping for a block that goes straight out
+    // Filtered blocks are checked after BCJ is undone, so the running check is
+    // only needed for unfiltered ones
     _sink
       ..reset()
       ..divert = _blockBuffer;
@@ -518,8 +512,8 @@ class XzChunkedDecoder extends ChunkedSink {
     final checkType = _streamFlags & 0xf;
     final field = view(size);
 
-    // The check covers what the filters leave, so a filtered block is checked
-    // once it has been read back and filtered
+    // Check covers uncompressed data, so a filtered block is verified only
+    // after its filters are reversed
     final buffered = _blockBuffer;
     Uint8List? filtered;
     if (buffered != null) {
@@ -550,13 +544,11 @@ class XzChunkedDecoder extends ChunkedSink {
       _sink.divert = null;
     }
     _sink.watch = null;
-    // A finished block goes out now rather than waiting in the sink: the input
-    // may say nothing more for a long time without closing, and a block handed
-    // to a worker next is written out behind this one
+    // Flush the finished block now: input may stall without closing, and the
+    // next worker's block is written after it
     _sink.flush();
 
-    // What the index records is the block without its padding: the header, the
-    // data and the check
+    // Index unpadded size: header + compressed data + check, excluding padding
     _blocks.add(_BlockSize(
         _streamPosition - _blockStart - _blockPadding, _blockLength));
     _stage = _Stage.blockOrIndex;
@@ -657,7 +649,7 @@ class XzChunkedDecoder extends ChunkedSink {
   }
 }
 
-/// Reads the fields of a header out of a buffer that already holds all of it
+/// Reads the fields of a header out of a buffer that already holds it
 class _ByteReader {
   final Uint8List _bytes;
   final int _end;
@@ -717,17 +709,14 @@ enum _Stage {
   streamPadding,
 }
 
-/// Writes xz from a `Stream` of pieces into a `Stream` of pieces.
+/// {@macro archive.codecs.not_converter}
 ///
-/// Nothing in the format needs the total size. A block header may leave its
-/// lengths out, the index that carries them comes last, and we fold the check
-/// in as the bytes go past. So this writes the same archive as the whole input
-/// would have.
+/// It stores the data rather than compressing it.
+/// That is all `XZEncoder` does today
 ///
-/// It stores the data rather than compressing it. That is all [XZEncoder] does
-/// today
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.encoder}
 class XzEncoderConverter extends ChunkedConverter {
-  /// Which check the blocks carry
   final XZCheck check;
 
   const XzEncoderConverter({this.check = XZCheck.crc64});
@@ -739,8 +728,8 @@ class XzEncoderConverter extends ChunkedConverter {
           check: check);
 }
 
-/// The sink behind [XzEncoderConverter]. What it holds is one LZMA2 chunk of
-/// input, whatever the archive weighs
+/// Sink for [XzEncoderConverter] - buffers at most one LZMA2 chunk of input
+/// regardless of archive size
 class XzChunkedEncoder extends ChunkedSink {
   final XZCheck check;
 
@@ -796,7 +785,8 @@ class XzChunkedEncoder extends ChunkedSink {
     _writeBlockHeader();
     final data = view(count);
     _fold(data);
-    // Control 1 resets the dictionary, 2 carries the one before it on
+    // Uncompressed chunk: control 1 resets the dictionary,
+    // 2 keeps the previous one
     _out
       ..writeByte(_uncompressed == 0 ? 1 : 2)
       ..writeByte(((count - 1) >> 8) & 0xff)
@@ -831,8 +821,7 @@ class XzChunkedEncoder extends ChunkedSink {
       ..writeUint32(getCrc32(header));
   }
 
-  /// The header names no lengths. A block is written before its size is known
-  /// that way
+  /// The header has no lengths. A block is written before its size is known
   void _writeBlockHeader() {
     if (_blockStarted) {
       return;
@@ -914,7 +903,7 @@ class XzChunkedEncoder extends ChunkedSink {
 
   final _blocks = <_Record>[];
 
-  /// Seven bits a byte, the lowest first, the top bit set while more follow
+  /// Seven bits per byte, the lowest first
   static Uint8List _multibyte(int value) {
     final bytes = <int>[];
     var left = value;
@@ -927,7 +916,7 @@ class XzChunkedEncoder extends ChunkedSink {
   }
 }
 
-/// What one uncompressed LZMA2 chunk may carry
+/// Maximum size of one output chunk is 64 KiB, same as gzip and bzip2
 const _chunkMax = 1 << 16;
 
 class _Record {

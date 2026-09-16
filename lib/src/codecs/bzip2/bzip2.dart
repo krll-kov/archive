@@ -21,9 +21,7 @@ class BZip2 {
 
   static const hdr0 = 0x30;
 
-  /// Returns true when a byte of [head] differs from BZh and a digit from 1
-  /// to 9. Only the first four bytes count. A short [head] that matches
-  /// returns false
+  /// True when byte of [head] differs from BZh and digit from 1 to 9
   static bool breaksSignature(List<int> head) {
     for (var i = 0; i < head.length && i < 4; i++) {
       final fits = i < 3

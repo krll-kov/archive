@@ -10,8 +10,11 @@ import '../bzip2_encoder.dart';
 import 'bz2_bit_reader.dart';
 import 'bzip2.dart';
 
-/// bzip2 for data that arrives in pieces, the way a `Stream` gives it. The
-/// shape is the one `dart:io` uses for gzip, one converter per direction
+/// {@macro archive.codecs.general}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
+/// {@macro archive.converters.encoder}
 class BZip2Codec extends Codec<List<int>, List<int>> {
   /// Checks the CRC of every block and of the stream. On by default: a caller
   /// reading a stream has handed the compressed bytes back by the time the
@@ -31,15 +34,21 @@ class BZip2Codec extends Codec<List<int>, List<int>> {
       BZip2EncoderConverter(blockSize100k: blockSize100k);
 }
 
-/// The codec with its defaults, for `stream.transform(bzip2Codec.decoder)`
+/// {@macro archive.codecs.general}
+///
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
+/// {@macro archive.converters.encoder}
 const bzip2Codec = BZip2Codec();
 
-/// Decodes bzip2 from a `Stream` of pieces into a `Stream` of pieces
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.yield_codecs.decoder}
 class BZip2DecoderConverter extends ChunkedConverter {
   final bool verify;
 
   const BZip2DecoderConverter({this.verify = true});
 
+  /// {@macro archive.codecs.chunked_conversion}
   @override
   ByteConversionSink startChunkedConversion(Sink<List<int>> sink) =>
       BZip2ChunkedDecoder(
@@ -47,7 +56,8 @@ class BZip2DecoderConverter extends ChunkedConverter {
           verify: verify);
 }
 
-/// Writes bzip2 from a `Stream` of pieces into a `Stream` of pieces
+/// {@macro archive.codecs.without_on_done}
+/// {@macro archive.converters.encoder}
 class BZip2EncoderConverter extends ChunkedConverter {
   final int blockSize100k;
 
@@ -62,17 +72,16 @@ class BZip2EncoderConverter extends ChunkedConverter {
 
 /// Writes a bzip2 archive over data that arrives in pieces.
 ///
-/// A block is filled a byte at a time and coded once it is full. [BZip2Encoder]
-/// does the same with the bytes it pulls, so the archive this writes is
-/// the one `encodeBytes` writes for the same input. What it holds is one
-/// block, whatever the input weighs
+/// Buffers data until a block is full, then encodes it.
+/// This guarantees the exact same output as calling `encodeBytes` on [BZip2Encoder].
+/// It only keeps one block in memory at a time, regardless of the overall file size.
 class BZip2ChunkedEncoder extends ChunkedSink {
   final int blockSize100k;
 
   BZip2ChunkedEncoder(super.output, {this.blockSize100k = 9}) {
     if (blockSize100k < 1 || blockSize100k > 9) {
       throw ArchiveException(
-          'bzip2: a block is one to nine hundred thousand bytes, not '
+          'bzip2: block size must be between 100_000 and 900_000 bytes, got '
           '$blockSize100k');
     }
   }
@@ -102,8 +111,8 @@ class BZip2ChunkedEncoder extends ChunkedSink {
   @override
   void finish() {
     _begin();
-    // A block no byte reached writes nothing, so this is the last one or it is
-    // not there at all
+    // Skip writing if no bytes reached this block. This indicates it's the
+    // last block or it doesn't exist at all
     _endBlock();
     _encoder.endStream();
     _out.flush();
@@ -124,16 +133,15 @@ class BZip2ChunkedEncoder extends ChunkedSink {
   }
 }
 
-/// Decodes a bzip2 archive that arrives in pieces.
+/// Decodes a bzip2 stream chunk by chunk.
 ///
-/// The format is a bit stream: a block does not start on a byte boundary and
-/// carries no length, so the only way to know it is all here is to find the
-/// marker that follows it. One block of input and one of output is what this
-/// holds, whatever the archive weighs.
+/// bzip2 lacks length headers and byte alignment, so blocks are found by
+/// searching for markers. This class holds just one block in and one block out
+/// at a time to minimize memory usage.
 ///
-/// A marker can also turn up inside a block by chance. The decode of that block
-/// then runs out of input, and the scan carries on to the next marker. So the
-/// block's output is held back until it is whole
+/// Block data can sometimes accidentally match the marker pattern. When we hit
+/// a fake marker, decoding fails and we resume scanning. Because of this, we
+/// wait to emit any output until the entire block is successfully decoded.
 class BZip2ChunkedDecoder extends ChunkedSink {
   final bool verify;
 
@@ -144,8 +152,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
 
   _Stage _stage = _Stage.signature;
 
-  /// Where the parse is, as a bit offset into what has arrived and not been
-  /// read. Whole bytes behind it are dropped once a block is done
+  /// Current bit offset in the pending data. Once a block is done,
+  /// we drop the bytes we've already read
   var _bitAt = 0;
 
   final _scan = Bz2MarkerScan();
@@ -160,15 +168,16 @@ class BZip2ChunkedDecoder extends ChunkedSink {
       switch (_stage) {
         case _Stage.signature:
           // After a stream bzip2 1.0.8 reads BZh and a digit from 1 to 9.
-          // If a byte differs, bzip2 ignores the rest and exits 0. The rest
-          // is trailing garbage here too
+          // If byte differs, bzip2 ignores the rest and exits with 0. The rest
+          // is trailing garbage
           if (_streams > 0 &&
               BZip2.breaksSignature(view(available < 4 ? available : 4))) {
             _stage = _Stage.trailing;
             continue;
           }
           if (available < 4) {
-            // Refused on the first byte that is not the signature, not waited on
+            // Fails immediately on a bad signature byte, instead of waiting
+            // for more data
             final head = view(available);
             for (var i = 0; i < head.length; i++) {
               if (head[i] != BZip2.bzhSignature[i]) {
@@ -188,8 +197,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
             return;
           }
           _storedBlockCrc = _readBits(32);
-          // The block runs from here to the next marker. The search for one
-          // starts here too
+          // The block ends at the next marker, which we start looking
+          // for from here
           _resetScan();
           _stage = _Stage.blockBody;
         case _Stage.blockBody:
@@ -202,8 +211,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
           }
           _readStreamCrc();
         case _Stage.streamEnd:
-          // Another archive may follow this one. `bzip2 -d` reads two files
-          // concatenated that way. Only the end of the input says so
+          // Support concatenated archives (standard 'bzip2 -d' behavior).
+          // We just keep reading until the input ends
           if (available == 0) {
             return;
           }
@@ -219,7 +228,7 @@ class BZip2ChunkedDecoder extends ChunkedSink {
   void finish() {
     if (_stage != _Stage.trailing &&
         (_stage != _Stage.streamEnd || available != 0)) {
-      throw ArchiveException('bzip2: the archive ended part way through');
+      throw ArchiveException('bzip2: unexpected end of archive');
     }
     if (_streams == 0) {
       throw ArchiveException('bzip2: no archive, the input is empty');
@@ -227,10 +236,10 @@ class BZip2ChunkedDecoder extends ChunkedSink {
     _sink.flush();
   }
 
-  /// True while [count] bits are here to be read at [_bitAt]
+  /// True if we have at least [count] bits left to read
   bool _has(int count) => (_bitAt + count + 7) >> 3 <= available;
 
-  /// Takes [count] bits, at most 32, and moves past them
+  /// Reads [count] bits (max 32) and moves forward
   int _readBits(int count) {
     final bytes = view(available);
     var value = 0;
@@ -252,7 +261,7 @@ class BZip2ChunkedDecoder extends ChunkedSink {
     }
     final blockSize100k = field[3] - BZip2.hdr0;
     if (blockSize100k < 1 || blockSize100k > 9) {
-      throw ArchiveException('bzip2: the signature names no valid block size');
+      throw ArchiveException('bzip2: the signature does not have a valid block size');
     }
     skip(4);
     _decoder.beginStream(blockSize100k);
@@ -273,11 +282,11 @@ class BZip2ChunkedDecoder extends ChunkedSink {
       _stage = _Stage.streamCrc;
       return;
     }
-    throw ArchiveException('bzip2: a block carries no valid marker');
+    throw ArchiveException('bzip2: a block does not carry a valid marker');
   }
 
-  /// Decodes the block that starts at [_bitAt], once the marker that ends it
-  /// has been found. False while either is still to arrive
+  /// Decodes the block starting at [_bitAt] once we've found its end marker.
+  /// Returns false if we're still waiting for more data.
   bool _readBlockBody() {
     while (true) {
       if (!_scan.locate(view(available), available)) {
@@ -289,9 +298,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
       try {
         crc = _decodeInto();
       } on _NeedMore {
-        // The marker was one the block's own data happened to spell, so the
-        // block runs past it and the next one is the candidate. The window
-        // slides on one bit, so a marker right after it or across it is found
+        // False alarm: the data accidentally looked like a marker.
+        // We skip it and slide the window forward by one bit to catch the real one
         _sink.divert = null;
         continue;
       } finally {
@@ -312,8 +320,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
     }
   }
 
-  /// Runs the block decoder over everything that has arrived, and leaves
-  /// [_bitAt] on the bit that follows the block
+  /// Decodes all received data for the block, leaving [_bitAt] exactly
+  /// at the start of the next block
   int _decodeInto() {
     final bytes = view(available);
     final from = _bitAt >> 3;
@@ -333,16 +341,16 @@ class BZip2ChunkedDecoder extends ChunkedSink {
     if (verify && stored != _combinedCrc) {
       throw ArchiveException('bzip2: stream checksum does not match');
     }
-    // What follows the check is padding to the end of the byte, and then
-    // whatever the input carries next
+    // After the checksum, we skip padding to the end of the byte,
+    // followed by the rest of the input
     _bitAt = (_bitAt + 7) & ~7;
     _drop();
     _streams++;
     _stage = _Stage.streamEnd;
   }
 
-  /// A block's own run coding can turn 900 KiB into tens of megabytes, so what
-  /// it decoded to goes out in pieces the size the other codecs here hand over
+  /// Decoding can inflate a 900 KiB block into tens of megabytes.
+  /// We emit the result in standard chunks to match other codecs
   void _emit(Uint8List bytes) {
     for (var at = 0; at < bytes.length; at += _piece) {
       final end = at + _piece < bytes.length ? at + _piece : bytes.length;
@@ -350,7 +358,7 @@ class BZip2ChunkedDecoder extends ChunkedSink {
     }
   }
 
-  /// Drops the whole bytes the parse has left behind
+  /// Removes fully read bytes from the buffer and resets the marker search
   void _drop() {
     final bytes = _bitAt >> 3;
     if (bytes > 0) {
@@ -365,20 +373,19 @@ class BZip2ChunkedDecoder extends ChunkedSink {
   }
 }
 
-/// Finds the marker that ends a bzip2 block or a stream, in bits that arrive in
-/// pieces
+/// Finds bzip2 block and end-of-stream markers in input that arrives in pieces
 class Bz2MarkerScan {
   /// Where the search for the next marker has reached, and the last 48 bits it
-  /// has seen, held as two halves so that the shifts stay inside 32 bits
+  /// has seen, split into two 24-bit halves to stay within 32 bits
   var _scanAt = 0;
   var _scanHigh = 0;
   var _scanLow = 0;
   var _scanFilled = 0;
 
-  /// The bit after the last one [locate] read
+  /// Index of the next bit [locate] will read.
   int get position => _scanAt;
 
-  /// Starts the search at bit [at] with nothing seen
+  /// Restarts the marker search from bit [at].
   void start(int at) {
     _scanAt = at;
     _resetRegister();
@@ -390,8 +397,8 @@ class Bz2MarkerScan {
     _scanFilled = 0;
   }
 
-  /// Walks the bits from where the last search stopped, looking for either
-  /// marker. False while neither has arrived
+  /// Looks for the next block or end-of-stream marker.
+  /// Returns false if not found yet
   bool locate(Uint8List bytes, int available) {
     final end = available << 3;
     while (_scanAt < end) {
@@ -420,7 +427,7 @@ const _compressedLow = 0x265359;
 const _eosHigh = 0x177245;
 const _eosLow = 0x385090;
 
-/// Raised where the block decoder reads past what has arrived
+/// Thrown when block decoder needs more input than has arrived so far
 class _NeedMore implements Exception {
   const _NeedMore();
 }
@@ -437,7 +444,7 @@ class _BitInput extends InputMemoryStream {
   }
 }
 
-/// What one hand over carries. gzip and xz hand over the same
+/// Maximum size of one output chunk is 64 KiB, same as gzip and xz
 const _piece = 1 << 16;
 
 enum _Stage {

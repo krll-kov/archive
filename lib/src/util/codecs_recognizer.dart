@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import '../codecs/tar/tar_file.dart';
 import 'crc32.dart';
 
-/// What [CodecsRecognizer.recognize] found at the start of the data
+/// What [CodecsRecognizer.recognize] found from provided file headers
 enum ArchiveFormat {
   gzip,
   zlib,
@@ -15,12 +15,12 @@ enum ArchiveFormat {
   unknown,
 }
 
-/// Reads the first bytes of an archive and says what wrote them.
+/// Detects an archive's format from its first bytes.
 ///
-/// Every check reads the header alone, so a file may be recognised from the
-/// piece a stream has handed over so far rather than from all of it. What each
-/// one needs. The first number is where a check can answer. The second number
-/// is where it has read every field it checks:
+/// Every check looks only at the header, so a format can be recognized from
+/// the part of a stream received so far, without the whole file. Below is how
+/// many bytes each check needs: the first number is when it can give an answer,
+/// the second is when it has read all the fields it checks:
 ///
 /// | format | answers from | checks everything at |
 /// | --- | --- | --- |
@@ -33,7 +33,7 @@ enum ArchiveFormat {
 /// | tar | 263 for the ustar magic | 512 for the header checksum |
 ///
 /// A check with fewer bytes than the second number skips the fields it has not
-/// reached. So it can pass data that a whole header would fail
+/// reached. So it can accept data that a whole header would not
 ///
 /// A tar written before ustar carries no magic and needs the whole 512 byte
 /// header. This package's own encoder still writes one
@@ -57,9 +57,9 @@ abstract final class CodecsRecognizer {
       data[2] == 0x08 &&
       (data.length < 4 || (data[3] & 0xe0) == 0);
 
-  /// zlib has no magic: the first byte names the method and the window, and
-  /// the two together are a multiple of thirty one. Be warned that this one
-  /// might give a rare false positive on non-zlib files, there's no real way
+  /// zlib has no magic: the first byte identify the method and the window, and
+  /// the two together are a multiple of 31. Be warned that this one
+  /// might give some rare false positives on non-zlib files, there's no real way
   /// to verify zlib by header only.
   static bool isZLib(List<int> data) {
     if (data.length < 2) {
@@ -179,18 +179,16 @@ abstract final class CodecsRecognizer {
     return kind == 0x0304 || kind == 0x0506 || kind == 0x0708;
   }
 
-  /// A tar header is 512 bytes, and the versions before ustar carry no magic,
-  /// so the checksum it holds is what identifies those. The eight bytes the
-  /// checksum sits in count as spaces, and old writers summed them as signed.
+  /// Recognizes tar by its 512-byte header. Pre-ustar tar has no magic, so only
+  /// the checksum identifies it. The checksum field counts as spaces, and old
+  /// writers summed bytes as signed.
   ///
-  /// With less than a whole header the ustar magic still answers. Everything
-  /// written this century carries it.
+  /// With a partial header, only the ustar magic can answer (all modern tars
+  /// have it).
   ///
-  /// A whole header with a bad checksum is not a tar, even when the magic is
-  /// there. `file` calls it data and libarchive's `archive_read_format_tar_bid`
-  /// returns 0 before it ever looks at the magic, which only adds points. So do
-  /// not add a magic fallback here: it would make us the only reader calling
-  /// such a file a tar
+  /// A full header with a bad checksum isn't tar even with magic, as in `file`
+  /// and libarchive, So do not add a magic fallback here: it would make us the
+  /// only reader calling such a file a tar
   static bool isTar(List<int> data) {
     if (data.length < 512) {
       // 263 bytes reach past the ustar magic at 257
@@ -205,13 +203,11 @@ abstract final class CodecsRecognizer {
         data is Uint8List ? data : Uint8List.fromList(data.sublist(0, 512)));
   }
 
-  /// The format the data starts with, or [ArchiveFormat.unknown].
+  /// Returns the format the data starts with, or [ArchiveFormat.unknown].
   ///
-  /// The order matters only for zlib, whose header is two bytes with no magic
-  /// and can be read out of another format's first bytes, so it is tried last
-  ///
-  /// [withZLib] is set to false on purpose. It has no magic so its byte
-  /// verification sometimes gives false positives
+  /// zlib is checked last: its 2-byte header has no magic and can match the
+  /// start of other formats. [withZLib] is off by default for the same reason,
+  /// since the check gives false positives.
   static ArchiveFormat recognize(List<int> data, {bool withZLib = false}) {
     if (isGZip(data)) {
       return ArchiveFormat.gzip;
