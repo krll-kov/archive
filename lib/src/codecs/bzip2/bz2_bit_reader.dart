@@ -4,7 +4,13 @@ import '../../util/input_stream.dart';
 class Bz2BitReader {
   InputStream input;
 
-  Bz2BitReader(this.input);
+  /// With [readPastEnd] a read past the end of [input] reads from it rather
+  /// than returning zeros. The chunked decoder needs that, since the stream it
+  /// reads throws there, and the throw ends a trial decode of a block that has
+  /// not arrived in full.
+  Bz2BitReader(this.input, {this.readPastEnd = false});
+
+  final bool readPastEnd;
 
   int readByte() => readBits(8);
 
@@ -16,7 +22,7 @@ class Bz2BitReader {
   bool get overrun => _overrun;
 
   int _nextByte() {
-    if (input.isEOS) {
+    if (!readPastEnd && input.isEOS) {
       _overrun = true;
       return 0;
     }

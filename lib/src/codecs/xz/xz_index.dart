@@ -173,6 +173,10 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
           value += (data & 0x7f) * multiplier;
 
           if ((data & 0x80) == 0) {
+            // liblzma vli_decoder.c takes only the shortest encoding
+            if (data == 0 && i > 0) {
+              return -1;
+            }
             return value;
           }
 
@@ -327,6 +331,10 @@ int xzBlockDictionarySize(Uint8List header) {
         final data = header[position++];
         value += (data & 0x7f) * multiplier;
         if ((data & 0x80) == 0) {
+          // liblzma vli_decoder.c takes only the shortest encoding
+          if (data == 0 && i > 0) {
+            return -1;
+          }
           return value;
         }
         multiplier *= 128;

@@ -158,6 +158,37 @@ void main() {
         expect(blocks.length, greaterThan(4));
       });
 
+      test('an overlong record count in the index is refused', () async {
+        final backward = ByteData.sublistView(pristine)
+            .getUint32(pristine.length - 8, Endian.little);
+        final size = (backward + 1) * 4;
+        final start = pristine.length - 12 - size;
+        // The record count is one byte and the index ends with padding, so
+        // writing the count in two bytes takes one padding byte and keeps the
+        // index at the length in its footer
+        expect(pristine[start], 0);
+        expect(pristine[start + 1], blocks.length);
+        expect(pristine[start + size - 5], 0);
+        final data = Uint8List.fromList(pristine)
+          ..[start + 1] = 0x80 | blocks.length
+          ..[start + 2] = 0
+          ..setRange(start + 3, start + size - 4, pristine, start + 2);
+        ByteData.sublistView(data).setUint32(start + size - 4,
+            getCrc32(data.sublist(start, start + size - 4)), Endian.little);
+
+        expect(() => XZDecoder().decodeBytes(data, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+        final completer = Completer<Object?>();
+        XZDecoder().decodeBytes(data,
+            throwOnError: true,
+            multithread: XZMultithreadOptions<Uint8List>(
+              onDone: (r) => completer.complete(r),
+              onError: (e, _) => completer.complete(e),
+              workers: 4,
+            ));
+        expect(await completer.future, isA<ArchiveException>());
+      });
+
       // Whatever a failed decode hands back has to be genuine as far as it
       // goes: a prefix of the real data, never bytes that were never there.
       void expectGenuinePrefix(Uint8List result, String label) {

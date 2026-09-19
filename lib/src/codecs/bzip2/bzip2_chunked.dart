@@ -326,7 +326,7 @@ class BZip2ChunkedDecoder extends ChunkedSink {
     final bytes = view(available);
     final from = _bitAt >> 3;
     final input = _BitInput(Uint8List.sublistView(bytes, from));
-    final reader = Bz2BitReader(input);
+    final reader = Bz2BitReader(input, readPastEnd: true);
     final offset = _bitAt & 7;
     if (offset > 0) {
       reader.readBits(offset);

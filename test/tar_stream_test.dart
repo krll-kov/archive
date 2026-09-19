@@ -513,6 +513,45 @@ void main() {
       }
       expect(got['second.bin'], second);
     });
+
+    test('cancelling the archive releases a paused content reader', () async {
+      final tar = TarEncoder().encodeBytes(
+          Archive()..add(ArchiveFile.bytes('a.bin', _source(3000, 3))));
+      final source = StreamController<List<int>>();
+      final received = Completer<void>();
+      final archiveErrors = <Object>[];
+      final contentErrors = <Object>[];
+      late StreamSubscription<List<int>> content;
+      final archive = source.stream.transform(tarCodec.decoder).listen((entry) {
+        content = entry.content.listen((_) {
+          content.pause();
+          if (!received.isCompleted) {
+            received.complete();
+          }
+        }, onError: contentErrors.add);
+      }, onError: archiveErrors.add);
+      source.add(tar.sublist(0, 1000));
+      await received.future.timeout(const Duration(seconds: 5));
+      await Future<void>.delayed(Duration.zero);
+      try {
+        expect(archiveErrors, isEmpty);
+        expect(contentErrors, isEmpty);
+        final cancelled = await archive
+            .cancel()
+            .then((_) => true)
+            .timeout(const Duration(seconds: 5), onTimeout: () => false);
+        expect(archiveErrors, isEmpty);
+        expect(contentErrors, isEmpty);
+        expect(cancelled, isTrue,
+            reason: 'cancel must complete without waiting for onDone; '
+                'archive errors: $archiveErrors, content errors: $contentErrors');
+        expect(source.hasListener, isFalse);
+      } finally {
+        content.resume();
+        await content.cancel();
+        await source.close();
+      }
+    });
   });
 
   group('tar stream writer', () {

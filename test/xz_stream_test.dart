@@ -110,6 +110,21 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
+    test('an overlong index record count is rejected', () {
+      final encoded = XZEncoder().encodeBytes([]);
+      encoded[13] = 0x80;
+      ByteData.sublistView(encoded)
+          .setUint32(16, getCrc32(encoded.sublist(12, 16)), Endian.little);
+      expect(
+          () => XZDecoder()
+              .decodeBytes(encoded, verify: true, throwOnError: true),
+          throwsA(isA<ArchiveException>()));
+      for (final piece in [1, encoded.length]) {
+        expect(() => _decode(encoded, piece), throwsA(isA<ArchiveException>()),
+            reason: 'piece size $piece');
+      }
+    });
+
     test('a first LZMA2 chunk without a dictionary reset is rejected', () {
       final encoded = XZEncoder().encodeBytes([1, 2, 3], check: XZCheck.crc32);
       expect(encoded[24], 1);

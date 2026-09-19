@@ -128,15 +128,16 @@ void main() {
       for (var at = 20; at < bytes.length - 4; at += 997) {
         final broken = Uint8List.fromList(bytes);
         broken[at] ^= 0x40;
+        final Uint8List decoded;
         try {
-          final decoded = ZstdDecoder()
+          decoded = ZstdDecoder()
               .decodeBytes(broken, verify: true, throwOnError: true);
-          if (getCrc32(decoded) != 1811542865) {
-            fail('byte $at changed the output without being reported');
-          }
         } catch (_) {
           caught++;
+          continue;
         }
+        expect(getCrc32(decoded), 1811542865,
+            reason: 'byte $at changed the output without being reported');
       }
       expect(caught, greaterThan(0));
     });

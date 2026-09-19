@@ -188,8 +188,8 @@ class TarDecoderTransformer extends StreamTransformerBase<List<int>, TarEntry> {
 
   @override
   Stream<TarEntry> bind(Stream<List<int>> stream) =>
-      cancellableStream<List<int>, TarEntry>(
-          stream, (input, _) => _read(_Reader(input), filenameEncoding));
+      cancellableStream<List<int>, TarEntry>(stream,
+          (input, signal) => _read(_Reader(input), filenameEncoding, signal));
 }
 
 /// The parsed type flag. Note that older tar files often use an empty field
@@ -332,7 +332,8 @@ class TarEntry {
   }
 }
 
-Stream<TarEntry> _read(_Reader reader, Encoding encoding) async* {
+Stream<TarEntry> _read(
+    _Reader reader, Encoding encoding, CancelSignal signal) async* {
   final metadata = TarMetadata();
   try {
     while (true) {
@@ -369,9 +370,15 @@ Stream<TarEntry> _read(_Reader reader, Encoding encoding) async* {
       final entry = TarEntry._(file, reader);
       yield entry;
       entry._done = true;
+      // A paused content read never completes on its own, so a cancel has to
+      // end the wait below as well
+      signal.onCancel = () => entry._finish?.call();
       // We share the reader with the active content read, meaning
       // it must complete before we can proceed
       await entry._settled;
+      if (signal.cancelled) {
+        return;
+      }
       entry._gone = entry._left > 0;
       await reader.skip(entry._left + _padding(entry.size));
       entry._left = 0;

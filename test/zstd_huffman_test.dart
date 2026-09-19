@@ -384,11 +384,9 @@ void main() {
       final into = Uint8List(8192);
       for (var cut = 1; cut < coded; cut++) {
         final literals = ZstdLiterals();
-        try {
-          literals.decode(out, 0, cut, 1 << 17, into, 0);
-        } catch (_) {
-          continue;
-        }
+        expect(() => literals.decode(out, 0, cut, 1 << 17, into, 0),
+            throwsA(anything),
+            reason: 'cut to $cut bytes');
       }
     });
   });

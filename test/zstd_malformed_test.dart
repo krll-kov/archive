@@ -110,6 +110,12 @@ void main() {
     expect(_agreed(_plain, 'the frame without a checksum').bytes, _source);
   });
 
+  test('an empty single-segment frame accepts a zero-length RLE block', () {
+    final frame =
+        _bytes([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x00, 0x03, 0x00, 0x00, 0x00]);
+    expect(_agreed(frame, 'zero-length RLE block').bytes, isEmpty);
+  });
+
   group('zstd refuses a frame that stops early', () {
     test('cut at every length', () {
       for (var cut = 0; cut < _frame.length; cut++) {

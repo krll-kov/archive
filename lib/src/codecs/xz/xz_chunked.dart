@@ -676,6 +676,10 @@ class _ByteReader {
       final data = _bytes[at + i];
       value += (data & 0x7f) * multiplier;
       if (data & 0x80 == 0) {
+        // liblzma vli_decoder.c takes only the shortest encoding
+        if (data == 0 && i > 0) {
+          throw ArchiveException('xz: invalid multibyte integer');
+        }
         at += i + 1;
         return value;
       }

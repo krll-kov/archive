@@ -148,9 +148,12 @@ class ZstdFrameDecoder {
     while (true) {
       _take(input, scratch, 0, 3, 'Block header is truncated');
       final head = scratch[0] | (scratch[1] << 8) | (scratch[2] << 16);
-      final payload = (head >> 1) & 3 == zstdBlockRle ? 1 : head >> 3;
-      if (payload > blockSizeMax) {
-        throw ZstdFrameException('Block of $payload bytes is above the '
+      // For an RLE block the size field is the regenerated size and the body
+      // is one byte, so we compare blockSizeMax with that field
+      final size = head >> 3;
+      final payload = (head >> 1) & 3 == zstdBlockRle ? 1 : size;
+      if (size > blockSizeMax) {
+        throw ZstdFrameException('Block of $size bytes is above the '
             '$blockSizeMax its frame allows');
       }
       // A stream holding its own bytes hands over a view of them, which saves

@@ -168,6 +168,16 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
   Object? failure;
   StackTrace? failureStack;
 
+  /// Workers that get no job while [ahead] jobs are already handed out
+  final parked = <SendPort>[];
+
+  /// How many jobs may be handed out beyond the part written next. A job that
+  /// finishes early holds its part until its turn, so the pool holds up to
+  /// this many parts above the job buffers. `ZSTDMT_createCompressionJob`
+  /// stops at `nbWorkers + 2`, and stopping at the worker count would idle the
+  /// pool behind one slow job.
+  final ahead = pool + 2;
+
   void give(SendPort worker) {
     if (next >= starts.length) {
       worker.send(null);
@@ -244,6 +254,13 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
       if (!done.isCompleted) {
         done.complete();
       }
+      return;
+    }
+    while (parked.isNotEmpty && next - written < ahead) {
+      give(parked.removeLast());
+    }
+    if (onPart != null && next - written >= ahead) {
+      parked.add(worker);
       return;
     }
     give(worker);
@@ -340,6 +357,11 @@ Stream<Uint8List> _zstdMtCompressStream(
   var written = 0;
   var sent = 0;
   var back = 0;
+
+  /// How many jobs may be handed out beyond the part written next. Counting
+  /// the replies instead would hold the whole frame behind one slow job, so
+  /// the gate below reads `written` and takes the reference's `nbWorkers + 2`
+  final jobsAhead = pool + 2;
   // The frame header waits for the first part, since only by then is whether
   // anything arrived at all settled
   var content = 0;
@@ -504,9 +526,12 @@ Stream<Uint8List> _zstdMtCompressStream(
         while (ready.isNotEmpty) {
           yield ready.removeAt(0);
         }
-        // No more jobs in flight than workers: each one holds its own buffer,
-        // so a looser gate is paid for in memory
-        while (failure == null && !signal.cancelled && sent - back >= pool) {
+        // No more jobs handed out than the pool may run ahead of the part
+        // written next: each one holds its own buffer, so a looser gate is
+        // paid for in memory
+        while (failure == null &&
+            !signal.cancelled &&
+            sent - written >= jobsAhead) {
           waiting = Completer<void>();
           await waiting!.future;
           while (ready.isNotEmpty) {

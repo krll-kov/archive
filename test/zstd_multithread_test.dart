@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:archive/src/codecs/zstd/_zstd_mt_parallel_io.dart'
-    show zstdMtSpawnWorker;
+    show zstdMtCompressFileJobs, zstdMtCompressStream, zstdMtSpawnWorker;
 import 'package:archive/src/codecs/zstd/zstd_mt_frame_encoder.dart';
 import 'package:test/test.dart';
 
@@ -39,6 +39,38 @@ void _failingWorker(List<Object> ports) {
     final index = (message as List)[0] as int;
     given.send(index);
     replies.send([port.sendPort, index, null, 'job failed', '']);
+  });
+}
+
+void _delayedFirstWorker(List<Object> ports) {
+  final replies = ports[0] as SendPort;
+  final given = ports[1] as SendPort;
+  final port = ReceivePort();
+  replies.send(port.sendPort);
+  void reply(int index) {
+    replies.send([
+      port.sendPort,
+      index,
+      TransferableTypedData.fromList([
+        Uint8List.fromList([index])
+      ]),
+      null,
+      null,
+    ]);
+  }
+
+  port.listen((message) {
+    if (message == null) {
+      port.close();
+      return;
+    }
+    if (message == true) {
+      reply(0);
+      return;
+    }
+    final index = (message as List)[0] as int;
+    given.send([index, port.sendPort]);
+    if (index != 0) reply(index);
   });
 }
 
@@ -339,6 +371,69 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 200));
     expect(jobs, 1);
   }, testOn: 'vm');
+
+  for (final path in ['file', 'transform']) {
+    test('$path bounds completed jobs while the first job waits', () async {
+      final real = zstdMtSpawnWorker;
+      final given = ReceivePort();
+      final first = Completer<SendPort>();
+      final allJobs = Completer<void>();
+      final jobs = <int>[];
+      final parts = <Uint8List>[];
+      given.listen((message) {
+        final event = message as List;
+        final index = event[0] as int;
+        jobs.add(index);
+        if (index == 0) first.complete(event[1] as SendPort);
+        if (jobs.length == 8) allJobs.complete();
+      });
+      addTearDown(() {
+        zstdMtSpawnWorker = real;
+        given.close();
+      });
+      zstdMtSpawnWorker = (replies, errors) => Isolate.spawn(
+          _delayedFirstWorker, [replies, given.sendPort],
+          onError: errors, errorsAreFatal: true);
+      final Future<void> done;
+      if (path == 'file') {
+        done = zstdMtCompressFileJobs('unused', 0, 8 * 524288,
+                List.generate(8, (i) => i * 524288), 0, 1,
+                jobSize: 524288, overlapLog: 0, workers: 2, onPart: parts.add)
+            .then((_) {});
+      } else {
+        done = zstdMtCompressStream(
+                Stream<List<int>>.fromIterable([
+                  for (var i = 0; i < 7; i++) Uint8List(524288),
+                  [0],
+                ]),
+                1,
+                jobSize: 524288,
+                overlapLog: 0,
+                workers: 2)
+            .forEach(parts.add);
+      }
+      final release = await first.future.timeout(const Duration(seconds: 5));
+      late List<int> started;
+      late int written;
+      try {
+        await allJobs.future
+            .timeout(const Duration(seconds: 5), onTimeout: () {});
+        started = List<int>.of(jobs);
+        written = parts.length;
+      } finally {
+        release.send(true);
+        await done.timeout(const Duration(seconds: 5));
+      }
+      expect(written, 0);
+      expect(parts, [
+        for (var i = 0; i < 8; i++) [i]
+      ]);
+      // Two workers and the two jobs they may run ahead of the part written
+      // next, the `nbJobs = nbWorkers + 2` of `ZSTDMT_createCompressionJob`
+      expect(started.length, lessThanOrEqualTo(4),
+          reason: 'jobs started before job 0 was released: $started');
+    }, testOn: 'vm');
+  }
 
   test('cancelling the output cancels the input subscription', () async {
     final input = StreamController<List<int>>();

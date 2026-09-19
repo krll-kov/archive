@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -83,6 +84,18 @@ void main() {
   });
 
   group('bzip2 chunked decoder', () {
+    test('a marker in unused selectors does not end a block', () {
+      // The extra selectors contain a block marker before the Huffman tables
+      final archive = base64Decode(
+          'QlpoOTFBWSZTWUT3E3gAAAGRgEAABkSQgDADwxQVkmU1kQGaQhgQQwIbaBVCeLuSKcKEgie4m8AA');
+      final source = 'hello world'.codeUnits;
+      expect(BZip2Decoder().decodeBytes(archive, verify: true), source);
+      expect(_decode(archive, archive.length), source);
+      for (final piece in [1, 7, 34]) {
+        expect(_decode(archive, piece), source, reason: 'piece $piece');
+      }
+    });
+
     test('an archive decodes the same whatever the pieces', () {
       final want = BZip2Decoder().decodeBytes(small, verify: true);
       for (final piece in [1, 3, 64, 813, 1 << 16]) {
