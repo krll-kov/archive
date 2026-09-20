@@ -880,11 +880,11 @@ class XzChunkedEncoder extends ChunkedSink {
   void _writeIndexAndFooter() {
     final index = OutputMemoryStream()
       ..writeByte(0)
-      ..writeBytes(_multibyte(_blocks.length));
+      ..writeBytes(xzMultibyteInteger(_blocks.length));
     for (final record in _blocks) {
       index
-        ..writeBytes(_multibyte(record.unpadded))
-        ..writeBytes(_multibyte(record.uncompressed));
+        ..writeBytes(xzMultibyteInteger(record.unpadded))
+        ..writeBytes(xzMultibyteInteger(record.uncompressed));
     }
     while (index.length % 4 != 0) {
       index.writeByte(0);
@@ -906,18 +906,21 @@ class XzChunkedEncoder extends ChunkedSink {
   }
 
   final _blocks = <_Record>[];
+}
 
-  /// Seven bits per byte, the lowest first
-  static Uint8List _multibyte(int value) {
-    final bytes = <int>[];
-    var left = value;
-    while (left >= 0x80) {
-      bytes.add(0x80 | (left & 0x7f));
-      left >>= 7;
-    }
-    bytes.add(left);
-    return Uint8List.fromList(bytes);
+/// Seven bits per byte, the lowest first
+///
+/// `>>` is a 32 bit operator on dart2js, where a block of 4 GiB or more came
+/// out as the encoding of zero. The readers divide the same way
+Uint8List xzMultibyteInteger(int value) {
+  final bytes = <int>[];
+  var left = value;
+  while (left >= 0x80) {
+    bytes.add(0x80 | (left & 0x7f));
+    left ~/= 128;
   }
+  bytes.add(left);
+  return Uint8List.fromList(bytes);
 }
 
 /// Maximum size of one output chunk is 64 KiB, same as gzip and bzip2

@@ -1,13 +1,38 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:archive/src/codecs/zstd/_zstd_mt_parallel_io.dart'
-    show zstdMtCompressFileJobs, zstdMtCompressStream, zstdMtSpawnWorker;
+    show
+        zstdMtCompressFileJobs,
+        zstdMtCompressJobs,
+        zstdMtCompressStream,
+        zstdMtSpawnWorker;
 import 'package:archive/src/codecs/zstd/zstd_mt_frame_encoder.dart';
 import 'package:test/test.dart';
+
+void _ignoreBytes(Uint8List result) {}
+
+void _ignoreDone(bool written) {}
+
+/// Blocks that repeat from far back, the matches a long distance matcher
+/// finds. A pool of 64 blocks over 2 MiB puts around 60 in every job, past the
+/// 31 that a sequence pool sized by 1000 bytes holds
+Uint8List _repeatedBlocks(int size) {
+  final random = Random(7);
+  final pool = List.generate(
+      64,
+      (_) =>
+          Uint8List.fromList(List.generate(4096, (_) => random.nextInt(256))));
+  final out = Uint8List(size);
+  for (var at = 0; at < size; at += 4096) {
+    out.setRange(at, at + 4096, pool[random.nextInt(pool.length)]);
+  }
+  return out;
+}
 
 Future<Uint8List> _encode(Uint8List src,
     {int level = 6, int workers = 4, int jobSize = 0, int overlapLog = 0}) {
@@ -234,6 +259,60 @@ void main() {
     ).encoder)
         .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
     expect(frame, [0x28, 0xb5, 0x2f, 0xfd, 0x20, 0, 1, 0, 0]);
+  });
+
+  test('a job size under the minimum writes the frame the minimum writes',
+      () async {
+    // `ZSTD_CCtxParams_setParameter` raises a job size below
+    // ZSTDMT_JOBSIZE_MIN to that minimum, so both of these cut the same jobs.
+    // Sizing the long distance matcher by the given number instead left its
+    // sequence pool at 31 matches a job, not 16384: end to end at level 22
+    // over 66 MiB of repeated blocks the frame was 8948920 bytes against
+    // 1149082, and `zstd -22 --ultra -T2 -B1000 --zstd=ovlog=1` writes 1149082
+    //
+    // The matcher needs a window of 2^27, which an input only reaches at
+    // 64 MiB and minutes of work, so paramsSize sets the window here
+    const paramsSize = 1 << 27;
+    final source = _repeatedBlocks(2 << 20);
+    Future<List<Uint8List>> jobs(int jobSize) {
+      final geometry = ZstdMtFrameEncoder.geometry(22, paramsSize,
+          jobSize: jobSize, overlapLog: 1);
+      final starts = <int>[0];
+      for (var at = geometry[0]; at < source.length; at += geometry[0]) {
+        starts.add(at);
+      }
+      return zstdMtCompressJobs(source, starts, geometry[1], 22,
+          jobSize: jobSize,
+          overlapLog: 1,
+          workers: 2,
+          size: source.length,
+          paramsSize: paramsSize);
+    }
+
+    expect(await jobs(1000), await jobs(zstdMtJobSizeMin));
+  });
+
+  test('a level the encoder cannot honour throws whatever the input size', () {
+    // Under the job size minimum the frame is the single threaded one, and the
+    // level was read before the call returned. Over that size the work ran
+    // later, so the ArgumentError went to onDone as an empty result
+    for (final size in [zstdMtJobSizeMin, zstdMtJobSizeMin + 1]) {
+      expect(
+          () => const ZstdEncoder().encodeBytes(Uint8List(size),
+              level: -1,
+              multithread: ZstdMultithreadOptions<Uint8List>(
+                  onDone: _ignoreBytes, workers: 2)),
+          throwsArgumentError,
+          reason: '$size bytes through encodeBytes');
+      expect(
+          () => const ZstdEncoder().encodeStream(
+              InputMemoryStream(Uint8List(size)), OutputMemoryStream(),
+              level: -1,
+              multithread: ZstdMultithreadOptions<bool>(
+                  onDone: _ignoreDone, workers: 2)),
+          throwsArgumentError,
+          reason: '$size bytes through encodeStream');
+    }
   });
 
   // The last job of a stream is whatever arrived after the one before it, and a

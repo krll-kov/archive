@@ -590,8 +590,8 @@ Future<Uint8List> zstdMtCompress(Uint8List src, int level,
   if (dictionary != null) {
     // `ZSTDMT_serialState_genSequences` runs one long distance pass over every
     // job in order. Job zero is in it, so the pass starts here
-    ldmPass = ZstdMtLdmPass.forParams(
-        zstdParamsForLevel(level, sized), jobSize > 0 ? jobSize : src.length);
+    ldmPass =
+        ZstdMtLdmPass.forParams(zstdParamsForLevel(level, sized), geometry[0]);
     final firstEnd = starts.length > 1 ? starts[1] : src.length;
     final content = dictionary.content;
     final held = Uint8List(content.length + firstEnd)

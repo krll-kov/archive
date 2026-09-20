@@ -493,7 +493,7 @@ Stream<Uint8List> _xzDecodeStream(
     StreamIterator<List<int>> input, CancelSignal signal,
     {required bool verify, int? workers, int? memoryBudget}) async* {
   final budget = memoryBudget ?? xzDefaultMemoryBudget;
-  final ready = ListQueue<Uint8List>();
+  final ready = _Ready();
   final dispatch = _StreamDispatch(budget);
   final parser =
       XzChunkedDecoder(_QueueSink(ready), verify: verify, dispatch: dispatch);
@@ -546,8 +546,15 @@ Stream<Uint8List> _xzDecodeStream(
     }
   }
 
+  // A worker decodes a whole block before it sends anything, so a pause cannot
+  // stop that block part way. While this much decoded output is queued the
+  // consumer is behind, and the blocks not yet sent stay compressed
+  const aheadMax = 1 << 20;
+
   void pump() {
-    while (idleWorkers.isNotEmpty && dispatch.unsent.isNotEmpty) {
+    while (idleWorkers.isNotEmpty &&
+        dispatch.unsent.isNotEmpty &&
+        ready.bytes < aheadMax) {
       final record = dispatch.unsent.removeFirst();
       final bytes = record.bytes!;
       record.bytes = null;
@@ -658,6 +665,10 @@ Stream<Uint8List> _xzDecodeStream(
       while (ready.isNotEmpty) {
         yield ready.removeFirst();
       }
+      // pump stops while the queue is full, so it runs again once the queue is
+      // empty: the wait below ends on a message from a worker, and a pump that
+      // stopped can leave every worker idle
+      pump();
       if (failure == null && dispatch.records.isNotEmpty) {
         waiting = Completer<void>();
         await waiting!.future;
@@ -687,6 +698,7 @@ Stream<Uint8List> _xzDecodeStream(
       while (ready.isNotEmpty) {
         yield ready.removeFirst();
       }
+      pump();
       if (pool == 0 || dispatch.records.length < pool) {
         return;
       }
@@ -704,6 +716,7 @@ Stream<Uint8List> _xzDecodeStream(
           while (ready.isNotEmpty) {
             yield ready.removeFirst();
           }
+          pump();
           if (ahead.arrived || failure != null || signal.cancelled) {
             break;
           }
@@ -807,7 +820,7 @@ class _StreamDispatch implements XzBlockDispatch {
 }
 
 class _QueueSink implements Sink<List<int>> {
-  final ListQueue<Uint8List> _ready;
+  final _Ready _ready;
 
   _QueueSink(this._ready);
 
@@ -817,6 +830,28 @@ class _QueueSink implements Sink<List<int>> {
 
   @override
   void close() {}
+}
+
+/// The decoded pieces waiting for the consumer. `pump` compares [bytes] with
+/// its limit before it sends another block
+class _Ready {
+  final _queue = ListQueue<Uint8List>();
+  var bytes = 0;
+
+  bool get isEmpty => _queue.isEmpty;
+
+  bool get isNotEmpty => _queue.isNotEmpty;
+
+  void add(Uint8List piece) {
+    _queue.add(piece);
+    bytes += piece.length;
+  }
+
+  Uint8List removeFirst() {
+    final piece = _queue.removeFirst();
+    bytes -= piece.length;
+    return piece;
+  }
 }
 
 /// Reads the check field, the tail of a block.

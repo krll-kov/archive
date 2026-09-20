@@ -27,9 +27,13 @@ Future<List<Uint8List>> zstdMtCompressJobs(
   // With a dictionary the parameters are sized by more than the content, and
   // the long distance pass has already run over job zero
   final sized = paramsSize > 0 ? paramsSize : whole;
+  // `ZSTDMT_serialState_reset` sizes the matcher by `targetSectionSize`, the
+  // job size after the minimum and the prefix raised it
   final pass = ldmPass ??
       ZstdMtLdmPass.forParams(
-          zstdParamsForLevel(level, sized), jobSize > 0 ? jobSize : src.length);
+          zstdParamsForLevel(level, sized),
+          ZstdMtFrameEncoder.geometry(level, sized,
+              jobSize: jobSize, overlapLog: overlapLog)[0]);
   for (var i = 0; i < starts.length; i++) {
     final start = starts[i];
     final end = i + 1 < starts.length ? starts[i + 1] : src.length;

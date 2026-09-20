@@ -51,9 +51,14 @@ Future<List<Uint8List>> zstdMtCompressJobs(
   // With a dictionary the parameters are sized by more than the content, and
   // the long distance pass has already run over job zero
   final sized = paramsSize > 0 ? paramsSize : whole;
+  // `ZSTDMT_serialState_reset` sizes the matcher by `targetSectionSize`, the
+  // job size after the minimum and the prefix raised it. Sizing it by the
+  // number given here left the sequence pool at 31 matches a job, not 16384
   final pass = ldmPass ??
       ZstdMtLdmPass.forParams(
-          zstdParamsForLevel(level, sized), jobSize > 0 ? jobSize : src.length);
+          zstdParamsForLevel(level, sized),
+          ZstdMtFrameEncoder.geometry(level, sized,
+              jobSize: jobSize, overlapLog: overlapLog)[0]);
   return _compress(starts, prefixSize, whole, level, source,
       jobSize: jobSize,
       overlapLog: overlapLog,
@@ -78,7 +83,9 @@ Future<List<Uint8List>> zstdMtCompressFileJobs(String path, int offset,
   Object source(int start, int end, int prefix) =>
       [path, offset + start - prefix, prefix + (end - start)];
   final pass = ZstdMtLdmPass.forParams(
-      zstdParamsForLevel(level, size), jobSize > 0 ? jobSize : size);
+      zstdParamsForLevel(level, size),
+      ZstdMtFrameEncoder.geometry(level, size,
+          jobSize: jobSize, overlapLog: overlapLog)[0]);
   // The workers read their own slices, so the one serial pass reads the file
   // here rather than sharing their buffers
   final handle = pass == null ? null : File(path).openSync();

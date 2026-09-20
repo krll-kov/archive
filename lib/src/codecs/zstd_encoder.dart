@@ -45,7 +45,9 @@ class ZstdEncoder {
     }
     final bytes = data is Uint8List ? data : Uint8List.fromList(data);
     _checkMultithread(multithread);
-    final chosen = level ?? this.level;
+    // The work runs after this call returns, so we check the level here: an
+    // ArgumentError thrown inside the job reaches onDone as an empty result
+    final chosen = zstdEffectiveLevel(level ?? this.level);
     _reportAsync(multithread,
         () => _multithreadBytes(bytes, chosen, multithread), Uint8List(0));
     return Uint8List(0);
@@ -108,7 +110,7 @@ class ZstdEncoder {
       {int? level, ZstdMultithreadOptions<bool>? multithread}) {
     if (multithread != null) {
       _checkMultithread(multithread);
-      final chosen = level ?? this.level;
+      final chosen = zstdEffectiveLevel(level ?? this.level);
       // Reading the input is part of the work and reports through onError. The
       // body up to the first await still runs here, so the input is consumed
       // before the call returns, as it was when the reads stood outside

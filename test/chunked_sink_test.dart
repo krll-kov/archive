@@ -418,6 +418,35 @@ void main() {
       expect(held.bytes, [1, 2, 3]);
     });
 
+    // Measured on this SDK: closing the sink of
+    // `zlib.encoder.startChunkedConversion` sends the last bytes and closes
+    // that sink, and `OutputFileStream` flushes before it closes its file
+    test('close hands over what is queued and closes the sink', () async {
+      final held = _Held();
+      final out = SinkOutputStream(held)..writeBytes([1, 2, 3]);
+      await out.close();
+      expect(held.bytes, [1, 2, 3]);
+      expect(held.closes, 1);
+    });
+
+    test('closeSync hands over what is queued and closes the sink', () {
+      final held = _Held();
+      final out = SinkOutputStream(held)..writeBytes([1, 2, 3]);
+      out.closeSync();
+      expect(held.bytes, [1, 2, 3]);
+      expect(held.closes, 1);
+    });
+
+    test('a close after a close does nothing, as dart:io does', () {
+      final held = _Held();
+      final out = SinkOutputStream(held)..writeBytes([1, 2, 3]);
+      out
+        ..closeSync()
+        ..closeSync();
+      expect(held.bytes, [1, 2, 3]);
+      expect(held.closes, 1);
+    });
+
     test('clear drops what is queued rather than deferring it', () {
       final held = _Held();
       final out = SinkOutputStream(held)..writeBytes([1, 2, 3]);

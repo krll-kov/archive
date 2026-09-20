@@ -446,4 +446,25 @@ class SinkOutputStream extends OutputStream {
   /// which is what makes the gathering safe
   @override
   void flush() => _drain();
+
+  /// Sends whatever is queued, then closes [sink]. `OutputFileStream` flushes
+  /// before it closes its file, and in `dart:io` closing the sink of
+  /// `zlib.encoder.startChunkedConversion` closes that sink too. A close after
+  /// a close does nothing, as `dart:io` does
+  @override
+  Future<void> close() async => closeSync();
+
+  @override
+  void closeSync() {
+    if (!_open) {
+      return;
+    }
+    _open = false;
+    _drain();
+    sink.close();
+  }
+
+  @override
+  bool get isOpen => _open;
+  var _open = true;
 }

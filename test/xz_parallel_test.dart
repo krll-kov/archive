@@ -1256,6 +1256,35 @@ void main() {
       }
     });
 
+    test('a paused consumer stops the decode', () async {
+      // The pump sent the next block whatever the consumer was doing, so a
+      // paused stream decoded the archive into memory. Over 64 blocks of 4 MiB
+      // of zeros RSS grew by 272 MB while the consumer held 64 KiB, the same
+      // at one worker and at four and at a 1 MiB budget and at 1 GiB. The
+      // blocks here are 64 MiB, so one sits in the worker and the rest wait
+      const one = XZMultithreadOptions<Object?>.converter(workers: 1);
+      var got = 0;
+      final first = Completer<void>();
+      late StreamSubscription<List<int>> subscription;
+      subscription = Stream<List<int>>.value(fixture('huge'))
+          .transform(const XzCodec(multithread: one).decoder)
+          .listen((piece) {
+        got += piece.length;
+        if (!first.isCompleted) {
+          subscription.pause();
+          first.complete();
+        }
+      });
+      await first.future.timeout(const Duration(seconds: 30));
+      final held = ProcessInfo.currentRss;
+      await Future<void>.delayed(const Duration(seconds: 2));
+      final grew = ProcessInfo.currentRss - held;
+      await subscription.cancel();
+      expect(got, lessThan(1 << 20));
+      expect(grew, lessThan(192 << 20),
+          reason: 'grew ${grew >> 20} MB while the consumer was paused');
+    });
+
     test('a silent input can be cancelled and is let go', () async {
       // Nothing sent, and a header followed by part of a block: in both the
       // decoder is parked waiting on an input that neither sends nor closes
