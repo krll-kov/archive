@@ -20,6 +20,9 @@ const zstdMtChunkSize = 4 * zstdBlockMaximumSize;
 /// the frame is the one the single threaded encoder writes
 const zstdMtJobSizeMin = 512 * 1024;
 
+/// `ZSTDMT_JOBSIZE_MAX` on a 64 bit build
+const zstdMtJobSizeMax = 1024 * 1024 * 1024;
+
 /// Whether the long distance matcher is on, which changes how a threaded frame
 /// is cut as well as where its matches come from
 bool zstdMtLongRange(ZstdLevelParams params) =>
@@ -211,11 +214,15 @@ class ZstdMtFrameEncoder {
   }
 
   /// `ZSTD_CCtxParams_setParameter` raises a given size to `ZSTDMT_JOBSIZE_MIN`
+  /// and then clamps it to the bounds, whose upper end is `ZSTDMT_JOBSIZE_MAX`
   static int _jobSize(int given, ZstdLevelParams params) {
     if (given <= 0) {
       return 1 << _targetJobLog(params);
     }
-    return given < zstdMtJobSizeMin ? zstdMtJobSizeMin : given;
+    if (given < zstdMtJobSizeMin) {
+      return zstdMtJobSizeMin;
+    }
+    return given > zstdMtJobSizeMax ? zstdMtJobSizeMax : given;
   }
 
   /// `ZSTDMT_overlapLog_default`, by the reference's own strategy numbering,

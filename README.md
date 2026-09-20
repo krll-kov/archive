@@ -223,6 +223,9 @@ await for (final TarEntry entry in response
   if (!p.isWithin('out', target)) continue; // `../` would escape out/
   if (entry.type == TarEntryType.file) {
     await File(target).create(recursive: true);
+    // A content piece is a view into the input stream's buffer, and the bytes stay
+    // correct only until the next piece is read. A piece used after the loop can hold
+    // the bytes of a later piece and nothing throws, so copy a piece you keep.
     await entry.content.pipe(File(target).openWrite());
   }
 }

@@ -673,6 +673,22 @@ void main() {
     expect(smaller, minimum);
   });
 
+  test('large jobs are clamped to the reference maximum', () {
+    const maximum = 1 << 30;
+    for (final level in [1, 6, 12, 19, 22]) {
+      final expected = ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
+          jobSize: maximum);
+      expect(expected.first, maximum);
+      for (final jobSize in [maximum + 1, 2 * maximum - 1]) {
+        expect(
+            ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
+                jobSize: jobSize),
+            expected,
+            reason: 'level $level, jobSize $jobSize');
+      }
+    }
+  });
+
   test('input read failures reach onError', () async {
     final error = Completer<Object>();
     var completed = false;
