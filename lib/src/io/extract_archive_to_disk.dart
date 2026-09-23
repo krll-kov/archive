@@ -188,7 +188,11 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
   } catch (_) {
     headerBytes = Uint8List(0);
   } finally {
-    await raf?.close();
+    try {
+      await raf?.close();
+    } catch (_) {
+      /* Do nothing */
+    }
   }
 
   ArchiveFormat recognized = CodecsRecognizer.recognize(headerBytes);
