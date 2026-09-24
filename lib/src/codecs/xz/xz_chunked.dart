@@ -11,6 +11,7 @@ import '../bcj_x86.dart';
 import '../lzma/lzma_decoder.dart';
 import '../xz_encoder.dart';
 import 'xz_block_dispatch.dart';
+import 'xz_index.dart';
 import 'xz_multithread_options.dart';
 import 'xz_parallel.dart';
 import 'xz_stream_decoder.dart';
@@ -272,7 +273,7 @@ class XzChunkedDecoder extends ChunkedSink {
           skip(pad);
           _stage = _Stage.blockCheck;
         case _Stage.blockCheck:
-          final size = _checkSize(_streamFlags & 0xf);
+          final size = xzCheckSize(_streamFlags & 0xf);
           if (available < size) {
             return;
           }
@@ -405,7 +406,7 @@ class XzChunkedDecoder extends ChunkedSink {
           uncompressed != null &&
           compressed <= limit &&
           uncompressed <= limit) {
-        final checkSize = _checkSize(_streamFlags & 0xf);
+        final checkSize = xzCheckSize(_streamFlags & 0xf);
         final total = size +
             compressed +
             ((4 - ((size + compressed) & 3)) & 3) +
@@ -627,25 +628,6 @@ class XzChunkedDecoder extends ChunkedSink {
     }
     skip(2);
     _stage = _Stage.streamPadding;
-  }
-
-  static int _checkSize(int type) {
-    if (type == 0) {
-      return 0;
-    }
-    if (type <= 0x3) {
-      return 4;
-    }
-    if (type <= 0x6) {
-      return 8;
-    }
-    if (type <= 0x9) {
-      return 16;
-    }
-    if (type <= 0xc) {
-      return 32;
-    }
-    return 64;
   }
 }
 

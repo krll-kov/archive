@@ -396,6 +396,26 @@ void main() {
       expect(types['link'] == TarEntryType.file, isFalse);
     });
 
+    test('only a link carries a symbolic link, as TarDecoder reports it',
+        () async {
+      final archive = Archive()
+        ..add(ArchiveFile.directory('dir'))
+        ..add(ArchiveFile.string('dir/a.txt', 'one'))
+        ..add(ArchiveFile.symlink('link', 'dir/a.txt'));
+      final bytes = TarEncoder().encodeBytes(archive);
+      final links = <String, String?>{};
+      await for (final entry
+          in _pieces(bytes, 512).transform(tarCodec.decoder)) {
+        links[entry.name] = entry.symbolicLink;
+        await entry.content.drain<void>();
+      }
+      final whole = {
+        for (final file in TarDecoder().decodeBytes(bytes).files)
+          file.name: file.symbolicLink,
+      };
+      expect(links, whole);
+    });
+
     test('an empty archive yields nothing', () async {
       final bytes = TarEncoder().encodeBytes(Archive());
       expect(await _stream(bytes, 512), isEmpty);

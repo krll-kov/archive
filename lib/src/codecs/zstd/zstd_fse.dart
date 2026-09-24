@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
+
 import 'zstd_constants.dart';
 
 /// One packed row per state:
@@ -40,9 +42,8 @@ class ZstdFseDistribution {
       this.counts, this.maxSymbol, this.accuracyLog, this.bytesRead);
 }
 
-class ZstdFseException implements Exception {
-  final String message;
-  ZstdFseException(this.message);
+class ZstdFseException extends ArchiveException {
+  ZstdFseException(super.message);
   @override
   String toString() => 'ZstdFseException: $message';
 }

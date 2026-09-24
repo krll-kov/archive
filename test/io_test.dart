@@ -619,27 +619,27 @@ void main() {
     expect(files.length, 4);
   });
 
-  // test('extractFileToDisk keeps symlink chains inside the output directory',
-  //     () async {
-  //   final directory = Directory.systemTemp.createTempSync('archive-extract-');
-  //   addTearDown(() => directory.deleteSync(recursive: true));
-  //   final outside = Directory('${directory.path}/outside')..createSync();
-  //   final file = File('${outside.path}/payload.txt')..writeAsStringSync('keep');
-  //   final archive = Archive()
-  //     ..add(ArchiveFile.directory('safe'))
-  //     ..add(ArchiveFile.symlink('foo/bar/baz', '../../safe'))
-  //     ..add(ArchiveFile.symlink('foo/bar/baz/alias', '../../outside'))
-  //     ..add(ArchiveFile.string('foo/bar/baz/alias/payload.txt', 'changed'));
-  //   final input = File('${directory.path}/input.tar')
-  //     ..writeAsBytesSync(TarEncoder().encodeBytes(archive));
-  //
-  //   try {
-  //     await extractFileToDisk(input.path, '${directory.path}/out');
-  //   } on ArchiveException {
-  //     // Rejecting the archive must leave the outside file intact
-  //   }
-  //   expect(file.readAsStringSync(), 'keep');
-  // }, testOn: '!windows');
+  test('extractFileToDisk keeps symlink chains inside the output directory',
+      () async {
+    final directory = Directory.systemTemp.createTempSync('archive-extract-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final outside = Directory('${directory.path}/outside')..createSync();
+    final file = File('${outside.path}/payload.txt')..writeAsStringSync('keep');
+    final archive = Archive()
+      ..add(ArchiveFile.directory('safe'))
+      ..add(ArchiveFile.symlink('foo/bar/baz', '../../safe'))
+      ..add(ArchiveFile.symlink('foo/bar/baz/alias', '../../outside'))
+      ..add(ArchiveFile.string('foo/bar/baz/alias/payload.txt', 'changed'));
+    final input = File('${directory.path}/input.tar')
+      ..writeAsBytesSync(TarEncoder().encodeBytes(archive));
+
+    try {
+      await extractFileToDisk(input.path, '${directory.path}/out');
+    } on ArchiveException {
+      // Rejecting the archive must leave the outside file intact
+    }
+    expect(file.readAsStringSync(), 'keep');
+  }, testOn: '!windows');
 
   test('extractFileToDisk tar.gz', () async {
     final inPath = 'test/_data/test2.tar.gz';
@@ -970,6 +970,30 @@ void main() {
       await expectLater(extractFileToDisk(path, p.join(scratch.path, 'out')),
           throwsA(isA<FileSystemException>()));
       expect(leftovers(), before);
+    });
+  });
+
+  group('extractFileToDisk and a damaged archive', () {
+    Uint8List content() => Uint8List.fromList(
+        List<int>.generate(5000, (i) => (i * 131 + (i >> 7)) & 0xff));
+
+    test('a zip entry that cannot be decoded leaves no file', () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final zip = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('b.bin', content())
+          ..compression = CompressionType.bzip2));
+      const localHeader = 30;
+      const bzipSignature = 4;
+      zip[localHeader + 'b.bin'.length + bzipSignature] ^= 0x55;
+      expect(() => ZipDecoder().decodeBytes(zip).first.content,
+          throwsA(isA<ArchiveException>()));
+      final input = File(p.join(directory.path, 'damaged.zip'))
+        ..writeAsBytesSync(zip);
+
+      final out = p.join(directory.path, 'out');
+      await extractFileToDisk(input.path, out);
+      expect(File(p.join(out, 'b.bin')).existsSync(), isFalse);
     });
   });
 }

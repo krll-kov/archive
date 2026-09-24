@@ -24,7 +24,7 @@ List<ArchiveFile> _entries() => [
       ArchiveFile.string('readme.txt', 'the first entry'),
       ArchiveFile.bytes('dir/binary.dat', _source(70000, 3)),
       ArchiveFile.bytes('small.dat', _source(7, 5)),
-    ];
+    ]..forEach((entry) => entry.lastModTime = 1700000000);
 
 Archive _archiveOf(List<ArchiveFile> entries) {
   final archive = Archive();
@@ -181,8 +181,20 @@ void main() {
         ..add(ArchiveFile.stream('a', input))
         ..close();
       expect(output.firstRead, isNotNull);
-      // The CRC pass must read the source once before compression starts
+      // The CRC is computed during deflate, so no pass reads the source first
       expect(output.firstRead!, lessThan(2 * bytes.length));
+    });
+
+    test('a streamed entry is read once', () {
+      final bytes = _source(1024 * 1024, 17);
+      final input = _ObservedInput(bytes);
+      final output = _Held();
+      ZipChunkedEncoder(output)
+        ..add(ArchiveFile.stream('a', input))
+        ..close();
+      expect(input.read, bytes.length);
+      final back = ZipDecoder().decodeBytes(output.bytes, verify: true);
+      expect(back.files.single.content, bytes);
     });
 
     test('an entry without content is a valid empty file', () {

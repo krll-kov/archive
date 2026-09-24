@@ -261,7 +261,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
     }
     final blockSize100k = field[3] - BZip2.hdr0;
     if (blockSize100k < 1 || blockSize100k > 9) {
-      throw ArchiveException('bzip2: the signature does not have a valid block size');
+      throw ArchiveException(
+          'bzip2: the signature does not have a valid block size');
     }
     skip(4);
     _decoder.beginStream(blockSize100k);

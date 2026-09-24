@@ -220,7 +220,7 @@ int _largestDictionaryCap(
   if (largest <= 0 || largest >= 0x40000000) {
     return 0;
   }
-  return largest + (largest >> 2) + (2 << 20) + 16;
+  return xzDictionaryCap(largest);
 }
 
 int _pickWorkerCount({
@@ -474,7 +474,6 @@ Future<bool> _runJobs(
   return completer.future;
 }
 
-/// Reads the check field, which is the tail of a block.
 const _streamPieceSize = 1 << 16;
 
 /// Worker offsets carry the block's place in the stream above these bits
@@ -812,7 +811,7 @@ class _StreamDispatch implements XzBlockDispatch {
     byId[record.id] = record;
     if (record.id == 0) {
       final dictionary = dictionarySize > 0 && dictionarySize < 0x40000000
-          ? dictionarySize + (dictionarySize >> 2) + (2 << 20) + 16
+          ? xzDictionaryCap(dictionarySize)
           : 0;
       perWorker = bytes.length + dictionary + _stagingSize + uncompressedLength;
     }

@@ -101,7 +101,6 @@ class OutputFileStream extends OutputStream {
     _length++;
   }
 
-  /// Write a set of bytes to the end of the buffer.
   @override
   void writeRange(Uint8List bytes, int start, int end) {
     final length = end - start;
@@ -121,6 +120,7 @@ class OutputFileStream extends OutputStream {
     _length += length;
   }
 
+  /// Write a set of bytes to the end of the buffer.
   @override
   void writeBytes(List<int> bytes, {int? length}) {
     length ??= bytes.length;

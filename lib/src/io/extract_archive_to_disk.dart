@@ -22,8 +22,26 @@ import 'posix.dart' as posix;
 // Ensure filePath is contained in the outputDir folder, to make sure archives
 // aren't trying to write to some system path.
 bool _isWithinOutputPath(String outputDir, String filePath) {
-  return path.isWithin(
-      path.canonicalize(outputDir), path.canonicalize(filePath));
+  final dir = _realPath(outputDir);
+  final file = _realPath(filePath);
+  return dir != null && file != null && path.isWithin(dir, file);
+}
+
+/// canonicalize ignores symlinks out of outputPath, so we resolve them on disk
+String? _realPath(String filePath) {
+  var existing = path.canonicalize(filePath);
+  final rest = <String>[];
+  while (FileSystemEntity.typeSync(existing, followLinks: false) ==
+      FileSystemEntityType.notFound) {
+    rest.insert(0, path.basename(existing));
+    existing = path.dirname(existing);
+  }
+  try {
+    return path.joinAll([File(existing).resolveSymbolicLinksSync(), ...rest]);
+  } on FileSystemException {
+    // A dangling or looping symlink throws, so the entry counts as outside
+    return null;
+  }
 }
 
 bool _isValidSymLink(String outputPath, ArchiveFile file) {
@@ -34,8 +52,9 @@ bool _isValidSymLink(String outputPath, ArchiveFile file) {
     // Don't allow decoding of files outside of the output path.
     return false;
   }
-  final absLinkPath = path.normalize(path.join(filePath, linkPath));
-  if (!_isWithinOutputPath(outputPath, absLinkPath)) {
+  final realPath = _realPath(filePath);
+  if (realPath == null ||
+      !_isWithinOutputPath(outputPath, path.join(realPath, linkPath))) {
     // Don't allow decoding of files outside of the output path.
     return false;
   }
@@ -304,7 +323,17 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
         final output = OutputFileStream(filePath, bufferSize: bufferSize);
         try {
           file.writeContent(output);
-        } catch (_) {}
+        } catch (_) {
+          // A partial file from a failed entry looked extracted, so we delete it
+          try {
+            await output.close();
+          } catch (_) {}
+          // Windows deleteSync throws on an open file, so we ignore the error
+          try {
+            File(filePath).deleteSync();
+          } catch (_) {}
+          continue;
+        }
         if (posixSupported) {
           posix.chmod(filePath, file.unixPermissions.toRadixString(8));
         }

@@ -285,7 +285,12 @@ class ZipEncoder {
         }
       } else {
         // Otherwise we need to compress it now.
-        crc32 = getFileCrc32(file);
+        final streamedDeflate = streamed &&
+            compressionType == CompressionType.deflate &&
+            password == null;
+        if (!streamedDeflate) {
+          crc32 = getFileCrc32(file);
+        }
 
         final chosen = level ?? file.compressionLevel ?? _data.level ?? 6;
         // An entry with no content at all cannot be deflated: a zero length
@@ -293,11 +298,11 @@ class ZipEncoder {
         // identifies the entry corrupt
         if (file.rawContent == null) {
           compressionType = CompressionType.none;
-        } else if (streamed &&
-            compressionType == CompressionType.deflate &&
-            password == null) {
+          compressedData = InputMemoryStream(Uint8List(0));
+        } else if (streamedDeflate) {
           fileData.level = chosen;
           fileData.source = file.rawContent?.getStream(decompress: false);
+          fileData.source?.reset();
           // Deflate grows data that does not compress. compressBound in zlib
           // gives the worst case
           final size = entry.size;
@@ -705,7 +710,9 @@ class ZipEntryBody {
       if (take <= 0) {
         return false;
       }
-      sink.add(_source.readBytes(take).toUint8List());
+      final bytes = _source.readBytes(take).toUint8List();
+      _data.crc32 = getCrc32(bytes, _data.crc32);
+      sink.add(bytes);
       left -= take;
     }
     return true;
@@ -730,7 +737,9 @@ class ZipEntryBody {
     }
     final sink = _sink;
     if (sink == null) {
-      platformZLibEncoder.encodeStream(_source, _output,
+      final bytes = _source.toUint8List();
+      _data.crc32 = getCrc32(bytes);
+      platformZLibEncoder.encodeStream(InputMemoryStream(bytes), _output,
           level: _data.level, raw: true);
     } else {
       while (step()) {}

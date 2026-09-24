@@ -1005,6 +1005,22 @@ void main() async {
       expect((bytes[central + 8] | (bytes[central + 9] << 8)) & 0x800,
           (bytes[6] | (bytes[7] << 8)) & 0x800);
     });
+
+    test('an encrypted entry with no content has room for the AES fields', () {
+      final encoder = ZipEncoder(password: 'secret');
+      final output = OutputMemoryStream();
+      encoder.startEncode(output);
+      encoder.add(ArchiveFile.noData('n.txt'));
+      encoder.endEncode();
+      final bytes = output.getBytes();
+      final encrypted = (bytes[6] | (bytes[7] << 8)) & 1 != 0;
+      final compressed = _uint32(bytes, 18);
+      const salt = 16;
+      const passwordVerifier = 2;
+      const mac = 10;
+      expect(!encrypted || compressed >= salt + passwordVerifier + mac, isTrue,
+          reason: 'encrypted=$encrypted with $compressed bytes of data');
+    });
   });
 }
 

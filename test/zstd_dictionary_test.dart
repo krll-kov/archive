@@ -116,5 +116,17 @@ void main() {
             reason: 'cut to $cut bytes');
       }
     });
+
+    test(
+        'a dictionary cut inside its entropy tables throws what the package '
+        'exports', () {
+      final full =
+          File('${directory.path}/dict-trained.dict').readAsBytesSync();
+      for (final cut in [9, 20, 64, 100]) {
+        expect(() => ZstdDictionary(Uint8List.sublistView(full, 0, cut)),
+            throwsA(isA<FormatException>()),
+            reason: 'cut to $cut bytes');
+      }
+    });
   });
 }

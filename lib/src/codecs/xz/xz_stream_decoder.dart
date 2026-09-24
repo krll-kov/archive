@@ -26,6 +26,9 @@ import '../lzma/lzma_decoder.dart';
   return (ok: ok, reason: ok ? null : decoder.failureReason);
 }
 
+int xzDictionaryCap(int dictionarySize) =>
+    dictionarySize + (dictionarySize >> 2) + (2 << 20) + 16;
+
 /// Decodes an XZ stream.
 class XZStreamDecoder {
   // True if checksums are confirmed.
@@ -443,8 +446,7 @@ class XZStreamDecoder {
     // a tighter bound than the buffer the dictionary sits in
     decoder.dictionaryLimit = dictionarySize;
     if (dictionarySize > 0 && dictionarySize < 0x40000000) {
-      decoder.dictionaryCap =
-          dictionarySize + (dictionarySize >> 2) + (2 << 20) + 16;
+      decoder.dictionaryCap = xzDictionaryCap(dictionarySize);
     }
 
     if (_readPadding(header) < 0) {

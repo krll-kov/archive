@@ -2,11 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 
 import '../../archive/archive_file.dart';
+import '../../util/_pieces.dart';
 import '../../util/cancellable_stream.dart';
 import '../../util/chunked_sink.dart';
 import '../zip_encoder.dart';
 import '../zlib/deflate.dart';
-
 
 /// {@macro archive.codecs.not_converter}
 ///
@@ -73,7 +73,7 @@ class ZipEncoderTransformer
   Stream<List<int>> _write(
       StreamIterator<ArchiveFile> input, CancelSignal signal) async* {
     final held = <List<int>>[];
-    final encoder = ZipChunkedEncoder(_Pieces(held),
+    final encoder = ZipChunkedEncoder(Pieces(held),
         level: level,
         password: password,
         filenameEncoding: filenameEncoding,
@@ -121,18 +121,6 @@ class ZipEncoderTransformer
       yield held.removeAt(0);
     }
   }
-}
-
-class _Pieces implements Sink<List<int>> {
-  _Pieces(this._held);
-
-  final List<List<int>> _held;
-
-  @override
-  void add(List<int> data) => _held.add(data);
-
-  @override
-  void close() {}
 }
 
 /// Writes a zip archive to a [Sink] entry by entry. By default, it buffers

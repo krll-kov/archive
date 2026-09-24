@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../../archive/archive_file.dart';
+import '../../util/_pieces.dart';
 import '../../util/archive_exception.dart';
 import '../../util/cancellable_stream.dart';
 import '../../util/chunked_sink.dart';
@@ -115,7 +116,7 @@ class TarEncoderTransformer
       StreamIterator<ArchiveFile> input, CancelSignal signal) async* {
     final held = <List<int>>[];
     final encoder =
-        TarChunkedEncoder(_Pieces(held), filenameEncoding: filenameEncoding);
+        TarChunkedEncoder(Pieces(held), filenameEncoding: filenameEncoding);
     while (await input.moveNext()) {
       final entry = input.current;
       try {
@@ -162,19 +163,6 @@ class TarEncoderTransformer
     }
   }
 }
-
-class _Pieces implements Sink<List<int>> {
-  _Pieces(this._held);
-
-  final List<List<int>> _held;
-
-  @override
-  void add(List<int> data) => _held.add(data);
-
-  @override
-  void close() {}
-}
-
 
 /// {@macro archive.codecs.not_converter}
 /// {@macro archive.yield_codecs.one_at_time}
@@ -245,7 +233,9 @@ class TarEntry {
         groupId = file.groupId,
         lastModTime = file.lastModTime,
         typeFlag = file.typeFlag,
-        symbolicLink = file.nameOfLinkedFile,
+        symbolicLink = (file.nameOfLinkedFile?.isNotEmpty ?? false)
+            ? file.nameOfLinkedFile
+            : null,
         _left = file.fileSize;
 
   final _Reader _reader;

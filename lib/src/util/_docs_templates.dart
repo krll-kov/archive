@@ -24,7 +24,6 @@
 /// ```
 /// {@endtemplate}
 
-
 /// {@template archive.converters.encoder}
 /// Example for .encoder:
 /// ```dart

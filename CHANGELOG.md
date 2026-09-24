@@ -12,6 +12,7 @@
   fails it uses old file extension format instead
 * Added .tar.zst and .tzst to `extractFileToDisk`. Also, `extractFileToDisk` now checks for errors during
   unpack/decompress and does not leak temporary TAR files on fail
+* Fixed symlinks scopes for `extractFileToDisk` that could overwrite existing file on disk outside of output dir
 * Fixed CRC64 `XZEncoder` created files created on dart-js failed to decode on native platforms
 * Fixed zlib encoder on web
 * Added `CodecsRecognizer` with `ArchiveFormat` to recognize compressed file types with their header bytes

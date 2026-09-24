@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
+
 import 'zstd_bit_reader.dart';
 import 'zstd_constants.dart';
 import 'zstd_fse.dart';
@@ -14,9 +16,8 @@ class ZstdHuffmanTable {
   int symbolCount = 0;
 }
 
-class ZstdHuffmanException implements Exception {
-  final String message;
-  ZstdHuffmanException(this.message);
+class ZstdHuffmanException extends ArchiveException {
+  ZstdHuffmanException(super.message);
   @override
   String toString() => 'ZstdHuffmanException: $message';
 }
