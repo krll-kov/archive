@@ -65,7 +65,7 @@ class TarDecoder {
           size: metadata.size);
       // A header that carries the next entry's name or its PAX records is not
       // an entry of its own
-      if (metadata.take(tf)) {
+      if (metadata.take(tf, filenameEncoding)) {
         continue;
       }
       metadata.applyTo(tf);

@@ -85,6 +85,7 @@ class ZipEncoderTransformer
         // bytes before the entry is fully deflated. On the web the body is one
         // step
         final body = encoder.addHeader(entry);
+        encoder.flush();
         while (held.isNotEmpty) {
           yield held.removeAt(0);
         }
@@ -98,6 +99,7 @@ class ZipEncoderTransformer
             }
           }
           body.finish();
+          encoder.flush();
           while (held.isNotEmpty) {
             yield held.removeAt(0);
           }
@@ -123,9 +125,9 @@ class ZipEncoderTransformer
   }
 }
 
-/// Writes a zip archive to a [Sink] entry by entry. By default, it buffers
-/// each entry to compute the CRC and sizes for the local header,
-/// unless [streamed] is enabled to write them after the payload instead
+/// Writes a zip archive to a [Sink] entry by entry. When [streamed] is
+/// disabled, it buffers each entry to compute the CRC and sizes for the local
+/// header, while [streamed], the default, writes them after the payload instead
 class ZipChunkedEncoder {
   final Sink<List<int>> output;
 
@@ -167,6 +169,10 @@ class ZipChunkedEncoder {
     }
     return _encoder.addHeader(entry, autoClose: false);
   }
+
+  /// SinkOutputStream holds up to 64 KiB, so without this finished entry
+  /// waits in buffer until next entry arrives or archive closes
+  void flush() => _out.flush();
 
   /// The central directory and the record that points at it, then the sink
   void close({String? comment = ''}) {

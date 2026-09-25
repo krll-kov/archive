@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -163,6 +164,7 @@ class ZstdEncoderConverter extends ChunkedConverter {
       }
       return bytes;
     });
+    var failed = false;
     // The header is written with the first chunk, not up front: only then do
     // we know whether any input came, and an empty frame records its content
     // size instead of a window size.
@@ -181,8 +183,14 @@ class ZstdEncoderConverter extends ChunkedConverter {
       writeZstdMtStreamHeader(
           header, checksum, level, _encodeDictionary?.id ?? 0, empty);
       return header.getBytes();
-    });
-    if (checksum) {
+    }).transform(
+        StreamTransformer.fromHandlers(handleError: (error, trace, sink) {
+      failed = true;
+      sink.addError(error, trace);
+    }));
+    // `yield*` continues after an error, so without this flag the checksum of
+    // a failed frame is written after the error event
+    if (checksum && !failed) {
       final out = OutputMemoryStream();
       writeZstdMtChecksum(out, hash.digestLow);
       yield out.getBytes();

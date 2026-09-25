@@ -7,6 +7,7 @@ import '../../util/crc32.dart';
 import '../../util/crc64.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/output_memory_stream.dart';
+import '../../util/sha256.dart';
 import '../bcj_x86.dart';
 import '../lzma/lzma_decoder.dart';
 import '../xz_encoder.dart';
@@ -23,7 +24,7 @@ import 'xz_stream_decoder.dart';
 /// {@macro archive.yield_codecs.encoder}
 class XzDecoderConverter extends ChunkedConverter {
   /// Unlike default decodeStream/decodeBytes, verify is on by default to match
-  /// gzip and zlib behaviour. Checks CRC of evert block.
+  /// gzip and zlib behaviour. Checks CRC or SHA-256 of evert block.
   final bool verify;
 
   /// `startChunkedConversion` cannot take this option. Its sink owes its output
@@ -84,10 +85,9 @@ class XzDecoderConverter extends ChunkedConverter {
 /// {@macro archive.yield_codecs.encoder}
 class XzCodec extends Codec<List<int>, List<int>> {
   /// Unlike default decodeStream/decodeBytes, verify is on by default to match
-  /// gzip and zlib behaviour. Checks CRC of evert block.
+  /// gzip and zlib behaviour. Checks CRC or SHA-256 of evert block.
   final bool verify;
 
-  /// Only crc32 and crc64 are supported right now
   final XZCheck check;
 
   /// {@macro archive.yield_codecs_multithreaded_example}
@@ -117,7 +117,7 @@ const xzCodec = XzCodec();
 /// {@macro archive.yield_codecs.decoder}
 class XzChunkedDecoder extends ChunkedSink {
   /// Unlike default decodeStream/decodeBytes, verify is on by default to match
-  /// gzip and zlib behaviour. Checks CRC of evert block.
+  /// gzip and zlib behaviour. Checks CRC or SHA-256 of evert block.
   final bool verify;
 
   /// Takes the blocks that can be decoded elsewhere. The threaded stream
@@ -135,7 +135,7 @@ class XzChunkedDecoder extends ChunkedSink {
 
   // The LZMA decoder, the block header parse and the LZMA2 chunk rules are the
   // whole buffer decoder's, so the two cannot drift apart
-  final _xz = XZStreamDecoder(maxPreallocateSize: 0);
+  late final _xz = XZStreamDecoder(verify: verify, maxPreallocateSize: 0);
 
   LzmaDecoder get _decoder => _xz.decoder;
   late final SinkOutputStream _sink;
@@ -170,6 +170,7 @@ class XzChunkedDecoder extends ChunkedSink {
   /// of buffering the block
   var _blockCrc32 = 0;
   final _blockCrc64 = Crc64();
+  final _blockSha256 = Sha256();
   var _blockLength = 0;
 
   void _foldCheck(Uint8List piece) {
@@ -178,6 +179,8 @@ class XzChunkedDecoder extends ChunkedSink {
       _blockCrc32 = getCrc32(piece, _blockCrc32);
     } else if (checkType == 0x4) {
       _blockCrc64.update(piece);
+    } else if (checkType == 0xa) {
+      _blockSha256.update(piece, 0, piece.length);
     }
   }
 
@@ -441,6 +444,7 @@ class XzChunkedDecoder extends ChunkedSink {
       ..divert = _blockBuffer;
     _blockCrc32 = 0;
     _blockCrc64.reset();
+    _blockSha256.reset();
     _sink.watch = verify && !_x86Filter ? _foldCheck : null;
     _blockDataStart = _streamPosition;
     _xz.needDictionaryReset = true;
@@ -534,6 +538,14 @@ class XzChunkedDecoder extends ChunkedSink {
           filtered != null ? (Crc64()..update(filtered)) : _blockCrc64;
       if (!actual.matches(field, 0)) {
         throw ArchiveException('xz: CRC64 check failed');
+      }
+    } else if (verify && checkType == 0xa) {
+      final actual =
+          filtered != null ? Sha256.of(filtered) : _blockSha256.digest();
+      for (var i = 0; i < 32; i++) {
+        if (actual[i] != field[i]) {
+          throw ArchiveException('xz: SHA-256 check failed');
+        }
       }
     }
     skip(size);
@@ -719,13 +731,7 @@ class XzEncoderConverter extends ChunkedConverter {
 class XzChunkedEncoder extends ChunkedSink {
   final XZCheck check;
 
-  XzChunkedEncoder(super.output, {this.check = XZCheck.crc64}) {
-    // Refused here rather than at close, after the whole input went through
-    if (check == XZCheck.sha256) {
-      throw ArchiveException(
-          'xz: a streamed archive cannot carry a SHA-256 check yet');
-    }
-  }
+  XzChunkedEncoder(super.output, {this.check = XZCheck.crc64});
 
   late final _out = SinkOutputStream(output);
 
@@ -736,6 +742,7 @@ class XzChunkedEncoder extends ChunkedSink {
   var _uncompressed = 0;
   var _crc32 = 0;
   final _crc64 = Crc64();
+  final _sha256 = Sha256();
 
   int get _flags => switch (check) {
         XZCheck.none => 0,
@@ -789,8 +796,9 @@ class XzChunkedEncoder extends ChunkedSink {
         _crc32 = getCrc32(piece, _crc32);
       case XZCheck.crc64:
         _crc64.update(piece);
-      case XZCheck.none:
       case XZCheck.sha256:
+        _sha256.update(piece, 0, piece.length);
+      case XZCheck.none:
         break;
     }
   }
@@ -852,8 +860,8 @@ class XzChunkedEncoder extends ChunkedSink {
         _out.writeBytes(_crc64.bytes);
         checkLength = 8;
       case XZCheck.sha256:
-        throw ArchiveException(
-            'xz: a streamed archive cannot carry a SHA-256 check yet');
+        _out.writeBytes(_sha256.digest());
+        checkLength = 32;
     }
     _blocks.add(
         _Record(_blockHeaderLength + _dataLength + checkLength, _uncompressed));

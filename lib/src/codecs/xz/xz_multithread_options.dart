@@ -8,11 +8,11 @@ const xzDefaultMemoryBudget = 1024 * 1024 * 1024;
 class XZMultithreadOptions<T> {
   /// {@macro archive.yield_codecs_multithreaded_example}
   const XZMultithreadOptions.converter({
-    this.onError,
     this.workers,
     this.memoryBudget,
     this.fileReadBufferSize = 8 * 1024 * 1024,
-  }) : onDone = xzNoResult;
+  })  : onDone = xzNoResult,
+        onError = null;
 
   const XZMultithreadOptions({
     required this.onDone,

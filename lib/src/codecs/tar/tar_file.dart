@@ -401,17 +401,28 @@ class TarMetadata {
       file.typeFlag == TarFile.exHeader2;
 
   /// Takes what such a header carries, its content already in `rawContent`
-  bool take(TarFile file) {
+  bool take(TarFile file, [Encoding? encoding]) {
     // GNU tar puts filenames in files when they exceed tar's native length.
     // Both kinds are named '././@LongLink', so only the type flag says
     // whether the content is the next entry's name or its link target.
     if (file.filename == '././@LongLink' ||
         file.typeFlag == TarFile.longName ||
         file.typeFlag == TarFile.longLinkName) {
+      final codes = file.rawContent!.toUint8List();
+      final end = codes.indexOf(0);
+      final value = Uint8List.sublistView(codes, 0, end < 0 ? null : end);
+      String text;
+      // TarEncoder writes a long name with filenameEncoding, so decoding it
+      // as UTF-8 breaks the round trip of any name over 100 bytes
+      try {
+        text = (encoding ?? utf8).decode(value);
+      } catch (_) {
+        text = String.fromCharCodes(value);
+      }
       if (file.typeFlag == TarFile.longLinkName) {
-        linkName = file.rawContent!.readString();
+        linkName = text;
       } else {
-        name = file.rawContent!.readString();
+        name = text;
       }
       return true;
     }

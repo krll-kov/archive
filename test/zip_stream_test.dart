@@ -291,6 +291,29 @@ void main() {
       await source.close();
     });
 
+    for (final streamed in [true, false]) {
+      test(
+          'streamed $streamed: a source that fails ends the archive with '
+          'that error', () async {
+        final source = StreamController<ArchiveFile>();
+        final events = <String>[];
+        final ended = Completer<void>();
+        source.stream.transform(ZipCodec(streamed: streamed).encoder).listen(
+            (_) => events.add('data'),
+            onError: (Object error) => events.add('$error'),
+            onDone: ended.complete);
+        source.add(_entries().first);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        source.addError(StateError('source failed'));
+        await ended.future.timeout(const Duration(seconds: 5));
+        expect(events.first, 'data');
+        final failed = events.indexOf('Bad state: source failed');
+        expect(events.sublist(failed), ['Bad state: source failed']);
+        expect(source.hasListener, isFalse);
+        await source.close();
+      });
+    }
+
     for (final autoClose in [false, true]) {
       test('autoClose $autoClose decides whether a written entry is closed',
           () async {
@@ -316,6 +339,34 @@ void main() {
       await source.close();
       expect(content.closed, isTrue);
     });
+
+    for (final streamed in [true, false]) {
+      test('streamed $streamed: an entry is out before the next one arrives',
+          () async {
+        final codec = ZipCodec(streamed: streamed);
+        ArchiveFile entry() => ArchiveFile.string('a.txt', 'hello ' * 200)
+          ..lastModTime = 1700000000;
+        final alone = await Stream.value(entry())
+            .transform(codec.encoder)
+            .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
+        final at = alone.length - 6;
+        final entrySize = alone[at] |
+            (alone[at + 1] << 8) |
+            (alone[at + 2] << 16) |
+            (alone[at + 3] << 24);
+        final source = StreamController<ArchiveFile>();
+        var out = 0;
+        final done = source.stream.transform(codec.encoder).forEach((piece) {
+          out += piece.length;
+        });
+        source.add(entry());
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        final beforeClose = out;
+        await source.close();
+        await done;
+        expect(beforeClose, entrySize);
+      });
+    }
 
     test('the bytes of an entry survive the transformer', () async {
       final archive = Archive()..add(ArchiveFile.string('a.txt', 'hello'));

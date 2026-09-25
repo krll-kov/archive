@@ -128,5 +128,17 @@ void main() {
             reason: 'cut to $cut bytes');
       }
     });
+
+    test('a dictionary cut anywhere throws what the package exports', () {
+      final full =
+          File('${directory.path}/dict-trained.dict').readAsBytesSync();
+      for (var cut = 9; cut < full.length; cut++) {
+        try {
+          ZstdDictionary(Uint8List.sublistView(full, 0, cut));
+        } catch (error) {
+          expect(error, isA<FormatException>(), reason: 'cut to $cut bytes');
+        }
+      }
+    });
   });
 }

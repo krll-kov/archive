@@ -378,6 +378,26 @@ void main() {
         await source.close();
       });
     }
+
+    test('a source that fails gets no bytes after the error', () async {
+      final source = StreamController<List<int>>();
+      final events = <String>[];
+      final ended = Completer<void>();
+      source.stream
+          .transform(const ZstdCodec(
+            level: 6,
+            multithread:
+                ZstdMultithreadOptions.converter(workers: 4, jobSize: 524288),
+          ).encoder)
+          .listen((_) => events.add('data'),
+              onError: (Object _) => events.add('error'),
+              onDone: ended.complete);
+      source.add(Uint8List.sublistView(input, 0, 1000));
+      source.addError(StateError('source failed'));
+      await ended.future.timeout(const Duration(seconds: 60));
+      await source.close();
+      expect(events.sublist(events.indexOf('error')), ['error']);
+    });
   });
 
   test('a silent input can be cancelled and is let go', () async {

@@ -352,7 +352,7 @@ Stream<TarEntry> _read(
           ..setRange(512, 512 + file.fileSize, body);
         file = TarFile.read(InputMemoryStream(whole),
             storeData: false, encoding: encoding, size: metadata.size);
-        metadata.take(file);
+        metadata.take(file, encoding);
         continue;
       }
       metadata.applyTo(file);

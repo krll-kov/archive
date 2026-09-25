@@ -19,6 +19,7 @@ import 'package:test/test.dart';
 //   crc64        --check=crc64 --lzma2=preset=1
 //   crc32        --block-size=65536 --check=crc32 --lzma2=preset=1
 //   crc64-blocks --block-size=65536 --check=crc64 --lzma2=preset=1
+//   sha256       --block-size=65536 --check=sha256 --lzma2=preset=1
 //   x86          --block-size=65536 --x86 --lzma2=preset=1
 Uint8List fixture(String name) =>
     File('test/_data/xz/parallel/$name.xz').readAsBytesSync();
@@ -144,6 +145,25 @@ void main() {
       final parallel =
           await decodeBytesOnIsolates(compressed, verify: true, workers: 4);
       expect(parallel, equals(expected));
+    });
+
+    test('verifies SHA-256 while streaming the output back', () async {
+      final compressed = fixture('sha256');
+      final parallel =
+          await decodeBytesOnIsolates(compressed, verify: true, workers: 4);
+      expect(parallel, equals(expected));
+    });
+
+    test('a SHA-256 check that does not match is refused', () async {
+      final built = buildArchive('sha256');
+      final data = Uint8List.fromList(built.bytes);
+      data[built.blocks[1].checkOffset(32)] ^= 0xff;
+      expect(await decodeBytesOnIsolates(data, workers: 4), equals(expected));
+      expect(
+          await decodeStreamOnIsolates(
+              InputMemoryStream(data), OutputMemoryStream(),
+              verify: true, workers: 4),
+          isFalse);
     });
 
     group('corrupt archives', () {

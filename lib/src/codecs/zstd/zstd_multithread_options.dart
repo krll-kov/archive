@@ -34,12 +34,12 @@ class ZstdMultithreadOptions<T> {
 
   /// {@macro archive.yield_codecs_multithreaded_example}
   const ZstdMultithreadOptions.converter({
-    this.onError,
     this.workers,
     this.memoryBudget,
     this.jobSize = 0,
     this.overlapLog = 0,
-  }) : onDone = null;
+  })  : onDone = null,
+        onError = null;
 }
 
 /// The four fields that describe the work, checked the same way wherever the

@@ -17,6 +17,7 @@ import '../../util/input_file_stream.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_stream.dart';
+import '../../util/sha256.dart';
 import 'xz_block_dispatch.dart';
 import 'xz_chunked.dart';
 import 'xz_index.dart';
@@ -1022,6 +1023,7 @@ class _BlockSink extends OutputStream {
   int _staged = 0;
   int _emitted = 0;
   int _crc = 0;
+  final _sha256 = Sha256();
 
   _BlockSink(this._onPiece, this._outputOffset, this._checkType)
       : super(byteOrder: ByteOrder.littleEndian);
@@ -1080,6 +1082,8 @@ class _BlockSink extends OutputStream {
       _crc = getCrc32(view, _crc);
     } else if (_checkType == 0x4 && isCrc64Supported()) {
       _crc = getCrc64(view, _crc);
+    } else if (_checkType == 0xa) {
+      _sha256.update(view, 0, view.length);
     }
     _onPiece(_outputOffset + _emitted, view);
     _emitted += view.length;
@@ -1088,6 +1092,18 @@ class _BlockSink extends OutputStream {
   /// Compares the accumulated checksum with the [checkField] stored in the
   /// block. Check types that cannot be verified pass.
   bool checkMatches(Uint8List checkField) {
+    if (_checkType == 0xa) {
+      if (checkField.length != 32) {
+        return false;
+      }
+      final actual = _sha256.digest();
+      for (var i = 0; i < 32; i++) {
+        if (actual[i] != checkField[i]) {
+          return false;
+        }
+      }
+      return true;
+    }
     if (_checkType != 0x1 && _checkType != 0x4) {
       return true;
     }

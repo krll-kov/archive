@@ -3,11 +3,11 @@ import 'dart:typed_data';
 import '../util/archive_exception.dart';
 import '../util/crc32.dart';
 import '../util/crc64.dart';
-import '../util/encryption.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
 import '../util/output_stream.dart';
+import '../util/sha256.dart';
 
 // The XZ specification can be found at https://tukaani.org/xz/xz-file-format.txt.
 
@@ -179,7 +179,7 @@ class XZEncoder {
         output.writeBytes(crc64Bytes(data));
         break;
       case 0x0a: // SHA-256
-        output.writeBytes(PcSHA256Digest().process(data));
+        output.writeBytes(Sha256.of(data));
         break;
       default:
         throw 'Unknown check type $checkType';

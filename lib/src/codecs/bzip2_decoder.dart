@@ -215,7 +215,14 @@ class BZip2Decoder {
         }
       }
 
-      _selectorMtf[i] = j;
+      // Some encoders round the selector count up, so like bzip2 1.0.8 we read
+      // the selectors past bzMaxSelectors and drop them instead of a RangeError
+      if (i < bzMaxSelectors) {
+        _selectorMtf[i] = j;
+      }
+    }
+    if (_numSelectors > bzMaxSelectors) {
+      _numSelectors = bzMaxSelectors;
     }
 
     // Undo the MTF values for the selectors.

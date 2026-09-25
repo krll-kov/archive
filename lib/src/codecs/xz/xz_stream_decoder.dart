@@ -5,6 +5,7 @@ import '../../util/crc64.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
 import '../../util/output_stream.dart';
+import '../../util/sha256.dart';
 import '../bcj_x86.dart';
 import '../lzma/lzma_decoder.dart';
 
@@ -206,8 +207,8 @@ class XZStreamDecoder {
 
     // A filter or a checksum needs the decoded block again
     final checkType = streamFlags & 0xf;
-    final needsBlockData =
-        hasX86 || (verify && (checkType == 0x1 || checkType == 0x4));
+    final needsBlockData = hasX86 ||
+        (verify && (checkType == 0x1 || checkType == 0x4 || checkType == 0xa));
     Uint8List? blockData;
 
     if (needsBlockData && output is! OutputMemoryStream) {
@@ -319,17 +320,15 @@ class XZStreamDecoder {
         }*/
         break;
       case 0xa: // SHA-256
-        /*final expectedCrc =*/
-        input.readBytes(32).toUint8List();
-        /*if (verify) {
-          final actualCrc =
-              sha256.convert(data.toBytes().sublist(startDataLength)).bytes;
+        final stored = input.readBytes(32).toUint8List();
+        if (verify) {
+          final actual = Sha256.of(blockData ?? output.subset(startDataLength));
           for (var i = 0; i < 32; i++) {
-            if (actualCrc[i] != expectedCrc[i]) {
-              throw ArchiveException('SHA-256 check failed');
+            if (actual[i] != stored[i]) {
+              return _fail('SHA-256 check failed');
             }
           }
-        }*/
+        }
         break;
       case 0xb:
       case 0xc:
@@ -572,6 +571,9 @@ class XZStreamDecoder {
             resetDictionary: reset == 3);
       }
 
+      if (verify && input.peekBytes(1).readByte() != 0) {
+        return _fail('LZMA2 range coder does not start with 0');
+      }
       decoder.decodeToOutput(
           input.readBytes(compressedLength), uncompressedLength, output);
       // Checking this can catch some corrupt files, especially if they don't

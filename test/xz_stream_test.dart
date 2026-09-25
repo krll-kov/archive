@@ -481,6 +481,28 @@ void main() {
               .toList(),
           throwsA(isA<ArchiveException>()));
     });
+
+    // xz 5.8 refuses an LZMA chunk whose first range coder byte is not zero
+    test('a range coder that does not start at zero is refused', () {
+      final src = Uint8List.fromList(_archive('good-1-lzma2-1.xz'));
+      final chunk = 12 + (src[12] + 1) * 4;
+      expect(src[chunk], greaterThanOrEqualTo(0xe0));
+      src[chunk + 6] ^= 0x01;
+      expect(() => xzCodec.decode(src), throwsA(isA<ArchiveException>()));
+      expect(
+          () => XZDecoder().decodeBytes(src, verify: true, throwOnError: true),
+          throwsA(isA<ArchiveException>()));
+    });
+
+    test('a SHA-256 check that does not match is refused', () {
+      final src = Uint8List.fromList(_archive('sha256.xz'));
+      expect(src[7], 0x0a);
+      final data = 12 + (src[12] + 1) * 4 + 3;
+      expect(
+          utf8.decode(Uint8List.sublistView(src, data, data + 6)), 'hello\n');
+      src[data] ^= 0x01;
+      expect(() => xzCodec.decode(src), throwsA(isA<ArchiveException>()));
+    });
   });
 }
 

@@ -145,4 +145,87 @@ void main() {
         Stream<List<int>>.fromIterable([bad]).transform(bzip2Codec.decoder),
         emitsError(isA<ArchiveException>()));
   });
+
+  // bzip2 1.0.8 reads selectors past 18002 and ignores them
+  test('a block with more selectors than the table holds decodes', () {
+    final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
+    final archive =
+        _withExtraSelectors(BZip2Encoder().encodeBytes(data), 18008);
+    final output = OutputMemoryStream();
+    expect(
+        BZip2Decoder()
+            .decodeStream(InputMemoryStream(archive), output, verify: true),
+        isTrue);
+    expect(output.getBytes(), data);
+    expect(bzip2Codec.decode(archive), data);
+  });
+}
+
+Uint8List _withExtraSelectors(Uint8List stream, int extra) {
+  final reader = _BitReader(stream);
+  final writer = _BitWriter();
+  void copy(int bits) => writer.write(reader.read(bits), bits);
+  copy(32);
+  copy(48);
+  copy(32);
+  copy(1);
+  copy(24);
+  final used = reader.read(16);
+  writer.write(used, 16);
+  for (var i = 0; i < 16; i++) {
+    if (used & (0x8000 >> i) != 0) {
+      copy(16);
+    }
+  }
+  copy(3);
+  final count = reader.read(15);
+  writer.write(count + extra, 15);
+  for (var i = 0; i < count; i++) {
+    var bit = 1;
+    while (bit != 0) {
+      bit = reader.read(1);
+      writer.write(bit, 1);
+    }
+  }
+  writer.write(0, extra);
+  while (reader.at < stream.length * 8) {
+    copy(1);
+  }
+  return writer.bytes;
+}
+
+class _BitReader {
+  final Uint8List _bytes;
+  var at = 0;
+
+  _BitReader(this._bytes);
+
+  int read(int bits) {
+    var value = 0;
+    for (var i = 0; i < bits; i++) {
+      value = (value << 1) | ((_bytes[at >> 3] >> (7 - (at & 7))) & 1);
+      at++;
+    }
+    return value;
+  }
+}
+
+class _BitWriter {
+  final _out = <int>[];
+  var _byte = 0;
+  var _filled = 0;
+
+  void write(int value, int bits) {
+    for (var i = bits - 1; i >= 0; i--) {
+      _byte = (_byte << 1) | ((value >> i) & 1);
+      if (++_filled == 8) {
+        _out.add(_byte);
+        _byte = 0;
+        _filled = 0;
+      }
+    }
+  }
+
+  Uint8List get bytes =>
+      Uint8List.fromList([..._out, if (_filled > 0) _byte << (8 - _filled)]);
 }

@@ -83,7 +83,12 @@ void main() {
       });
     }
 
-    for (final check in [XZCheck.none, XZCheck.crc32, XZCheck.crc64]) {
+    for (final check in [
+      XZCheck.none,
+      XZCheck.crc32,
+      XZCheck.crc64,
+      XZCheck.sha256
+    ]) {
       test('a $check archive reads back', () {
         final source = _sample(5000);
         final archive = encode(source, 700, check: check);
@@ -93,20 +98,18 @@ void main() {
       });
     }
 
-    test('a SHA-256 check is refused rather than written wrong', () {
-      expect(() => encode(_sample(100), 100, check: XZCheck.sha256),
-          throwsA(isA<ArchiveException>()));
-    });
-
-    test('a SHA-256 check is refused before any byte reaches the sink', () {
-      // Refused at close, the header and every block had already gone out
+    test('a SHA-256 archive is the one XZEncoder writes', () {
+      final source = _sample(200000);
+      final whole = XZEncoder().encodeBytes(source, check: XZCheck.sha256);
+      for (final piece in [1, 7, 4096, 65536, source.length + 1]) {
+        expect(encode(source, piece, check: XZCheck.sha256), whole,
+            reason: 'piece size $piece');
+      }
       final held = _Held();
-      expect(
-          () => const XzCodec(check: XZCheck.sha256)
-              .encoder
-              .startChunkedConversion(held),
-          throwsA(isA<ArchiveException>()));
-      expect(held.bytes, isEmpty);
+      const XzCodec(check: XZCheck.sha256).encoder.startChunkedConversion(held)
+        ..add(source)
+        ..close();
+      expect(held.bytes, whole);
     });
 
     test('the stream decoder with workers reads what this writes', () async {

@@ -185,6 +185,16 @@ void main() {
       expect(entries.single.name, 'caf\u00e9.txt');
     });
 
+    test('the configured filename encoding reads a long name back', () async {
+      const codec = TarCodec(filenameEncoding: latin1);
+      final name = '\u00c3\u00a9${'x' * 120}.txt';
+      final entries = await Stream.value(ArchiveFile.string(name, 'x'))
+          .transform(codec.encoder)
+          .transform(codec.decoder)
+          .toList();
+      expect(entries.single.name, name);
+    });
+
     test('it emits before reading an entire entry', () async {
       final bytes = Uint8List(1024 * 1024);
       var read = 0;
@@ -457,6 +467,40 @@ void main() {
       expect(read, ['big.bin']);
     });
 
+    // Reading input past tar end fails on bytes after compressed stream, which
+    // bsdtar and Python tarfile accept
+    test('bytes after the compressed stream do not fail the archive', () async {
+      final content = _source(3000, 29);
+      final tar = TarEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.bytes('a.bin', content)));
+      final compressed = {
+        'gzip': (gzip.encode(tar), gzip.decoder),
+        'zstd': (zstdCodec.encode(tar), zstdCodec.decoder),
+      };
+      final tails = {
+        'zero padding': Uint8List(512),
+        'signature': utf8.encode('SIGNATURE:3045022100abcdef'),
+      };
+      for (final format in compressed.entries) {
+        for (final tail in tails.entries) {
+          final bytes = Uint8List.fromList([...format.value.$1, ...tail.value]);
+          for (final piece in [512, bytes.length]) {
+            final read = <String, List<int>>{};
+            await for (final entry in _pieces(bytes, piece)
+                .transform(format.value.$2)
+                .transform(tarCodec.decoder)) {
+              read[entry.name] = await entry.content
+                  .fold<List<int>>(<int>[], (held, p) => held..addAll(p));
+            }
+            expect(read.keys, ['a.bin'],
+                reason: '${format.key}, ${tail.key}, pieces of $piece');
+            expect(read['a.bin'], content,
+                reason: '${format.key}, ${tail.key}, pieces of $piece');
+          }
+        }
+      }
+    });
+
     test('content listened to after the reader moved on fails', () async {
       // The skip past an entry empties it, so a late listener used to read
       // nothing and no error
@@ -586,6 +630,25 @@ void main() {
       // Past the last piece of the entry, so it waits on the source
       await Future<void>.delayed(const Duration(milliseconds: 200));
       await subscription.cancel().timeout(const Duration(seconds: 5));
+      expect(source.hasListener, isFalse);
+      await source.close();
+    });
+
+    test('a source that fails ends the archive with that error', () async {
+      final source = StreamController<ArchiveFile>();
+      final events = <String>[];
+      final ended = Completer<void>();
+      source.stream.transform(tarCodec.encoder).listen(
+          (_) => events.add('data'),
+          onError: (Object error) => events.add('$error'),
+          onDone: ended.complete);
+      source.add(ArchiveFile.bytes('a.bin', _source(3000, 5)));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      source.addError(StateError('source failed'));
+      await ended.future.timeout(const Duration(seconds: 5));
+      expect(events.first, 'data');
+      final failed = events.indexOf('Bad state: source failed');
+      expect(events.sublist(failed), ['Bad state: source failed']);
       expect(source.hasListener, isFalse);
       await source.close();
     });
