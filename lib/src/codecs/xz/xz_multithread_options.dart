@@ -6,6 +6,7 @@ const xzDefaultMemoryBudget = 1024 * 1024 * 1024;
 /// {@macro archive.multithreaded_header}
 /// {@macro archive.multithreaded_examples}
 class XZMultithreadOptions<T> {
+  /// {@macro archive.multithreaded_header}
   /// {@macro archive.yield_codecs_multithreaded_example}
   const XZMultithreadOptions.converter({
     this.workers,

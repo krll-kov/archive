@@ -32,6 +32,7 @@ class ZstdMultithreadOptions<T> {
     this.overlapLog = 0,
   });
 
+  /// {@macro archive.multithreaded_header}
   /// {@macro archive.yield_codecs_multithreaded_example}
   const ZstdMultithreadOptions.converter({
     this.workers,
