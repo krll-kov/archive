@@ -217,7 +217,7 @@
 /// await File('data.bin.xz')
 ///     .openRead()
 ///     .transform(XzCodec(
-///       multithread: XzMultithreadOptions.converter(workers: 4),
+///       multithread: XZMultithreadOptions.converter(workers: 4),
 ///     ).decoder)
 ///     .pipe(File('data.bin').openWrite());
 /// ```

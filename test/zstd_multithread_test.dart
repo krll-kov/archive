@@ -223,6 +223,28 @@ void main() {
         input);
   });
 
+  test('the transform path sends a job in pieces of at most 64 KiB', () async {
+    var largest = 0;
+    final out = BytesBuilder(copy: false);
+    await for (final piece
+        in Stream<List<int>>.fromIterable([input]).transform(const ZstdCodec(
+      level: 6,
+      frameChecksum: false,
+      multithread:
+          ZstdMultithreadOptions.converter(workers: 2, jobSize: 524288),
+    ).encoder)) {
+      if (piece.length > largest) {
+        largest = piece.length;
+      }
+      out.add(piece);
+    }
+    final frame = out.toBytes();
+    expect(largest, lessThanOrEqualTo(1 << 16));
+    expect(frame, await transform(2));
+    expect(ZstdDecoder().decodeBytes(frame, verify: true, throwOnError: true),
+        input);
+  });
+
   test('the transform path does not depend on the worker count', () async {
     final one = await transform(1);
     expect(await transform(4), one);

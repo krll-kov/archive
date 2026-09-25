@@ -160,7 +160,7 @@ class XzChunkedDecoder extends ChunkedSink {
   var _dictionarySize = 0;
   var _x86Filter = false;
   var _x86StartOffset = 0;
-  OutputMemoryStream? _blockBuffer;
+  BcjX86OutputStream? _x86;
 
   /// The LZMA2 chunk being read
   var _chunkControl = 0;
@@ -434,18 +434,12 @@ class XzChunkedDecoder extends ChunkedSink {
 
     skip(size);
 
-    // Only an x86-filtered block is buffered, others stream to the sink
-    // chunk by chunk
-    _blockBuffer = _x86Filter ? OutputMemoryStream() : null;
-    // Filtered blocks are checked after BCJ is undone, so the running check is
-    // only needed for unfiltered ones
-    _sink
-      ..reset()
-      ..divert = _blockBuffer;
+    _x86 = _x86Filter ? BcjX86OutputStream(_sink, _x86StartOffset) : null;
+    _sink.reset();
     _blockCrc32 = 0;
     _blockCrc64.reset();
     _blockSha256.reset();
-    _sink.watch = verify && !_x86Filter ? _foldCheck : null;
+    _sink.watch = verify ? _foldCheck : null;
     _blockDataStart = _streamPosition;
     _xz.needDictionaryReset = true;
     _xz.needProperties = true;
@@ -488,7 +482,7 @@ class XzChunkedDecoder extends ChunkedSink {
   void _readChunkBody() {
     _xz.failureReason = null;
     final done = _xz.readLZMA2Chunk(
-        InputMemoryStream(view(_chunkLength)), _sink, _dictionarySize);
+        InputMemoryStream(view(_chunkLength)), _x86 ?? _sink, _dictionarySize);
     if (done == false) {
       throw ArchiveException('xz: ${_xz.failureReason}');
     }
@@ -497,6 +491,8 @@ class XzChunkedDecoder extends ChunkedSink {
   }
 
   void _finishBlockData() {
+    _x86?.finish();
+    _x86 = null;
     _decoder.reset(resetDictionary: true);
     final compressed = _streamPosition - _blockDataStart;
     final uncompressed = _sink.written;
@@ -519,29 +515,18 @@ class XzChunkedDecoder extends ChunkedSink {
 
     // Check covers uncompressed data, so a filtered block is verified only
     // after its filters are reversed
-    final buffered = _blockBuffer;
-    Uint8List? filtered;
-    if (buffered != null) {
-      filtered = buffered.getBytes();
-      bcjX86Decode(filtered, _x86StartOffset);
-    }
-
     if (verify && checkType == 0x1) {
       final expected =
           field[0] | (field[1] << 8) | (field[2] << 16) | (field[3] << 24);
-      final actual = filtered != null ? getCrc32(filtered) : _blockCrc32;
-      if (actual != expected) {
+      if (_blockCrc32 != expected) {
         throw ArchiveException('xz: CRC32 check failed');
       }
     } else if (verify && checkType == 0x4) {
-      final actual =
-          filtered != null ? (Crc64()..update(filtered)) : _blockCrc64;
-      if (!actual.matches(field, 0)) {
+      if (!_blockCrc64.matches(field, 0)) {
         throw ArchiveException('xz: CRC64 check failed');
       }
     } else if (verify && checkType == 0xa) {
-      final actual =
-          filtered != null ? Sha256.of(filtered) : _blockSha256.digest();
+      final actual = _blockSha256.digest();
       for (var i = 0; i < 32; i++) {
         if (actual[i] != field[i]) {
           throw ArchiveException('xz: SHA-256 check failed');
@@ -551,11 +536,6 @@ class XzChunkedDecoder extends ChunkedSink {
     skip(size);
 
     _blockLength = _sink.written;
-    if (filtered != null) {
-      output.add(filtered);
-      _blockBuffer = null;
-      _sink.divert = null;
-    }
     _sink.watch = null;
     // Flush the finished block now: input may stall without closing, and the
     // next worker's block is written after it

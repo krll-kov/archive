@@ -18,6 +18,7 @@
 * Added `CodecsRecognizer` with `ArchiveFormat` to recognize compressed file types with their header bytes
 * Fixed `XZEncoder` (without compression) for large files
 * Fixed SHA-256 checks for XZDecoder with `verify: true`
+* Significantly reduced XZDecoder RAM usage for --x86, crc32, crc64 and SHA-256 with `decodeStream`
 * Increased SHA-256 speed for XZDecoder and XZEncoder
 * Made CRC32 faster on IO (non-js-web platforms)
 * Slightly reduces amount of RAM for lzma decoder and zlib encoder

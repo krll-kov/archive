@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../util/byte_order.dart';
 import '../../util/crc32.dart';
 import '../../util/crc64.dart';
 import '../../util/input_stream.dart';
@@ -211,7 +212,31 @@ class XZStreamDecoder {
         (verify && (checkType == 0x1 || checkType == 0x4 || checkType == 0xa));
     Uint8List? blockData;
 
-    if (needsBlockData && output is! OutputMemoryStream) {
+    final verifyCheck =
+        verify && (checkType == 0x1 || checkType == 0x4 || checkType == 0xa);
+    // getCrc64 throws on web, where XzBlockSink skips CRC64, so there we keep
+    // branch below that holds whole block
+    final checked = verifyCheck &&
+            (checkType != 0x4 || isCrc64Supported()) &&
+            output is! OutputMemoryStream
+        // Default 4 MiB buffer, allocated per block, cost 24% more cycles on
+        // 1526 blocks of 64 KiB
+        ? XzBlockSink((_, piece) => output.writeBytes(piece), 0, checkType,
+            stagingSize: 1 << 16)
+        : null;
+    if (output is! OutputMemoryStream &&
+        (checked != null || (hasX86 && !verifyCheck))) {
+      final sink = checked ?? output;
+      final filtered = hasX86 ? BcjX86OutputStream(sink, x86StartOffset) : null;
+      try {
+        if (!_readLZMA2(input, filtered ?? sink, dictionarySize)) {
+          return false;
+        }
+      } finally {
+        filtered?.finish();
+        checked?.flush();
+      }
+    } else if (needsBlockData && output is! OutputMemoryStream) {
       // Streams that are not backed by a contiguous buffer cannot be read back
       // after the data has been written, so the block is decoded into a
       // temporary buffer and appended afterwards.
@@ -230,28 +255,35 @@ class XZStreamDecoder {
         // whatever was decoded before it. Handing that over leaves the caller
         // with the same output they would have got had the block been written
         // straight through, so what survives a corrupt archive does not depend
-        // on which kind of stream was passed in. The filter is not applied to
-        // it, matching the branch below, which gives up before filtering too.
-        output.writeBytes(block.getBytes());
+        // on which kind of stream was passed in. The filter is applied to it,
+        // matching the branches above and below, which filter it too.
+        final partial = block.getBytes();
+        if (hasX86) {
+          bcjX86Decode(partial, x86StartOffset);
+        }
+        output.writeBytes(partial);
         rethrow;
-      }
-      if (!read) {
-        output.writeBytes(block.getBytes());
-        return false;
       }
       blockData = block.getBytes();
       if (hasX86) {
         bcjX86Decode(blockData, x86StartOffset);
       }
-      output.writeBytes(blockData);
-    } else {
-      if (!_readLZMA2(input, output, dictionarySize)) {
+      if (!read) {
+        output.writeBytes(blockData);
         return false;
       }
-      if (hasX86) {
-        // subset() returns a view into the output buffer, so the filter is
-        // applied in place without allocating a copy of the block.
-        bcjX86Decode(output.subset(startDataLength), x86StartOffset);
+      output.writeBytes(blockData);
+    } else {
+      try {
+        if (!_readLZMA2(input, output, dictionarySize)) {
+          return false;
+        }
+      } finally {
+        if (hasX86) {
+          // subset() returns a view into the output buffer, so the filter is
+          // applied in place without allocating a copy of the block.
+          bcjX86Decode(output.subset(startDataLength), x86StartOffset);
+        }
       }
     }
 
@@ -280,10 +312,14 @@ class XZStreamDecoder {
       case 0: // none
         break;
       case 0x1: // CRC32
+        final stored =
+            checked == null ? null : input.peekBytes(4).toUint8List();
         final int expectedCrc = input.readUint32();
         if (verify &&
-            getCrc32(blockData ?? output.subset(startDataLength)) !=
-                expectedCrc) {
+            (stored != null
+                ? !checked!.checkMatches(stored)
+                : getCrc32(blockData ?? output.subset(startDataLength)) !=
+                    expectedCrc)) {
           return _fail('CRC32 check failed');
         }
         break;
@@ -296,7 +332,11 @@ class XZStreamDecoder {
         break;
       case 0x4: // CRC64
         final stored = input.readBytes(8).toUint8List();
-        if (verify) {
+        if (checked != null) {
+          if (!checked.checkMatches(stored)) {
+            return _fail('CRC64 check failed');
+          }
+        } else if (verify) {
           final actual = Crc64()
             ..update(blockData ?? output.subset(startDataLength));
           if (!actual.matches(stored, 0)) {
@@ -321,7 +361,11 @@ class XZStreamDecoder {
         break;
       case 0xa: // SHA-256
         final stored = input.readBytes(32).toUint8List();
-        if (verify) {
+        if (checked != null) {
+          if (!checked.checkMatches(stored)) {
+            return _fail('SHA-256 check failed');
+          }
+        } else if (verify) {
           final actual = Sha256.of(blockData ?? output.subset(startDataLength));
           for (var i = 0; i < 32; i++) {
             if (actual[i] != stored[i]) {
@@ -704,4 +748,133 @@ class _XZBlockSize {
   final int uncompressedLength;
 
   const _XZBlockSize(this.unpaddedLength, this.uncompressedLength);
+}
+
+// Chunks worker output to prevent massive memory spikes, keeping overhead at
+// 4MB instead of holding entire decoded blocks in memory at the cost of a memcpy
+const xzStagingSize = 4 * 1024 * 1024;
+
+/// An [OutputStream] that hands what it is given to [_onPiece] in pieces.
+class XzBlockSink extends OutputStream {
+  final void Function(int offset, Uint8List piece) _onPiece;
+  final int _outputOffset;
+
+  /// Check type to accumulate, or 0 to accumulate nothing.
+  final int _checkType;
+
+  final Uint8List _staging;
+  int _staged = 0;
+  int _emitted = 0;
+  int _crc = 0;
+  final _sha256 = Sha256();
+
+  XzBlockSink(this._onPiece, this._outputOffset, this._checkType,
+      {int stagingSize = xzStagingSize})
+      : _staging = Uint8List(stagingSize),
+        super(byteOrder: ByteOrder.littleEndian);
+
+  @override
+  int get length => _emitted + _staged;
+
+  @override
+  void writeByte(int value) {
+    if (_staged == _staging.length) {
+      flush();
+    }
+    _staging[_staged++] = value;
+  }
+
+  @override
+  void writeBytes(List<int> bytes, {int? length}) {
+    length ??= bytes.length;
+    if (length <= 0) {
+      return;
+    }
+
+    // tood profile: check Uint8List(length)..setRange(0, length, bytes)); ??
+    if (length >= _staging.length) {
+      flush();
+      _emit(bytes is Uint8List
+          ? Uint8List.sublistView(bytes, 0, length)
+          : Uint8List.fromList(bytes.sublist(0, length)));
+      return;
+    }
+
+    if (_staged + length > _staging.length) {
+      flush();
+    }
+    _staging.setRange(_staged, _staged + length, bytes);
+    _staged += length;
+  }
+
+  @override
+  void writeStream(InputStream stream) => writeBytes(stream.toUint8List());
+
+  @override
+  void flush() {
+    if (_staged == 0) {
+      return;
+    }
+    _emit(Uint8List.sublistView(_staging, 0, _staged));
+    _staged = 0;
+  }
+
+  void _emit(Uint8List view) {
+    if (view.isEmpty) {
+      return;
+    }
+    if (_checkType == 0x1) {
+      _crc = getCrc32(view, _crc);
+    } else if (_checkType == 0x4 && isCrc64Supported()) {
+      _crc = getCrc64(view, _crc);
+    } else if (_checkType == 0xa) {
+      _sha256.update(view, 0, view.length);
+    }
+    _onPiece(_outputOffset + _emitted, view);
+    _emitted += view.length;
+  }
+
+  /// Compares the accumulated checksum with the [checkField] stored in the
+  /// block. Check types that cannot be verified pass.
+  bool checkMatches(Uint8List checkField) {
+    if (_checkType == 0xa) {
+      if (checkField.length != 32) {
+        return false;
+      }
+      final actual = _sha256.digest();
+      for (var i = 0; i < 32; i++) {
+        if (actual[i] != checkField[i]) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (_checkType != 0x1 && _checkType != 0x4) {
+      return true;
+    }
+    if (_checkType == 0x4 && !isCrc64Supported()) {
+      return true;
+    }
+    if (checkField.isEmpty) {
+      return false;
+    }
+
+    var expected = 0;
+    for (var i = checkField.length - 1; i >= 0; i--) {
+      expected = (expected << 8) | checkField[i];
+    }
+    return expected == _crc;
+  }
+
+  @override
+  void clear() =>
+      throw UnsupportedError('An xz worker sink cannot be rewritten');
+
+  @override
+  Uint8List subset(int start, [int? end]) =>
+      throw UnsupportedError('An xz worker sink cannot be read back');
+
+  @override
+  void writeBackReference(int distance, int count) =>
+      throw UnsupportedError('An xz worker sink cannot be read back');
 }

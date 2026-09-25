@@ -332,6 +332,9 @@ class XZDecoder {
       orderedOutput: true,
       fileReadBufferSize: options.fileReadBufferSize,
     );
+    if (ok) {
+      input.skip(input.length);
+    }
     if (!ok && throwOnError) {
       throw _invalid(reason);
     }

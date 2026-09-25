@@ -18,6 +18,8 @@ import 'zstd_mt_frame_encoder.dart';
 
 const bool zstdIsolatesSupported = true;
 
+const _streamPieceSize = 1 << 16;
+
 /// Starts one worker. A test swaps it to make a spawn fail
 Future<Isolate> Function(SendPort replies, SendPort errors) zstdMtSpawnWorker =
     (replies, errors) => Isolate.spawn(_zstdMtWorker, replies,
@@ -404,7 +406,17 @@ Stream<Uint8List> _zstdMtCompressStream(
           ready.add(head);
         }
       }
-      ready.add(held.remove(written)!);
+      final job = held.remove(written)!;
+      if (job.length <= _streamPieceSize) {
+        ready.add(job);
+      } else {
+        for (var at = 0; at < job.length; at += _streamPieceSize) {
+          final end = at + _streamPieceSize < job.length
+              ? at + _streamPieceSize
+              : job.length;
+          ready.add(Uint8List.sublistView(job, at, end));
+        }
+      }
       written++;
     }
   }

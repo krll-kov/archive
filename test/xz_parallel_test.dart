@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:archive/src/codecs/bcj_x86.dart';
 import 'package:archive/src/codecs/xz/_xz_parallel_io.dart'
     show xzDecodeMultithreaded;
 import 'package:archive/src/codecs/xz/xz_index.dart';
@@ -21,6 +23,7 @@ import 'package:test/test.dart';
 //   crc64-blocks --block-size=65536 --check=crc64 --lzma2=preset=1
 //   sha256       --block-size=65536 --check=sha256 --lzma2=preset=1
 //   x86          --block-size=65536 --x86 --lzma2=preset=1
+//   x86-whole    --x86 --lzma2=preset=1
 Uint8List fixture(String name) =>
     File('test/_data/xz/parallel/$name.xz').readAsBytesSync();
 
@@ -131,6 +134,100 @@ void main() {
       final parallel = await decodeBytesOnIsolates(compressed, workers: 4);
       expect(parallel, equals(expected));
       expect(XZDecoder().decodeBytes(compressed), equals(expected));
+    });
+
+    test('BCJ x86 filter in pieces matches the whole buffer', () {
+      final random = Random(7);
+      for (var round = 0; round < 2000; round++) {
+        final data = Uint8List(random.nextInt(3000));
+        for (var i = 0; i < data.length; i++) {
+          final kind = random.nextInt(8);
+          data[i] = kind < 2
+              ? 0xe8 + random.nextInt(2)
+              : kind < 5
+                  ? (random.nextBool() ? 0 : 0xff)
+                  : random.nextInt(256);
+        }
+        final startOffset = round.isEven ? 0 : random.nextInt(1 << 20);
+        final whole = Uint8List.fromList(data);
+        bcjX86Decode(whole, startOffset);
+
+        final output = OutputMemoryStream();
+        final filter = BcjX86OutputStream(output, startOffset);
+        var at = 0;
+        while (at < data.length) {
+          final end = min(data.length, at + 1 + random.nextInt(300));
+          filter.writeRange(data, at, end);
+          at = end;
+        }
+        filter.finish();
+        expect(output.getBytes(), equals(whole), reason: 'round $round');
+      }
+    });
+
+    test('x86 block streams through the converter in pieces', () async {
+      final compressed = fixture('x86-whole');
+      var largest = 0;
+      final out = BytesBuilder(copy: false);
+      await for (final piece in Stream<List<int>>.fromIterable([
+        for (var at = 0; at < compressed.length; at += 1 << 16)
+          compressed.sublist(at, min(compressed.length, at + (1 << 16)))
+      ]).transform(xzCodec.decoder)) {
+        largest = max(largest, piece.length);
+        out.add(piece);
+      }
+      expect(out.toBytes(), equals(expected));
+      expect(largest, lessThanOrEqualTo(1 << 16));
+    });
+
+    test('x86 block decodes into a file output', () async {
+      final dir = Directory.systemTemp.createTempSync('archive_xz_x86');
+      try {
+        final path = p.join(dir.path, 'out.bin');
+        final output = OutputFileStream(path);
+        final ok = XZDecoder()
+            .decodeStream(InputMemoryStream(fixture('x86-whole')), output);
+        await output.close();
+        expect(ok, isTrue);
+        expect(File(path).readAsBytesSync(), equals(expected));
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('decodeStream into a file output verifies every check type', () async {
+      final dir = Directory.systemTemp.createTempSync('archive_xz_check');
+      try {
+        final path = p.join(dir.path, 'out.bin');
+        for (final (name, size, reason) in [
+          ('crc32', 4, 'CRC32'),
+          ('crc64-blocks', 8, 'CRC64'),
+          ('sha256', 32, 'SHA-256'),
+        ]) {
+          final built = buildArchive(name);
+          var output = OutputFileStream(path);
+          expect(
+              XZDecoder().decodeStream(InputMemoryStream(built.bytes), output,
+                  verify: true),
+              isTrue,
+              reason: name);
+          await output.close();
+          expect(File(path).readAsBytesSync(), equals(expected), reason: name);
+
+          final data = Uint8List.fromList(built.bytes);
+          data[built.blocks[1].checkOffset(size)] ^= 0xff;
+          output = OutputFileStream(path);
+          expect(
+              () => XZDecoder().decodeStream(InputMemoryStream(data), output,
+                  verify: true, throwOnError: true),
+              throwsA(isA<ArchiveException>()
+                  .having((e) => e.message, 'message', contains(reason))),
+              reason: name);
+          await output.close();
+        }
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
     });
 
     test('verifies CRC32 while streaming the output back', () async {
@@ -420,6 +517,24 @@ void main() {
           dir.deleteSync(recursive: true);
         }
       });
+    });
+
+    test('decodeStream on workers consumes the input', () async {
+      final compressed = fixture('blocks');
+      final memory = InputMemoryStream(compressed);
+      expect(
+          await decodeStreamOnIsolates(memory, OutputMemoryStream(),
+              workers: 2),
+          isTrue);
+      expect(memory.isEOS, isTrue);
+
+      final file = InputFileStream('test/_data/xz/parallel/blocks.xz');
+      final ok =
+          await decodeStreamOnIsolates(file, OutputMemoryStream(), workers: 2);
+      final eos = file.isEOS;
+      await file.close();
+      expect(ok, isTrue);
+      expect(eos, isTrue);
     });
 
     test('one worker still decodes the whole archive', () async {

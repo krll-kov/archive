@@ -9,15 +9,10 @@ import 'dart:typed_data';
 // the analyser has no platform in mind, and that one has no path.
 import '../../util/_file_handle_io.dart';
 import '../../util/archive_exception.dart';
-import '../../util/byte_order.dart';
 import '../../util/cancellable_stream.dart';
-import '../../util/crc32.dart';
-import '../../util/crc64.dart';
 import '../../util/input_file_stream.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
-import '../../util/output_stream.dart';
-import '../../util/sha256.dart';
 import 'xz_block_dispatch.dart';
 import 'xz_chunked.dart';
 import 'xz_index.dart';
@@ -81,9 +76,6 @@ class _XZFileSource extends XZByteSource {
   }
 }
 
-// Chunks worker output to prevent massive memory spikes, keeping overhead at
-// 4MB instead of holding entire decoded blocks in memory at the cost of a memcpy
-const _stagingSize = 4 * 1024 * 1024;
 
 // The largest block header the format allows, (255 + 1) * 4.
 const _maxBlockHeaderSize = 1024;
@@ -271,7 +263,7 @@ int _pickWorkerCount({
     }
   }
 
-  final perWorker = compressed + dictionaryCap + _stagingSize + reorder;
+  final perWorker = compressed + dictionaryCap + xzStagingSize + reorder;
   if (perWorker > 0) {
     var affordable = (memoryBudget ?? xzDefaultMemoryBudget) ~/ perWorker;
     if (affordable < 1) {
@@ -814,7 +806,7 @@ class _StreamDispatch implements XzBlockDispatch {
       final dictionary = dictionarySize > 0 && dictionarySize < 0x40000000
           ? xzDictionaryCap(dictionarySize)
           : 0;
-      perWorker = bytes.length + dictionary + _stagingSize + uncompressedLength;
+      perWorker = bytes.length + dictionary + xzStagingSize + uncompressedLength;
     }
   }
 }
@@ -971,7 +963,7 @@ void _xzWorker(SendPort toMain) {
   final checkType = streamFlags & 0xf;
   // Verifying never holds the whole block
   final verifyHere = verify && kind == _kindBlock;
-  final sink = _BlockSink(onPiece, outputOffset, verifyHere ? checkType : 0);
+  final sink = XzBlockSink(onPiece, outputOffset, verifyHere ? checkType : 0);
   try {
     if (kind == _kindBlock) {
       final result = decodeXZBlock(input, streamFlags, sink,
@@ -1009,127 +1001,4 @@ void _xzWorker(SendPort toMain) {
     }
   }
   return (ok: ok, reason: reason);
-}
-
-/// An [OutputStream] that hands what it is given to [_onPiece] in pieces.
-class _BlockSink extends OutputStream {
-  final void Function(int offset, Uint8List piece) _onPiece;
-  final int _outputOffset;
-
-  /// Check type to accumulate, or 0 to accumulate nothing.
-  final int _checkType;
-
-  final Uint8List _staging = Uint8List(_stagingSize);
-  int _staged = 0;
-  int _emitted = 0;
-  int _crc = 0;
-  final _sha256 = Sha256();
-
-  _BlockSink(this._onPiece, this._outputOffset, this._checkType)
-      : super(byteOrder: ByteOrder.littleEndian);
-
-  @override
-  int get length => _emitted + _staged;
-
-  @override
-  void writeByte(int value) {
-    if (_staged == _stagingSize) {
-      flush();
-    }
-    _staging[_staged++] = value;
-  }
-
-  @override
-  void writeBytes(List<int> bytes, {int? length}) {
-    length ??= bytes.length;
-    if (length <= 0) {
-      return;
-    }
-
-    // tood profile: check Uint8List(length)..setRange(0, length, bytes)); ??
-    if (length >= _stagingSize) {
-      flush();
-      _emit(bytes is Uint8List
-          ? Uint8List.sublistView(bytes, 0, length)
-          : Uint8List.fromList(bytes.sublist(0, length)));
-      return;
-    }
-
-    if (_staged + length > _stagingSize) {
-      flush();
-    }
-    _staging.setRange(_staged, _staged + length, bytes);
-    _staged += length;
-  }
-
-  @override
-  void writeStream(InputStream stream) => writeBytes(stream.toUint8List());
-
-  @override
-  void flush() {
-    if (_staged == 0) {
-      return;
-    }
-    _emit(Uint8List.sublistView(_staging, 0, _staged));
-    _staged = 0;
-  }
-
-  void _emit(Uint8List view) {
-    if (view.isEmpty) {
-      return;
-    }
-    if (_checkType == 0x1) {
-      _crc = getCrc32(view, _crc);
-    } else if (_checkType == 0x4 && isCrc64Supported()) {
-      _crc = getCrc64(view, _crc);
-    } else if (_checkType == 0xa) {
-      _sha256.update(view, 0, view.length);
-    }
-    _onPiece(_outputOffset + _emitted, view);
-    _emitted += view.length;
-  }
-
-  /// Compares the accumulated checksum with the [checkField] stored in the
-  /// block. Check types that cannot be verified pass.
-  bool checkMatches(Uint8List checkField) {
-    if (_checkType == 0xa) {
-      if (checkField.length != 32) {
-        return false;
-      }
-      final actual = _sha256.digest();
-      for (var i = 0; i < 32; i++) {
-        if (actual[i] != checkField[i]) {
-          return false;
-        }
-      }
-      return true;
-    }
-    if (_checkType != 0x1 && _checkType != 0x4) {
-      return true;
-    }
-    if (_checkType == 0x4 && !isCrc64Supported()) {
-      return true;
-    }
-    if (checkField.isEmpty) {
-      return false;
-    }
-
-    var expected = 0;
-    for (var i = checkField.length - 1; i >= 0; i--) {
-      expected = (expected << 8) | checkField[i];
-    }
-    return expected == _crc;
-  }
-
-  @override
-  void clear() =>
-      throw UnsupportedError('An xz worker sink cannot be rewritten');
-
-  @override
-  Uint8List subset(int start, [int? end]) =>
-      throw UnsupportedError('An xz worker sink cannot be read back');
-
-  @override
-  void writeBackReference(int distance, int count) =>
-      throw UnsupportedError('An xz worker sink cannot be read back');
 }
