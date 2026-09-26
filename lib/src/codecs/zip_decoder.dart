@@ -54,7 +54,7 @@ class ZipDecoder {
 
       // Zips from Windows leave the Unix mode at 0, and extractFileToDisk then
       // chmod'ed every file to 000, so such entries keep the default mode
-      if (entryMode & 0x1ff != 0) {
+      if (entryMode != 0) {
         entry.mode = entryMode;
       }
 

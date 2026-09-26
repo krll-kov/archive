@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -7,7 +8,36 @@ import 'package:archive/src/codecs/zstd/zstd_sequences_encoder.dart';
 import 'package:archive/src/codecs/zstd_decoder.dart';
 import 'package:archive/src/codecs/zstd_encoder.dart';
 import 'package:archive/src/util/crc32.dart';
+import 'package:archive/src/util/input_memory_stream.dart';
+import 'package:archive/src/util/output_memory_stream.dart';
 import 'package:test/test.dart';
+
+Uint8List _literalBlock() {
+  final bytes = Uint8List(131072);
+  final digits = Uint8List(4);
+  var written = 0;
+  void fill(int at, int period) {
+    if (written == 131063) return;
+    if (at > 3) {
+      if (3 % period == 0) {
+        for (var i = 1; i <= period && written < 131063; i++) {
+          bytes[written++] = digits[i] + 128;
+        }
+      }
+      return;
+    }
+    digits[at] = digits[at - period];
+    fill(at + 1, period);
+    for (var value = digits[at - period] + 1; value < 64; value++) {
+      digits[at] = value;
+      fill(at + 1, at);
+    }
+  }
+
+  fill(1, 1);
+  bytes.setRange(131067, 131072, bytes);
+  return bytes;
+}
 
 // The decoder side of dictionaries is checked against libzstd's own frames in
 // zstd_dictionary_test.dart, so a frame this encoder writes that reads back
@@ -55,6 +85,43 @@ void main() {
           ZstdEncoder(level: 1, checksum: false, dictionary: dictionary)
               .encodeBytes(content);
       expect(encoded, reference);
+    });
+
+    test('a dictionary shorter than eight bytes still sizes the parameters',
+        () {
+      final content = Uint8List.fromList(
+          List<int>.generate(16383, (i) => (i * 7 + i ~/ 23) % 11));
+      final encoder = ZstdEncoder(
+          level: 6, checksum: false, dictionary: ZstdDictionary(Uint8List(7)));
+      final streamed = OutputMemoryStream();
+      encoder.encodeStream(InputMemoryStream(content), streamed);
+      for (final encoded in [encoder.encodeBytes(content), streamed.getBytes()]) {
+        expect(encoded.length, 236);
+        expect(getCrc32(encoded), 2451839013);
+      }
+    });
+
+    test('a block of only literals is priced like the reference', () {
+      final header = base64Decode(
+          'N6Qw7DkwAAAMEPhsB/+7OP9CSClTIyAgICAgEAgEAoFAIBAIBAKBQCAQCAQCgUAgEPwD'
+          'JECAAAECBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB'
+          'AT+AyRAgAABAgQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBP4D+/8BAAQAAAAIAAAA');
+      final dictionary = ZstdDictionary(
+          Uint8List(header.length + 131072)..setAll(0, header));
+      final content = _literalBlock();
+      for (var level = 16; level <= 22; level++) {
+        final encoder =
+            ZstdEncoder(level: level, checksum: false, dictionary: dictionary);
+        final streamed = OutputMemoryStream();
+        encoder.encodeStream(InputMemoryStream(content), streamed);
+        for (final encoded in [
+          encoder.encodeBytes(content),
+          streamed.getBytes()
+        ]) {
+          expect(encoded.length, 96795, reason: 'level $level');
+          expect(getCrc32(encoded), 458182041, reason: 'level $level');
+        }
+      }
     });
 
     test('a literal-only block preserves dictionary sequence tables', () {

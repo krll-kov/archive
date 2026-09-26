@@ -219,6 +219,9 @@ class ZstdOptPrices {
     if (_predef) {
       return _weight(litLength);
     }
+    if (litLength == zstdBlockMaximumSize) {
+      return (1 << zstdPriceBits) + litLengthPrice(zstdBlockMaximumSize - 1);
+    }
     final code = zstdLiteralsLengthCode(litLength);
     return (zstdLiteralsLengthExtraBits[code] << zstdPriceBits) +
         _litLengthBase -

@@ -22,11 +22,16 @@ Uint8List _source(int length, int seed) {
   return bytes;
 }
 
+// lastModTime takes DateTime.now() on first read, so two lists encoded in
+// different seconds gave different tars, and each entry gets fixed time
 List<ArchiveFile> _entries() => [
-      ArchiveFile.string('readme.txt', 'the first entry'),
-      ArchiveFile.bytes('binary.dat', _source(70000, 3)),
-      ArchiveFile.bytes('small.dat', _source(7, 5)),
-      ArchiveFile.bytes('again.dat', _source(200000, 9)),
+      ArchiveFile.string('readme.txt', 'the first entry')
+        ..lastModTime = 1700000000,
+      ArchiveFile.bytes('binary.dat', _source(70000, 3))
+        ..lastModTime = 1700000000,
+      ArchiveFile.bytes('small.dat', _source(7, 5))..lastModTime = 1700000000,
+      ArchiveFile.bytes('again.dat', _source(200000, 9))
+        ..lastModTime = 1700000000,
     ];
 
 Archive _archiveOf(List<ArchiveFile> entries) {
@@ -770,6 +775,15 @@ class _ObservedInput extends InputMemoryStream {
   int readInto(Uint8List into, int at, int count) {
     final got = super.readInto(into, at, count);
     onRead(got);
+    return got;
+  }
+
+  // Tar converter reads entry body through readBytes, so counter stayed at 0
+  // after full 1 MiB read and let emit test pass without checking anything
+  @override
+  InputStream readBytes(int count) {
+    final got = super.readBytes(count);
+    onRead(got.length);
     return got;
   }
 }

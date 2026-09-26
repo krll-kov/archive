@@ -55,7 +55,8 @@ class ZstdFrameEncoder {
     final prefix = dict?.content.length ?? 0;
     // `ZSTD_getCParamRowSize` and `ZSTD_adjustCParams_internal` both size the
     // frame by the dictionary buffer, headers and all, not by its content
-    final params = zstdParamsForLevel(level, size + (dict?.sourceSize ?? 0));
+    final params =
+        zstdParamsForLevel(level, size + (dictionary?.sourceSize ?? 0));
     // A frame that fits its level's window declares the content instead, which
     // costs a decoder nothing extra and saves the window field
     final singleSegment = size <= (1 << params.windowLog);

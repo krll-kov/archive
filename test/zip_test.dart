@@ -891,6 +891,30 @@ void main() async {
       }
     });
 
+    test('a zip made on Unix keeps a mode with no permission bits', () {
+      Uint8List unixZip(String name, String content, int mode) {
+        final bytes = ZipEncoder().encodeBytes(
+            Archive()..add(ArchiveFile.string(name, content)..mode = mode));
+        final directory = ByteData.sublistView(bytes)
+            .getUint32(bytes.length - 6, Endian.little);
+        bytes[directory + 5] = 3;
+        return bytes;
+      }
+
+      final file = ZipDecoder()
+          .decodeBytes(unixZip('private.txt', 'private', 0x8000))
+          .files
+          .single;
+      expect(file.mode, 0x8000);
+      expect(file.unixPermissions, 0);
+      final link = ZipDecoder()
+          .decodeBytes(unixZip('link', 'target.txt', 0xa000))
+          .files
+          .single;
+      expect(link.isSymbolicLink, isTrue);
+      expect(link.symbolicLink, 'target.txt');
+    });
+
     test('encode keeps lzma entries of a decoded zip', () {
       final decoded = ZipDecoder()
           .decodeBytes(File('test/_data/zip/lzma.zip').readAsBytesSync());
