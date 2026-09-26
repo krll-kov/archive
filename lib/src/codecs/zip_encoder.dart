@@ -6,6 +6,7 @@ import '../archive/archive.dart';
 import '../archive/archive_file.dart';
 import '../archive/compression_type.dart';
 import '../util/aes.dart';
+import '../util/chunked_sink.dart';
 import '../util/crc32.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
@@ -17,6 +18,16 @@ import 'zip/zip_file.dart';
 import 'zip/zip_file_header.dart';
 import 'zlib/_zlib_encoder.dart';
 import 'zlib/deflate.dart';
+
+class _Crc32Sink implements Sink<List<int>> {
+  var value = 0;
+
+  @override
+  void add(List<int> data) => value = getCrc32(data, value);
+
+  @override
+  void close() {}
+}
 
 class _ZipFileData {
   late String name;
@@ -163,7 +174,16 @@ class ZipEncoder {
     if (content == null) {
       return 0;
     }
-    final s = content.getStream(decompress: true);
+    // Crc is updated from decompressed output for RAM efficiency: 498 MB
+    // against 80 MB on 200 MB file
+    if (content.isCompressed) {
+      final crc = _Crc32Sink();
+      final output = SinkOutputStream(crc);
+      content.decompress(output);
+      output.flush();
+      return crc.value;
+    }
+    final s = content.getStream(decompress: false);
     s.reset();
     var crc32 = 0;
     var size = s.length;

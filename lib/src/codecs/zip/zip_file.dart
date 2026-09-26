@@ -382,7 +382,9 @@ class ZipFile extends FileContent {
     for (var i = 0; i < 12; ++i) {
       _decodeByte(_rawContent!.readByte());
     }
-    final bytes = Uint8List.fromList(_rawContent!.toUint8List());
+    final bytes = _rawContent is InputMemoryStream
+        ? Uint8List.fromList(_rawContent!.toUint8List())
+        : _rawContent!.toUint8List();
     for (var i = 0; i < bytes.length; ++i) {
       final temp = bytes[i] ^ _decryptByte();
       _updateKeys(temp);
@@ -411,7 +413,11 @@ class ZipFile extends FileContent {
     final verify = input.readBytes(2).toUint8List();
     final dataBytes = input.readBytes(input.length - 10);
     final dataMac = input.readBytes(10);
-    final bytes = Uint8List.fromList(dataBytes.toUint8List());
+    // InputMemoryStream gives view into buffer, and decrypting it in
+    // place corrupts zip. InputFileStream gives new bytes
+    final bytes = dataBytes is InputMemoryStream
+        ? Uint8List.fromList(dataBytes.toUint8List())
+        : dataBytes.toUint8List();
 
     final derivedKey = deriveKey(_password!, salt, derivedKeyLength: keySize);
     final keyData = Uint8List.fromList(derivedKey.sublist(0, keySize));
