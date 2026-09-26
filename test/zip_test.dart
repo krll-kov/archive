@@ -792,6 +792,72 @@ void main() async {
       }
     });
 
+    test('decrypting leaves the input bytes as they were', () {
+      for (final name in ['aes256.zip', 'zipCrypto.zip']) {
+        final bytes = File('test/_data/zip/$name').readAsBytesSync();
+        final original = Uint8List.fromList(bytes);
+        for (var pass = 0; pass < 2; pass++) {
+          final archive = ZipDecoder().decodeBytes(bytes, password: '12345');
+          for (final f in archive.files) {
+            expect(f.readBytes(), isNotNull, reason: '$name ${f.name}');
+          }
+        }
+        expect(bytes, original, reason: name);
+      }
+    });
+
+    test('an AES zip without a stored CRC passes verifyCrc32', () {
+      for (final (name, password) in [
+        ('aes256.zip', '12345'),
+        ('lzma_aes.zip', 'secret')
+      ]) {
+        final archive = ZipDecoder().decodeBytes(
+            File('test/_data/zip/$name').readAsBytesSync(),
+            password: password);
+        for (final f in archive.files.where((f) => f.isFile)) {
+          expect((f.rawContent! as ZipFile).verifyCrc32(), isTrue,
+              reason: '$name ${f.name}');
+        }
+      }
+
+      final bytes = File('test/_data/zip/aes256.zip').readAsBytesSync();
+      final decoder = ZipDecoder()..decodeBytes(bytes, password: '12345');
+      final header = decoder.directory.fileHeaders
+          .firstWhere((h) => h.filename == 'readme.notzip');
+      final local = header.localHeaderOffset;
+      final data = local +
+          30 +
+          (bytes[local + 26] | bytes[local + 27] << 8) +
+          (bytes[local + 28] | bytes[local + 29] << 8);
+      bytes[data + 18 + (header.compressedSize - 28) ~/ 2] ^= 0xff;
+      final tampered = ZipDecoder()
+          .decodeBytes(bytes, password: '12345')
+          .files
+          .firstWhere((f) => f.name == 'readme.notzip');
+      expect(() => (tampered.rawContent! as ZipFile).verifyCrc32(),
+          throwsException);
+    });
+
+    test('an AES zip encoded again has the CRC of its content', () {
+      for (final (name, password) in [
+        ('aes256.zip', '12345'),
+        ('lzma_aes.zip', 'secret')
+      ]) {
+        for (final newPassword in [null, 'new password']) {
+          final decoded = ZipDecoder().decodeBytes(
+              File('test/_data/zip/$name').readAsBytesSync(),
+              password: password);
+          final encoded =
+              ZipEncoder(password: newPassword).encodeBytes(decoded);
+          final again = ZipDecoder().decodeBytes(encoded, password: newPassword);
+          for (final f in again.files.where((f) => f.isFile)) {
+            expect(f.crc32, getCrc32(f.readBytes()!),
+                reason: '$name ${f.name} $newPassword');
+          }
+        }
+      }
+    });
+
     test('password', () {
       var file = File(p.join('test/_data/zip/password_zipcrypto.zip'));
       var bytes = file.readAsBytesSync();

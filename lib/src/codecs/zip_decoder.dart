@@ -73,7 +73,7 @@ class ZipDecoder {
       }
 
       entry
-        ..crc32 = zf.crc32
+        ..crc32 = zf.hasCrc32 ? zf.crc32 : null
         ..lastModTime = zf.lastModFileDate << 16 | zf.lastModFileTime;
 
       if (callback != null) {

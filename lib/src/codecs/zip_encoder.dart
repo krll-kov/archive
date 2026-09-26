@@ -163,7 +163,7 @@ class ZipEncoder {
     if (content == null) {
       return 0;
     }
-    final s = content.getStream(decompress: false);
+    final s = content.getStream(decompress: true);
     s.reset();
     var crc32 = 0;
     var size = s.length;

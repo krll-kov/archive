@@ -74,6 +74,8 @@ class ZipFile extends FileContent {
   bool get isCompressed =>
       _rawContent != null && compressionMethod != CompressionType.none;
 
+  bool get hasCrc32 => _aesHeader?.vendorVersion != 2;
+
   void read(InputStream input, {String? password}) {
     final sig = input.readUint32();
     if (sig != zipSignature) {
@@ -201,7 +203,7 @@ class ZipFile extends FileContent {
   bool verifyCrc32() {
     final contentStream = getStream();
     _computedCrc32 ??= getCrc32(contentStream.toUint8List());
-    return _computedCrc32 == crc32;
+    return !hasCrc32 || _computedCrc32 == crc32;
   }
 
   @override
@@ -380,7 +382,7 @@ class ZipFile extends FileContent {
     for (var i = 0; i < 12; ++i) {
       _decodeByte(_rawContent!.readByte());
     }
-    final bytes = _rawContent!.toUint8List();
+    final bytes = Uint8List.fromList(_rawContent!.toUint8List());
     for (var i = 0; i < bytes.length; ++i) {
       final temp = bytes[i] ^ _decryptByte();
       _updateKeys(temp);
@@ -409,7 +411,7 @@ class ZipFile extends FileContent {
     final verify = input.readBytes(2).toUint8List();
     final dataBytes = input.readBytes(input.length - 10);
     final dataMac = input.readBytes(10);
-    final bytes = dataBytes.toUint8List();
+    final bytes = Uint8List.fromList(dataBytes.toUint8List());
 
     final derivedKey = deriveKey(_password!, salt, derivedKeyLength: keySize);
     final keyData = Uint8List.fromList(derivedKey.sublist(0, keySize));
