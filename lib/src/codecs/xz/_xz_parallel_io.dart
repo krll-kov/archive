@@ -1070,7 +1070,20 @@ void _xzWorker(SendPort toMain) {
       uncompressedLength != null && uncompressedLength < xzStagingSize
           ? (uncompressedLength < 1 ? 1 : uncompressedLength)
           : xzStagingSize;
-  final sink = XzBlockSink(onPiece, outputOffset, verifyHere ? checkType : 0,
+  var sent = 0;
+  void bounded(int at, Uint8List piece) {
+    final room = uncompressedLength == null
+        ? piece.length
+        : uncompressedLength - sent;
+    final keep = piece.length < room ? piece.length : (room < 0 ? 0 : room);
+    sent += keep;
+    if (keep > 0) {
+      onPiece(at,
+          keep == piece.length ? piece : Uint8List.sublistView(piece, 0, keep));
+    }
+  }
+
+  final sink = XzBlockSink(bounded, outputOffset, verifyHere ? checkType : 0,
       stagingSize: stagingSize);
   try {
     if (kind == _kindBlock) {

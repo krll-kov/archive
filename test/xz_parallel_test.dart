@@ -427,6 +427,72 @@ void main() {
         expect(await fromStream.future, isA<ArchiveException>());
       });
 
+      test('a block that decodes past its index size stays in its own place',
+          () async {
+        final data = Uint8List.fromList([
+          for (final text in ['one\n', 'two\n', 'three\n'])
+            ...XZEncoder().encodeBytes(Uint8List.fromList(text.codeUnits)),
+        ]);
+        final blocks = blocksOf(data);
+        expect(blocks.length, 3);
+        final at = blocks[0].dataOffset;
+        expect(data[at], 1);
+        data[at + 1] ^= 0x01;
+        final results = <Uint8List>[];
+        for (var run = 0; run < 4; run++) {
+          final done = Completer<Uint8List>();
+          XZDecoder().decodeBytes(data,
+              multithread: XZMultithreadOptions<Uint8List>(
+                onDone: done.complete,
+                onError: (e, s) => done.completeError(e, s),
+                workers: 4,
+              ));
+          results.add(await done.future);
+        }
+        for (final result in results) {
+          expect(result.length, lessThanOrEqualTo(blocks[0].uncompSize));
+          expect(result, results.first);
+        }
+      });
+
+      test('a truncated archive read from a file fails instead of hanging',
+          () async {
+        final dir = Directory.systemTemp.createTempSync('xz_truncated');
+        addTearDown(() => dir.deleteSync(recursive: true));
+        final path = '${dir.path}/a.xz';
+        for (final archive in [
+          XZEncoder().encodeBytes(Uint8List(0)),
+          XZEncoder().encodeBytes(Uint8List.fromList('hello'.codeUnits)),
+        ]) {
+          for (var length = 0; length < archive.length; length++) {
+            File(path).writeAsBytesSync(Uint8List.sublistView(archive, 0, length));
+            final single = InputFileStream(path);
+            expect(
+                () => XZDecoder().decodeStream(single, OutputMemoryStream(),
+                    verify: true, throwOnError: true),
+                throwsA(isA<ArchiveException>()),
+                reason: 'length $length');
+            single.closeSync();
+
+            final threaded = InputFileStream(path);
+            final result = Completer<Object?>();
+            XZDecoder().decodeStream(threaded, OutputMemoryStream(),
+                verify: true,
+                throwOnError: true,
+                multithread: XZMultithreadOptions<bool>(
+                  onDone: (r) => result.complete(r),
+                  onError: (e, _) => result.complete(e),
+                  workers: 2,
+                ));
+            expect(
+                await result.future.timeout(const Duration(seconds: 10)),
+                isA<ArchiveException>(),
+                reason: 'length $length');
+            threaded.closeSync();
+          }
+        }
+      });
+
       test('a range coder that does not start at zero is refused on workers',
           () async {
         final data = Uint8List.fromList(pristine);
