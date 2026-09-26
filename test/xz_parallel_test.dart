@@ -306,6 +306,167 @@ void main() {
         expect(await completer.future, isA<ArchiveException>());
       });
 
+      test('a block shorter than its index entry is refused', () async {
+        final backward = ByteData.sublistView(pristine)
+            .getUint32(pristine.length - 8, Endian.little);
+        final size = (backward + 1) * 4;
+        final start = pristine.length - 12 - size;
+        var at = start + 1;
+        int readVli() {
+          var value = 0;
+          for (var shift = 0;; shift += 7) {
+            final byte = pristine[at++];
+            value |= (byte & 0x7f) << shift;
+            if (byte < 0x80) {
+              return value;
+            }
+          }
+        }
+
+        expect(readVli(), blocks.length);
+        readVli();
+        final field = at;
+        final uncompressed = readVli() + 1;
+        final data = Uint8List.fromList(pristine);
+        for (var i = field, v = uncompressed; i < at; i++, v >>= 7) {
+          data[i] = i + 1 < at ? 0x80 | (v & 0x7f) : v;
+        }
+        ByteData.sublistView(data).setUint32(start + size - 4,
+            getCrc32(data.sublist(start, start + size - 4)), Endian.little);
+        expect(() => XZDecoder().decodeBytes(data, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+
+        // Workers trusted index sizes, so this left zeros in decodeBytes
+        // output and cut decodeStream short with success
+        final fromBytes = Completer<Object?>();
+        XZDecoder().decodeBytes(data,
+            verify: true,
+            throwOnError: true,
+            multithread: XZMultithreadOptions<Uint8List>(
+              onDone: (r) => fromBytes.complete(r),
+              onError: (e, _) => fromBytes.complete(e),
+              workers: 4,
+            ));
+        expect(await fromBytes.future, isA<ArchiveException>());
+
+        final dir = Directory.systemTemp.createTempSync('xz_index_size');
+        addTearDown(() => dir.deleteSync(recursive: true));
+        final path = '${dir.path}/a.xz';
+        File(path).writeAsBytesSync(data);
+        final input = InputFileStream(path);
+        addTearDown(input.closeSync);
+        final fromStream = Completer<Object?>();
+        XZDecoder().decodeStream(input, OutputMemoryStream(),
+            verify: true,
+            throwOnError: true,
+            multithread: XZMultithreadOptions<bool>(
+              onDone: (r) => fromStream.complete(r),
+              onError: (e, _) => fromStream.complete(e),
+              workers: 4,
+            ));
+        expect(await fromStream.future, isA<ArchiveException>());
+      });
+
+      test('a block whose compressed size differs from the index is refused',
+          () async {
+        final backward = ByteData.sublistView(pristine)
+            .getUint32(pristine.length - 8, Endian.little);
+        final size = (backward + 1) * 4;
+        final start = pristine.length - 12 - size;
+        var at = start + 1;
+        int readVli() {
+          var value = 0;
+          for (var shift = 0;; shift += 7) {
+            final byte = pristine[at++];
+            value |= (byte & 0x7f) << shift;
+            if (byte < 0x80) {
+              return value;
+            }
+          }
+        }
+
+        expect(readVli(), blocks.length);
+        final field = at;
+        final unpadded = readVli();
+        expect(unpadded % 4, isNot(0));
+        final data = Uint8List.fromList(pristine);
+        for (var i = field, v = unpadded + 1; i < at; i++, v >>= 7) {
+          data[i] = i + 1 < at ? 0x80 | (v & 0x7f) : v;
+        }
+        ByteData.sublistView(data).setUint32(start + size - 4,
+            getCrc32(data.sublist(start, start + size - 4)), Endian.little);
+        expect(() => XZDecoder().decodeBytes(data, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+
+        final fromBytes = Completer<Object?>();
+        XZDecoder().decodeBytes(data,
+            verify: true,
+            throwOnError: true,
+            multithread: XZMultithreadOptions<Uint8List>(
+              onDone: (r) => fromBytes.complete(r),
+              onError: (e, _) => fromBytes.complete(e),
+              workers: 4,
+            ));
+        expect(await fromBytes.future, isA<ArchiveException>());
+
+        final dir = Directory.systemTemp.createTempSync('xz_index_unpadded');
+        addTearDown(() => dir.deleteSync(recursive: true));
+        final path = '${dir.path}/a.xz';
+        File(path).writeAsBytesSync(data);
+        final input = InputFileStream(path);
+        addTearDown(input.closeSync);
+        final fromStream = Completer<Object?>();
+        XZDecoder().decodeStream(input, OutputMemoryStream(),
+            verify: true,
+            throwOnError: true,
+            multithread: XZMultithreadOptions<bool>(
+              onDone: (r) => fromStream.complete(r),
+              onError: (e, _) => fromStream.complete(e),
+              workers: 4,
+            ));
+        expect(await fromStream.future, isA<ArchiveException>());
+      });
+
+      test('a range coder that does not start at zero is refused on workers',
+          () async {
+        final data = Uint8List.fromList(pristine);
+        final at = blocks[1].dataOffset;
+        expect(data[at], greaterThanOrEqualTo(0xe0));
+        data[at + 6] ^= 0x01;
+        expect(
+            () =>
+                XZDecoder().decodeBytes(data, verify: true, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+
+        final strict = Completer<Object?>();
+        XZDecoder().decodeBytes(data,
+            verify: true,
+            throwOnError: true,
+            multithread: XZMultithreadOptions<Uint8List>(
+              onDone: (r) => strict.complete(r),
+              onError: (e, _) => strict.complete(e),
+              workers: 4,
+            ));
+        expect(await strict.future, isA<ArchiveException>());
+        await expectLater(
+            const XzCodec(
+                    multithread: XZMultithreadOptions.converter(workers: 4))
+                .decoder
+                .bind(Stream<List<int>>.value(data))
+                .toList(),
+            throwsA(isA<ArchiveException>()));
+
+        final loose = Completer<Object?>();
+        XZDecoder().decodeBytes(data,
+            throwOnError: true,
+            multithread: XZMultithreadOptions<Uint8List>(
+              onDone: (r) => loose.complete(r),
+              onError: (e, _) => loose.complete(e),
+              workers: 4,
+            ));
+        expect(await loose.future, XZDecoder().decodeBytes(data));
+      });
+
       // Whatever a failed decode hands back has to be genuine as far as it
       // goes: a prefix of the real data, never bytes that were never there.
       void expectGenuinePrefix(Uint8List result, String label) {

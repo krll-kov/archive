@@ -8,7 +8,6 @@ const _prime5 = 0x27d4eb2f165667c5;
 
 bool isXxh64Supported_() => true;
 
-/// Streaming XXH64, the checksum zstd frames carry
 class Xxh64 {
   final int _seed;
   int _v1;

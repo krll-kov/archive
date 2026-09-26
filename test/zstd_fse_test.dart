@@ -1,3 +1,6 @@
+@TestOn('vm || wasm')
+library;
+
 import 'dart:typed_data';
 
 import 'package:archive/src/codecs/zstd/_zstd_sequences_html.dart' as html;

@@ -48,12 +48,15 @@ class XZBlockLayout {
   /// check type, which every block in a stream shares.
   final int streamFlags;
 
+  final int unpaddedLength;
+
   const XZBlockLayout({
     required this.compressedOffset,
     required this.compressedLength,
     required this.outputOffset,
     required this.uncompressedLength,
     required this.streamFlags,
+    required this.unpaddedLength,
   });
 
   /// The type of integrity check stored at the end of the block.
@@ -218,6 +221,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
           outputOffset: total,
           uncompressedLength: uncompressedLength,
           streamFlags: streamFlags,
+          unpaddedLength: unpaddedLength,
         ));
 
         blocksSize += paddedLength;
@@ -268,6 +272,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
           outputOffset: block.outputOffset,
           uncompressedLength: block.uncompressedLength,
           streamFlags: block.streamFlags,
+          unpaddedLength: block.unpaddedLength,
         );
       }
       streams.add(blocks);
@@ -295,6 +300,7 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         outputOffset: outputOffset,
         uncompressedLength: block.uncompressedLength,
         streamFlags: block.streamFlags,
+        unpaddedLength: block.unpaddedLength,
       );
       outputOffset += block.uncompressedLength;
     }

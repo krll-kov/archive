@@ -103,7 +103,7 @@ void main() {
             reason: 'byte $at');
         out.closeSync();
       }
-    });
+    }, testOn: 'vm');
 
     test('multiblock', () async {
       final compressedData = [

@@ -142,8 +142,11 @@ Future<bool> xzDecodeMultithreaded({
             verify: verify,
             maxPreallocateSize: maxPreallocateSize,
             fileReadBufferSize: fileReadBufferSize,
+            uncompressedLength: block.uncompressedLength,
+            unpaddedLength: block.unpaddedLength,
           )
-      ], count, onChunk, onBlockDone, onFailureReason);
+      ], count, onChunk, onBlockDone, onFailureReason,
+          memoryBudget ?? xzDefaultMemoryBudget);
     }
   }
 
@@ -293,6 +296,8 @@ class _Job {
   final bool verify;
   final int maxPreallocateSize;
   final int fileReadBufferSize;
+  final int? uncompressedLength;
+  final int? unpaddedLength;
 
   const _Job({
     required this.kind,
@@ -305,6 +310,8 @@ class _Job {
     required this.verify,
     required this.maxPreallocateSize,
     required this.fileReadBufferSize,
+    this.uncompressedLength,
+    this.unpaddedLength,
   });
 
   /// Builds the message for this job.
@@ -331,6 +338,8 @@ class _Job {
       verify,
       fileReadBufferSize,
       maxPreallocateSize,
+      uncompressedLength,
+      unpaddedLength,
     ];
   }
 
@@ -344,11 +353,68 @@ Future<bool> _runJobs(
     int workerCount,
     void Function(int outputOffset, Uint8List chunk) onChunk,
     void Function(int outputOffset, bool ok)? onBlockDone,
-    void Function(String reason)? onFailureReason) async {
+    void Function(String reason)? onFailureReason,
+    [int? memoryBudget]) async {
   final receive = ReceivePort();
   final isolates = <Isolate>[];
   final completer = Completer<bool>();
   final pending = Queue<int>()..addAll(Iterable<int>.generate(jobs.length));
+  final costs = List<int?>.filled(jobs.length, null);
+  final costOf = <SendPort, int>{};
+  final idle = <SendPort>[];
+  var inFlight = 0;
+  RandomAccessFile? headerFile;
+
+  int costOfJob(int index) {
+    final cached = costs[index];
+    if (cached != null) {
+      return cached;
+    }
+    final job = jobs[index];
+    var dictionary = 0;
+    try {
+      final length =
+          job.length < _maxBlockHeaderSize ? job.length : _maxBlockHeaderSize;
+      final bytes = job.bytes;
+      final Uint8List header;
+      if (bytes != null) {
+        header = Uint8List.sublistView(bytes, job.offset, job.offset + length);
+      } else {
+        final file = headerFile ??= File(job.path!).openSync();
+        file.setPositionSync(job.offset);
+        header = file.readSync(length);
+      }
+      final size = xzBlockDictionarySize(header);
+      if (size > 0 && size < 0x40000000) {
+        dictionary = xzDictionaryCap(size);
+      }
+    } catch (_) {
+      // Unreadable header costs no dictionary, worker reports damaged block
+    }
+    final uncompressed = job.uncompressedLength ?? xzStagingSize;
+    final held = job.bytes != null ? job.length : job.fileReadBufferSize;
+    return costs[index] = held +
+        dictionary +
+        (uncompressed < xzStagingSize ? uncompressed : xzStagingSize);
+  }
+
+  // Worker count used dictionary of first 16 blocks only, so 20 `xz -0`
+  // blocks before `xz -9` ones held ~2x 128 MiB budget. Like liblzma
+  // memlimit_threading, each job waits until it fits, job over budget runs
+  // alone
+  void dispatch() {
+    while (idle.isNotEmpty && pending.isNotEmpty) {
+      final budget = memoryBudget;
+      final cost = budget == null ? 0 : costOfJob(pending.first);
+      if (budget != null && inFlight > 0 && inFlight + cost > budget) {
+        return;
+      }
+      final port = idle.removeLast();
+      inFlight += cost;
+      costOf[port] = cost;
+      port.send(jobs[pending.removeFirst()].toMessage());
+    }
+  }
 
   var remaining = jobs.length;
   var ok = true;
@@ -363,6 +429,9 @@ Future<bool> _runJobs(
     }
     finished = true;
     receive.close();
+    try {
+      headerFile?.closeSync();
+    } catch (_) {}
     // Killing outright is safe because a worker holds no operating system
     // resources between jobs: it opens and closes the archive within one.
     for (final isolate in isolates) {
@@ -433,10 +502,10 @@ Future<bool> _runJobs(
               return;
             }
           }
-          if (pending.isNotEmpty) {
-            final index = pending.removeFirst();
-            (message[1] as SendPort).send(jobs[index].toMessage());
-          }
+          final port = message[1] as SendPort;
+          inFlight -= costOf.remove(port) ?? 0;
+          idle.add(port);
+          dispatch();
           break;
       }
     } catch (error, stack) {
@@ -493,6 +562,7 @@ Stream<Uint8List> _xzDecodeStream(
   final isolates = <Isolate>[];
   final idleWorkers = <SendPort>[];
   var pool = 0;
+  var inFlight = 0;
 
   /// Spawned and not yet reported ready
   var starting = 0;
@@ -535,6 +605,7 @@ Stream<Uint8List> _xzDecodeStream(
       head.pieces.clear();
       dispatch.records.removeFirst();
       dispatch.byId.remove(head.id);
+      inFlight -= head.cost;
     }
   }
 
@@ -544,10 +615,16 @@ Stream<Uint8List> _xzDecodeStream(
   const aheadMax = 1 << 20;
 
   void pump() {
+    // Pool size from block 0 alone let 64 MiB blocks after small ones hold
+    // 1.2 GB under 256 MiB budget, so like liblzma memlimit_threading each
+    // block waits until it fits. Block over budget runs alone, as in liblzma
     while (idleWorkers.isNotEmpty &&
         dispatch.unsent.isNotEmpty &&
-        ready.bytes < aheadMax) {
+        ready.bytes < aheadMax &&
+        (inFlight == 0 ||
+            inFlight + dispatch.unsent.first.cost <= budget)) {
       final record = dispatch.unsent.removeFirst();
+      inFlight += record.cost;
       final bytes = record.bytes!;
       record.bytes = null;
       idleWorkers.removeLast().send(_Job(
@@ -561,6 +638,7 @@ Stream<Uint8List> _xzDecodeStream(
             verify: verify,
             maxPreallocateSize: budget,
             fileReadBufferSize: 0,
+            uncompressedLength: record.uncompressedLength,
           ).toMessage());
     }
   }
@@ -768,6 +846,7 @@ Stream<Uint8List> _xzDecodeStream(
 class _StreamBlock {
   final int id;
   final int streamFlags;
+  final int uncompressedLength;
 
   /// Cleared once the block is on its way to a worker
   Uint8List? bytes;
@@ -775,13 +854,19 @@ class _StreamBlock {
   var done = false;
   var ok = false;
   String? reason;
+  var cost = 0;
 
-  _StreamBlock(this.id, this.bytes, this.streamFlags);
+  _StreamBlock(this.id, this.bytes, this.streamFlags, this.uncompressedLength);
 }
 
 class _StreamDispatch implements XzBlockDispatch {
+  final int _maxBlockBytes;
+
+  /// Past 2^23 blocks `id << _idShift` overflows and converter hangs, so
+  /// parser decodes later blocks itself
   @override
-  final int maxBlockBytes;
+  int get maxBlockBytes =>
+      _next < 1 << (63 - _idShift) ? _maxBlockBytes : -1;
 
   /// Handed over and not yet written out, in stream order
   final records = ListQueue<_StreamBlock>();
@@ -790,7 +875,7 @@ class _StreamDispatch implements XzBlockDispatch {
   var _next = 0;
   var perWorker = 1;
 
-  _StreamDispatch(this.maxBlockBytes);
+  _StreamDispatch(this._maxBlockBytes);
 
   @override
   bool get idle => records.isEmpty;
@@ -798,10 +883,19 @@ class _StreamDispatch implements XzBlockDispatch {
   @override
   void block(Uint8List bytes, int streamFlags, int uncompressedLength,
       int dictionarySize) {
-    final record = _StreamBlock(_next++, bytes, streamFlags);
+    final record =
+        _StreamBlock(_next++, bytes, streamFlags, uncompressedLength);
     records.add(record);
     unsent.add(record);
     byId[record.id] = record;
+    record.cost = bytes.length +
+        (dictionarySize > 0 && dictionarySize < 0x40000000
+            ? xzDictionaryCap(dictionarySize)
+            : 0) +
+        (uncompressedLength < xzStagingSize
+            ? uncompressedLength
+            : xzStagingSize) +
+        uncompressedLength;
     if (record.id == 0) {
       final dictionary = dictionarySize > 0 && dictionarySize < 0x40000000
           ? xzDictionaryCap(dictionarySize)
@@ -887,6 +981,8 @@ void _xzWorker(SendPort toMain) {
     final verify = job[8] as bool;
     final fileReadBufferSize = job[9] as int;
     final maxPreallocateSize = job[10] as int;
+    final uncompressedLength = job[11] as int?;
+    final unpaddedLength = job[12] as int?;
 
     // Failing to get hold of the compressed data is a failure of the decode
     // itself rather than a statement about the archive, so it is reported as
@@ -930,6 +1026,8 @@ void _xzWorker(SendPort toMain) {
         verify: verify,
         maxPreallocateSize: maxPreallocateSize,
         outputOffset: outputOffset,
+        uncompressedLength: uncompressedLength,
+        unpaddedLength: unpaddedLength,
         onPiece: (at, piece) => toMain.send([_msgChunk, at, piece]));
     file?.closeSync();
     toMain.send([
@@ -956,20 +1054,31 @@ void _xzWorker(SendPort toMain) {
   required bool verify,
   required int maxPreallocateSize,
   required int outputOffset,
+  required int? uncompressedLength,
+  required int? unpaddedLength,
   required void Function(int offset, Uint8List piece) onPiece,
 }) {
   var ok = false;
   String? reason;
+  var decodedUnpadded = -1;
   final checkType = streamFlags & 0xf;
   // Verifying never holds the whole block
   final verifyHere = verify && kind == _kindBlock;
-  final sink = XzBlockSink(onPiece, outputOffset, verifyHere ? checkType : 0);
+  // Zeroing 4 MiB for every block cost ~720 µs per 1-byte block, so buffer
+  // stops at block size
+  final stagingSize =
+      uncompressedLength != null && uncompressedLength < xzStagingSize
+          ? (uncompressedLength < 1 ? 1 : uncompressedLength)
+          : xzStagingSize;
+  final sink = XzBlockSink(onPiece, outputOffset, verifyHere ? checkType : 0,
+      stagingSize: stagingSize);
   try {
     if (kind == _kindBlock) {
       final result = decodeXZBlock(input, streamFlags, sink,
-          maxPreallocateSize: maxPreallocateSize);
+          maxPreallocateSize: maxPreallocateSize, verify: verify);
       ok = result.ok;
       reason = result.reason;
+      decodedUnpadded = result.unpaddedLength;
     } else {
       final decoder = XZStreamDecoder(
           verify: verify, maxPreallocateSize: maxPreallocateSize);
@@ -987,6 +1096,16 @@ void _xzWorker(SendPort toMain) {
       ok = false;
       reason ??= '$error';
     }
+  }
+  if (ok && unpaddedLength != null && decodedUnpadded != unpaddedLength) {
+    ok = false;
+    reason = 'Stream index compressed length mismatch';
+  }
+  // Block shorter than its index entry left zeros in decodeBytes output and
+  // made decodeStream stop early with success, so we fail such block here
+  if (ok && uncompressedLength != null && sink.length != uncompressedLength) {
+    ok = false;
+    reason = 'Stream index uncompressed length mismatch';
   }
   if (ok && verifyHere) {
     try {

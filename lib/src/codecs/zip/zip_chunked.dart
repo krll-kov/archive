@@ -154,11 +154,14 @@ class ZipChunkedEncoder {
   late final _out = SinkOutputStream(output);
   var _closed = false;
 
-  void add(ArchiveFile entry) {
+  /// With `autoClose`, adding same entry again writes entry as 0 bytes
+  /// without error, since its `InputFileStream` is closed. Pass
+  /// `autoClose: false` to add entry more than once
+  void add(ArchiveFile entry, {bool autoClose = true}) {
     if (_closed) {
       throw StateError('Cannot add to a closed encoder');
     }
-    _encoder.add(entry);
+    _encoder.add(entry, autoClose: autoClose);
   }
 
   /// Writes [entry]'s local header and returns its body. Null if the entry is

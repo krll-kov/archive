@@ -86,6 +86,26 @@ void main() {
       expect(held.bytes.length, greaterThan(afterFirst));
       encoder.close();
     });
+
+    test('with autoClose off a file entry goes into a second archive', () {
+      final dir = Directory.systemTemp.createTempSync('zip_reuse');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final want = _source(70000, 13);
+      final path = '${dir.path}/a.bin';
+      File(path).writeAsBytesSync(want);
+      final input = InputFileStream(path);
+      addTearDown(input.closeSync);
+      final entry = ArchiveFile.stream('a.bin', input);
+      for (var round = 0; round < 2; round++) {
+        final held = _Held();
+        ZipChunkedEncoder(held)
+          ..add(entry, autoClose: false)
+          ..close();
+        expect(input.fileBuffer.isOpen, isTrue);
+        final back = ZipDecoder().decodeBytes(held.bytes, verify: true);
+        expect(back.files.single.content, want);
+      }
+    });
   });
 
   group('zip with the sizes behind the data, which is the default', () {

@@ -23,8 +23,7 @@ import 'xz_stream_decoder.dart';
 /// {@macro archive.yield_codecs.decoder}
 /// {@macro archive.yield_codecs.encoder}
 class XzDecoderConverter extends ChunkedConverter {
-  /// Unlike default decodeStream/decodeBytes, verify is on by default to match
-  /// gzip and zlib behaviour. Checks CRC or SHA-256 of evert block.
+  /// {@macro archive.xz.verify_default}
   final bool verify;
 
   /// `startChunkedConversion` cannot take this option. Its sink owes its output
@@ -84,8 +83,7 @@ class XzDecoderConverter extends ChunkedConverter {
 /// {@macro archive.yield_codecs.decoder}
 /// {@macro archive.yield_codecs.encoder}
 class XzCodec extends Codec<List<int>, List<int>> {
-  /// Unlike default decodeStream/decodeBytes, verify is on by default to match
-  /// gzip and zlib behaviour. Checks CRC or SHA-256 of evert block.
+  /// {@macro archive.xz.verify_default}
   final bool verify;
 
   final XZCheck check;
@@ -116,8 +114,7 @@ const xzCodec = XzCodec();
 /// {@macro archive.codecs.without_on_done}
 /// {@macro archive.yield_codecs.decoder}
 class XzChunkedDecoder extends ChunkedSink {
-  /// Unlike default decodeStream/decodeBytes, verify is on by default to match
-  /// gzip and zlib behaviour. Checks CRC or SHA-256 of evert block.
+  /// {@macro archive.xz.verify_default}
   final bool verify;
 
   /// Takes the blocks that can be decoded elsewhere. The threaded stream

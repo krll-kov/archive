@@ -15,17 +15,26 @@ import '../lzma/lzma_decoder.dart';
 
 /// Decodes the xz block at [input]'s current position, without verifying its check.
 /// Blocks are independent, so they can run in separate isolates.
-({bool ok, String? reason}) decodeXZBlock(
+({bool ok, String? reason, int unpaddedLength}) decodeXZBlock(
     InputStream input, int streamFlags, OutputStream output,
-    {required int maxPreallocateSize}) {
+    {required int maxPreallocateSize, bool verify = false}) {
   final headerByte = input.peekBytes(1).readByte();
   if (headerByte == 0) {
-    return (ok: false, reason: 'Expected a block but found the stream index');
+    return (
+      ok: false,
+      reason: 'Expected a block but found the stream index',
+      unpaddedLength: -1
+    );
   }
   final decoder = XZStreamDecoder(maxPreallocateSize: maxPreallocateSize)
-    ..streamFlags = streamFlags;
+    ..streamFlags = streamFlags
+    ..checkRangeCoderStart = verify;
   final ok = decoder.readBlock(input, output, (headerByte + 1) * 4);
-  return (ok: ok, reason: ok ? null : decoder.failureReason);
+  return (
+    ok: ok,
+    reason: ok ? null : decoder.failureReason,
+    unpaddedLength: ok ? decoder._blockSizes.last.unpaddedLength : -1
+  );
 }
 
 int xzDictionaryCap(int dictionarySize) =>
@@ -41,6 +50,8 @@ class XZStreamDecoder {
 
   // Stream flags, which are sent in both the header and the footer.
   var streamFlags = 0;
+
+  var checkRangeCoderStart = false;
 
   // Block sizes.
   final _blockSizes = <_XZBlockSize>[];
@@ -214,11 +225,7 @@ class XZStreamDecoder {
 
     final verifyCheck =
         verify && (checkType == 0x1 || checkType == 0x4 || checkType == 0xa);
-    // getCrc64 throws on web, where XzBlockSink skips CRC64, so there we keep
-    // branch below that holds whole block
-    final checked = verifyCheck &&
-            (checkType != 0x4 || isCrc64Supported()) &&
-            output is! OutputMemoryStream
+    final checked = verifyCheck && output is! OutputMemoryStream
         // Default 4 MiB buffer, allocated per block, cost 24% more cycles on
         // 1526 blocks of 64 KiB
         ? XzBlockSink((_, piece) => output.writeBytes(piece), 0, checkType,
@@ -615,7 +622,8 @@ class XZStreamDecoder {
             resetDictionary: reset == 3);
       }
 
-      if (verify && input.peekBytes(1).readByte() != 0) {
+      if ((verify || checkRangeCoderStart) &&
+          input.peekBytes(1).readByte() != 0) {
         return _fail('LZMA2 range coder does not start with 0');
       }
       decoder.decodeToOutput(
@@ -767,6 +775,7 @@ class XzBlockSink extends OutputStream {
   int _emitted = 0;
   int _crc = 0;
   final _sha256 = Sha256();
+  final _crc64 = Crc64();
 
   XzBlockSink(this._onPiece, this._outputOffset, this._checkType,
       {int stagingSize = xzStagingSize})
@@ -825,8 +834,8 @@ class XzBlockSink extends OutputStream {
     }
     if (_checkType == 0x1) {
       _crc = getCrc32(view, _crc);
-    } else if (_checkType == 0x4 && isCrc64Supported()) {
-      _crc = getCrc64(view, _crc);
+    } else if (_checkType == 0x4) {
+      _crc64.update(view);
     } else if (_checkType == 0xa) {
       _sha256.update(view, 0, view.length);
     }
@@ -852,8 +861,8 @@ class XzBlockSink extends OutputStream {
     if (_checkType != 0x1 && _checkType != 0x4) {
       return true;
     }
-    if (_checkType == 0x4 && !isCrc64Supported()) {
-      return true;
+    if (_checkType == 0x4) {
+      return checkField.length == 8 && _crc64.matches(checkField, 0);
     }
     if (checkField.isEmpty) {
       return false;

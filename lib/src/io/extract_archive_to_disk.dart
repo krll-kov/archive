@@ -21,10 +21,9 @@ import 'posix.dart' as posix;
 
 // Ensure filePath is contained in the outputDir folder, to make sure archives
 // aren't trying to write to some system path.
-bool _isWithinOutputPath(String outputDir, String filePath) {
-  final dir = _realPath(outputDir);
+bool _isWithinOutputPath(String? realOut, String filePath) {
   final file = _realPath(filePath);
-  return dir != null && file != null && path.isWithin(dir, file);
+  return realOut != null && file != null && path.isWithin(realOut, file);
 }
 
 /// canonicalize ignores symlinks out of outputPath, so we resolve them on disk
@@ -44,7 +43,7 @@ String? _realPath(String filePath) {
   }
 }
 
-bool _isValidSymLink(String outputPath, ArchiveFile file) {
+bool _isValidSymLink(String outputPath, String? realOut, ArchiveFile file) {
   final filePath =
       path.dirname(path.join(outputPath, path.normalize(file.name)));
   final linkPath = path.normalize(file.symbolicLink ?? "");
@@ -54,7 +53,7 @@ bool _isValidSymLink(String outputPath, ArchiveFile file) {
   }
   final realPath = _realPath(filePath);
   if (realPath == null ||
-      !_isWithinOutputPath(outputPath, path.join(realPath, linkPath))) {
+      !_isWithinOutputPath(realOut, path.join(realPath, linkPath))) {
     // Don't allow decoding of files outside of the output path.
     return false;
   }
@@ -68,16 +67,17 @@ void _prepareOutDir(String outDirPath) {
   }
 }
 
-String? _prepareArchiveFilePath(ArchiveFile archiveFile, String outputPath) {
+String? _prepareArchiveFilePath(
+    ArchiveFile archiveFile, String outputPath, String? realOut) {
   final filePath = path.join(outputPath, path.normalize(archiveFile.name));
 
   if ((archiveFile.isDirectory && !archiveFile.isSymbolicLink) ||
-      !_isWithinOutputPath(outputPath, filePath)) {
+      !_isWithinOutputPath(realOut, filePath)) {
     return null;
   }
 
   if (archiveFile.isSymbolicLink) {
-    if (!_isValidSymLink(outputPath, archiveFile)) {
+    if (!_isValidSymLink(outputPath, realOut, archiveFile)) {
       return null;
     }
   }
@@ -114,8 +114,9 @@ void extractArchiveToDiskSync(
   int? bufferSize,
 }) {
   _prepareOutDir(outputPath);
+  final realOut = _realPath(outputPath);
   for (final entry in archive) {
-    final filePath = _prepareArchiveFilePath(entry, outputPath);
+    final filePath = _prepareArchiveFilePath(entry, outputPath, realOut);
     if (filePath != null) {
       _extractArchiveEntryToDiskSync(entry, filePath, bufferSize: bufferSize);
     }
@@ -128,17 +129,18 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
   if (!outDir.existsSync()) {
     outDir.createSync(recursive: true);
   }
+  final realOut = _realPath(outputPath);
 
   for (final entry in archive) {
     final filePath = path.normalize(path.join(outputPath, entry.name));
 
     if ((entry.isDirectory && !entry.isSymbolicLink) ||
-        !_isWithinOutputPath(outputPath, filePath)) {
+        !_isWithinOutputPath(realOut, filePath)) {
       continue;
     }
 
     if (entry.isSymbolicLink) {
-      if (!_isValidSymLink(outputPath, entry)) {
+      if (!_isValidSymLink(outputPath, realOut, entry)) {
         continue;
       }
 
@@ -298,14 +300,15 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
           inputPath, 'inputPath', 'Must end $extensionMsg');
     }
 
+    final realOut = _realPath(outputPath);
     for (final file in archive) {
       final filePath = path.join(outputPath, path.normalize(file.name));
-      if (!_isWithinOutputPath(outputPath, filePath)) {
+      if (!_isWithinOutputPath(realOut, filePath)) {
         continue;
       }
 
       if (file.isSymbolicLink) {
-        if (!_isValidSymLink(outputPath, file)) {
+        if (!_isValidSymLink(outputPath, realOut, file)) {
           continue;
         }
       }

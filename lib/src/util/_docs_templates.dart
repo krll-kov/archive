@@ -281,5 +281,14 @@
 /// files or inner errors.
 /// {@endtemplate}
 
+/// ------------------------------------------------------------------------
+/// ------------------------------------------------------------------------
+/// ------------------------------------------------------------------------
+
+/// {@template archive.xz.verify_default}
+/// Unlike default decodeStream/decodeBytes, verify is on by default to match
+/// gzip and zlib behaviour. Checks CRC or SHA-256 of every block.
+/// {@endtemplate}
+
 /// Must be after templates
 library;

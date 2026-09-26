@@ -129,12 +129,12 @@ void main() {
       const data = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0xee, 0xdd];
       // Little endian (by default)
       final input = InputMemoryStream.fromList(data);
-      expect(input.readUint64(), equals(0xddeeffeeddccbbaa));
+      expect(input.readUint64(), equals((0xddeeffee << 32) | 0xddccbbaa));
 
       // Big endian
       final i2 =
           InputMemoryStream.fromList(data, byteOrder: ByteOrder.bigEndian);
-      expect(i2.readUint64(), equals(0xaabbccddeeffeedd));
-    });
+      expect(i2.readUint64(), equals((0xaabbccdd << 32) | 0xeeffeedd));
+    }, testOn: 'vm || wasm');
   });
 }

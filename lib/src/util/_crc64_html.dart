@@ -34,6 +34,25 @@ Uint32List _buildTable(bool wantHigh) {
   return out;
 }
 
+final Uint32List _sliceHigh = _buildSlices(true);
+final Uint32List _sliceLow = _buildSlices(false);
+
+Uint32List _buildSlices(bool wantHigh) {
+  final low = Uint32List(8 * 256)..setRange(0, 256, _tableLow);
+  final high = Uint32List(8 * 256)..setRange(0, 256, _tableHigh);
+  for (var k = 1; k < 8; k++) {
+    for (var i = 0; i < 256; i++) {
+      final lo = low[(k - 1) * 256 + i];
+      final hi = high[(k - 1) * 256 + i];
+      final index = lo & 0xff;
+      low[k * 256 + i] =
+          (((lo >>> 8) | ((hi & 0xff) << 24)) ^ _tableLow[index]) & 0xffffffff;
+      high[k * 256 + i] = ((hi >>> 8) ^ _tableHigh[index]) & 0xffffffff;
+    }
+  }
+  return wantHigh ? high : low;
+}
+
 /// A running CRC-64 held as two 32 bit halves. No other shape survives a
 /// backend whose int is not 64 bits wide
 class Crc64Core {
@@ -52,7 +71,36 @@ class Crc64Core {
     final tableLow = _tableLow;
     var high = _high ^ 0xffffffff;
     var low = _low ^ 0xffffffff;
-    for (var i = 0; i < array.length; i++) {
+    var i = 0;
+    if (array is Uint8List) {
+      final sliceHigh = _sliceHigh;
+      final sliceLow = _sliceLow;
+      final bytes =
+          ByteData.view(array.buffer, array.offsetInBytes, array.length);
+      final limit = array.length - 8;
+      while (i <= limit) {
+        final l = (low ^ bytes.getUint32(i, Endian.little)) & 0xffffffff;
+        final h = (high ^ bytes.getUint32(i + 4, Endian.little)) & 0xffffffff;
+        low = sliceLow[1792 + (l & 0xff)] ^
+            sliceLow[1536 + ((l >>> 8) & 0xff)] ^
+            sliceLow[1280 + ((l >>> 16) & 0xff)] ^
+            sliceLow[1024 + (l >>> 24)] ^
+            sliceLow[768 + (h & 0xff)] ^
+            sliceLow[512 + ((h >>> 8) & 0xff)] ^
+            sliceLow[256 + ((h >>> 16) & 0xff)] ^
+            sliceLow[h >>> 24];
+        high = sliceHigh[1792 + (l & 0xff)] ^
+            sliceHigh[1536 + ((l >>> 8) & 0xff)] ^
+            sliceHigh[1280 + ((l >>> 16) & 0xff)] ^
+            sliceHigh[1024 + (l >>> 24)] ^
+            sliceHigh[768 + (h & 0xff)] ^
+            sliceHigh[512 + ((h >>> 8) & 0xff)] ^
+            sliceHigh[256 + ((h >>> 16) & 0xff)] ^
+            sliceHigh[h >>> 24];
+        i += 8;
+      }
+    }
+    for (; i < array.length; i++) {
       final index = (low ^ array[i]) & 0xff;
       final shiftedLow = ((low >>> 8) | ((high & 0xff) << 24)) & 0xffffffff;
       low = (shiftedLow ^ tableLow[index]) & 0xffffffff;

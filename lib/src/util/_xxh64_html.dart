@@ -76,11 +76,10 @@ int _mul32(int a, int b) =>
             0)) >>>
     0;
 
-/// Streaming XXH64, the checksum zstd frames carry.
-///
-/// The seed is taken as a 32 bit value, all any caller here uses
+/// The seed is taken as a 64 bit value split into two 32 bit halves
 class Xxh64 {
-  final int _seed;
+  final int _seedHi;
+  final int _seedLo;
   final _U64 _v1 = _U64(0, 0);
   final _U64 _v2 = _U64(0, 0);
   final _U64 _v3 = _U64(0, 0);
@@ -92,18 +91,20 @@ class Xxh64 {
   final Uint8List _buffer = Uint8List(32);
   late final ByteData _bufferView = ByteData.sublistView(_buffer);
 
-  Xxh64([int seed = 0]) : _seed = seed >>> 0 {
+  Xxh64([int seed = 0])
+      : _seedLo = seed & 0xffffffff,
+        _seedHi = ((seed - (seed & 0xffffffff)) ~/ 0x100000000) & 0xffffffff {
     reset();
   }
 
   void reset() {
-    _v1.set(0, _seed);
+    _v1.set(_seedHi, _seedLo);
     _v1.add(_p1Hi, _p1Lo);
     _v1.add(_p2Hi, _p2Lo);
-    _v2.set(0, _seed);
+    _v2.set(_seedHi, _seedLo);
     _v2.add(_p2Hi, _p2Lo);
-    _v3.set(0, _seed);
-    _v4.set(0, _seed);
+    _v3.set(_seedHi, _seedLo);
+    _v4.set(_seedHi, _seedLo);
     _v4.sub(_p1Hi, _p1Lo);
     _total = 0;
     _held = 0;
@@ -161,7 +162,7 @@ class Xxh64 {
       _merge(h, _v3);
       _merge(h, _v4);
     } else {
-      h.set(0, _seed);
+      h.set(_seedHi, _seedLo);
       h.add(_p5Hi, _p5Lo);
     }
     h.add(_total ~/ 4294967296, _total % 4294967296);

@@ -331,4 +331,23 @@ void main() {
     expect(hash.digestHigh, 0x95d9a0c9);
     expect(hash.digestLow, 0x77b4b6fb);
   });
+
+  test('XXH64 takes a seed outside 32 bits on this platform', () {
+    final data = Uint8List(100);
+    for (var i = 0; i < data.length; i++) {
+      data[i] = (i * 31) & 0xff;
+    }
+    const cases = [
+      [4294967301, 100, 0x2e8ad948, 0x73e51d5c],
+      [4294967301, 0, 0x3bfea580, 0xce35fa56],
+      [-1, 100, 0x78016a97, 0x2d89b704],
+      [-1, 0, 0x298f4c84, 0xb24f5380],
+      [-12345, 100, 0x1c0c124f, 0xe3e83d25],
+    ];
+    for (final c in cases) {
+      final hash = Xxh64(c[0])..update(data, 0, c[1]);
+      expect([hash.digestHigh, hash.digestLow], [c[2], c[3]],
+          reason: 'seed ${c[0]} length ${c[1]}');
+    }
+  });
 }

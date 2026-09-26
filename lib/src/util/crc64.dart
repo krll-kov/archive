@@ -16,8 +16,14 @@ import 'dart:typed_data';
 
 import '_crc64_html.dart' if (dart.library.isolate) '_crc64_io.dart';
 
+/// Throws UnsupportedError on dart2js, where int holds 53 bits. Use [Crc64]
+/// instead, which holds CRC as two 32-bit halves and returns 8 bytes, so it
+/// works on every backend without speed downgrade for IO
 int getCrc64(List<int> array, [int crc = 0]) => getCrc64_(array, crc);
 
+/// False on dart2js, where int holds 53 bits and [getCrc64] cannot return
+/// 64-bit value. Use [Crc64], which holds CRC as two 32-bit halves and returns
+/// 8 bytes, so it works on every backend without speed downgrade for IO
 bool isCrc64Supported() => isCrc64Supported_();
 
 /// A running CRC-64 over however many pieces the bytes arrive in, on every
