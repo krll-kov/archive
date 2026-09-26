@@ -12,6 +12,7 @@ import 'zstd_block_splitter.dart';
 import 'zstd_constants.dart';
 import 'zstd_dictionary.dart';
 import 'zstd_frame_decoder.dart';
+import 'zstd_frame_encoder.dart';
 import 'zstd_level_params.dart';
 import 'zstd_mt_frame_encoder.dart';
 import 'zstd_mt_parallel.dart';
@@ -114,11 +115,15 @@ class ZstdEncoderConverter extends ChunkedConverter {
   /// Placed before the content, as [ZstdChunkedEncoder.dictionary] describes
   final ZstdDictionary? dictionary;
 
+  /// {@macro archive.zstd.content_size}
+  final int? contentSize;
+
   const ZstdEncoderConverter(
       {this.level = zstdDefaultLevel,
       this.checksum = true,
       this.multithread,
-      this.dictionary});
+      this.dictionary,
+      this.contentSize});
 
   @override
   ByteConversionSink startChunkedConversion(Sink<List<int>> sink) {
@@ -134,7 +139,8 @@ class ZstdEncoderConverter extends ChunkedConverter {
         sink is ByteConversionSink ? sink : ByteConversionSink.from(sink),
         level: level,
         checksum: checksum,
-        dictionary: dictionary);
+        dictionary: dictionary,
+        contentSize: contentSize);
   }
 
   /// The dictionary as the reference sees it here, none where it is too short
@@ -156,9 +162,33 @@ class ZstdEncoderConverter extends ChunkedConverter {
   Stream<List<int>> _bindMultithread(Stream<List<int>> stream,
       ZstdMultithreadOptions<Object?> options) async* {
     checkZstdMultithreadOptions(options);
+    final size = contentSize;
+    if (size != null && size < 0) {
+      throw ArgumentError.value(size, 'contentSize', 'Must not be negative');
+    }
+    // `ZSTD_CCtx_init_compressStream2` sets nbWorkers to 0 for pledged size up
+    // to ZSTDMT_JOBSIZE_MIN, so threaded frame of such input would not match C
+    // output, and we compress it with single threaded encoder
+    if (size != null && size <= zstdMtJobSizeMin) {
+      yield* ZstdEncoderConverter(
+              level: level,
+              checksum: checksum,
+              dictionary: dictionary,
+              contentSize: size)
+          .bind(stream);
+      return;
+    }
+    final sized = size == null
+        ? zstdMtSizeUnknown
+        : size + (_encodeDictionary?.sourceSize ?? 0);
     final hash = Xxh64()..reset();
+    var total = 0;
     final counted = stream.map((chunk) {
       final bytes = chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
+      total += bytes.length;
+      if (size != null && total > size) {
+        throw ArchiveException('Input is longer than contentSize $size');
+      }
       if (checksum) {
         hash.update(bytes, 0, bytes.length);
       }
@@ -175,11 +205,18 @@ class ZstdEncoderConverter extends ChunkedConverter {
         cap: zstdMtWorkerCap(
             options.memoryBudget ?? zstdDefaultMemoryBudget,
             level,
-            zstdMtSizeUnknown,
-            ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
+            sized,
+            ZstdMtFrameEncoder.geometry(level, sized,
                 jobSize: options.jobSize, overlapLog: options.overlapLog)),
-        dictionary: _encodeDictionary, header: (empty) {
+        dictionary: _encodeDictionary,
+        size: sized, header: (empty) {
       final header = OutputMemoryStream();
+      if (size != null && !empty) {
+        writeZstdFrameHeader(header, size, checksum,
+            zstdParamsForLevel(level, sized).windowLog,
+            _encodeDictionary?.id ?? 0);
+        return header.getBytes();
+      }
       writeZstdMtStreamHeader(
           header, checksum, level, _encodeDictionary?.id ?? 0, empty);
       return header.getBytes();
@@ -188,6 +225,9 @@ class ZstdEncoderConverter extends ChunkedConverter {
       failed = true;
       sink.addError(error, trace);
     }));
+    if (!failed && size != null && total != size) {
+      throw ArchiveException('Input is $total bytes, contentSize is $size');
+    }
     // `yield*` continues after an error, so without this flag the checksum of
     // a failed frame is written after the error event
     if (checksum && !failed) {
@@ -215,17 +255,35 @@ class ZstdChunkedEncoder extends ChunkedSink {
   /// differently
   final ZstdDictionary? dictionary;
 
+  /// {@macro archive.zstd.content_size}
+  final int? contentSize;
+
   /// A level is resolved here rather than at the first block, so a level this
   /// cannot work at is a mistake at the call, like every other setting
   ZstdChunkedEncoder(super.output,
-      {int level = zstdDefaultLevel, this.checksum = true, this.dictionary})
-      : level = zstdEffectiveLevel(level);
+      {int level = zstdDefaultLevel,
+      this.checksum = true,
+      this.dictionary,
+      this.contentSize})
+      : level = zstdEffectiveLevel(level) {
+    if (contentSize != null && contentSize! < 0) {
+      throw ArgumentError.value(contentSize, 'contentSize', 'Must not be negative');
+    }
+  }
 
   late final _out = SinkOutputStream(output);
-  late final ZstdLevelParams _params = zstdParamsForLevel(level, _sizeUnknown);
+  late final ZstdLevelParams _params = contentSize == null
+      ? zstdParamsForLevel(level, _sizeUnknown)
+      : zstdParamsForLevel(
+          level, contentSize! + (_encodeDictionary?.sourceSize ?? 0));
   late final int _matchWindow = 1 << _params.windowLog;
+  late final int _windowSize = contentSize == null
+      ? _matchWindow
+      : contentSize! < 1
+          ? 1
+          : (contentSize! < _matchWindow ? contentSize! : _matchWindow);
   late final int _blockSizeMax =
-      _matchWindow < zstdBlockMaximumSize ? _matchWindow : zstdBlockMaximumSize;
+      _windowSize < zstdBlockMaximumSize ? _windowSize : zstdBlockMaximumSize;
   late final ZstdBlockEncoder _blocks =
       ZstdBlockEncoder(_blockSizeMax, _params);
   final _splitter = ZstdBlockSplitter();
@@ -250,7 +308,7 @@ class ZstdChunkedEncoder extends ChunkedSink {
   /// `inBuffSize`, the ring the reference gathers into. It hands one
   /// `blockSizeMax` to the compressor at a time and starts over once the next
   /// one would not fit, so it wraps on every multiple of this
-  late final int _ring = _matchWindow + _blockSizeMax;
+  late final int _ring = _windowSize + _blockSizeMax;
 
   /// What the reference reads for a size it does not know. It picks the level
   /// row from this and leaves the window unclamped
@@ -298,6 +356,13 @@ class ZstdChunkedEncoder extends ChunkedSink {
 
   @override
   void step() {
+    final size = contentSize;
+    if (size != null && _content + available > size) {
+      throw ArchiveException('Input is longer than contentSize $size');
+    }
+    if (size == _blockSizeMax) {
+      return;
+    }
     while (available >= _blockSizeMax) {
       _gather(_blockSizeMax);
       _encodeGathered(last: false);
@@ -306,6 +371,11 @@ class ZstdChunkedEncoder extends ChunkedSink {
 
   @override
   void finish() {
+    final size = contentSize;
+    if (size != null && _content + available != size) {
+      throw ArchiveException(
+          'Input is ${_content + available} bytes, contentSize is $size');
+    }
     // `ZSTD_CCtx_init_compressStream2` takes the pledged size from the call
     // that ends the frame, so a frame that never carried a byte is the single
     // segment one the reference writes, not a streamed header over nothing
@@ -385,13 +455,19 @@ class ZstdChunkedEncoder extends ChunkedSink {
     }
   }
 
-  /// `ZSTD_writeFrameHeader` for a frame that names no content size: the
-  /// descriptor says so, and the window byte says how far back it may reach
+  /// `ZSTD_writeFrameHeader` for a frame without content size unless
+  /// [contentSize] is provided
   void _writeHeader() {
     if (_started) {
       return;
     }
     _started = true;
+    final size = contentSize;
+    if (size != null) {
+      writeZstdFrameHeader(_out, size, checksum, _params.windowLog,
+          _encodeDictionary?.id ?? 0);
+      return;
+    }
     writeZstdMtStreamHeader(_out, checksum, level, _encodeDictionary?.id ?? 0);
   }
 

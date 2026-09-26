@@ -322,7 +322,8 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
         required int workers,
         int cap = 0,
         ZstdDictionary? dictionary,
-        Uint8List Function(bool empty)? header}) =>
+        Uint8List Function(bool empty)? header,
+        int size = zstdMtSizeUnknown}) =>
     cancellableStream<List<int>, Uint8List>(
         input,
         (input, signal) => _zstdMtCompressStream(input, signal, level,
@@ -331,7 +332,8 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
             workers: workers,
             cap: cap,
             dictionary: dictionary,
-            header: header));
+            header: header,
+            size: size));
 
 Stream<Uint8List> _zstdMtCompressStream(
     StreamIterator<List<int>> input, CancelSignal signal, int level,
@@ -340,15 +342,16 @@ Stream<Uint8List> _zstdMtCompressStream(
     required int workers,
     int cap = 0,
     ZstdDictionary? dictionary,
-    Uint8List Function(bool empty)? header}) async* {
-  final geometry = ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
+    Uint8List Function(bool empty)? header,
+    int size = zstdMtSizeUnknown}) async* {
+  final geometry = ZstdMtFrameEncoder.geometry(level, size,
       jobSize: jobSize, overlapLog: overlapLog);
   final ring = ZstdMtRing(geometry[0], geometry[1]);
   // One long distance pass over the whole frame, run here in job order, with
   // its matches handed to each job. A job sees only its own prefix and cannot
   // find them itself
   final ldmPass = ZstdMtLdmPass.forParams(
-      zstdParamsForLevel(level, zstdMtSizeUnknown), geometry[0]);
+      zstdParamsForLevel(level, size), geometry[0]);
   final pool = zstdMtPoolSize(workers, Platform.numberOfProcessors, cap);
 
   // The workers are spawned once and fed job after job, as everywhere else
@@ -476,7 +479,7 @@ Stream<Uint8List> _zstdMtCompressStream(
         ..setRange(content.length, content.length + job.length, job);
       final out = OutputMemoryStream();
       ZstdMtFrameEncoder.encodeJob(
-          held0, content.length, out, level, zstdMtSizeUnknown,
+          held0, content.length, out, level, size,
           firstJob: true,
           lastJob: last,
           jobSize: jobSize,
@@ -494,7 +497,7 @@ Stream<Uint8List> _zstdMtCompressStream(
       TransferableTypedData.fromList([job]),
       prefix,
       level,
-      zstdMtSizeUnknown,
+      size,
       first,
       last,
       jobSize,

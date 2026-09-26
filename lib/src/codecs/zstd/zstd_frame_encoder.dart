@@ -238,3 +238,8 @@ class ZstdFrameEncoder {
     }
   }
 }
+
+void writeZstdFrameHeader(OutputStream out, int size, bool checksum,
+        int windowLog, int dictionaryId) =>
+    ZstdFrameEncoder._writeHeader(out, size, size <= (1 << windowLog),
+        checksum, windowLog, dictionaryId);

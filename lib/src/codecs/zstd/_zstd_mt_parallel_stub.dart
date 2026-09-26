@@ -63,26 +63,29 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
         required int workers,
         int cap = 0,
         ZstdDictionary? dictionary,
-        Uint8List Function(bool empty)? header}) =>
+        Uint8List Function(bool empty)? header,
+        int size = zstdMtSizeUnknown}) =>
     cancellableStream<List<int>, Uint8List>(
         input,
         (input, signal) => _compressStream(input, signal, level,
             jobSize: jobSize,
             overlapLog: overlapLog,
             dictionary: dictionary,
-            header: header));
+            header: header,
+            size: size));
 
 Stream<Uint8List> _compressStream(
     StreamIterator<List<int>> input, CancelSignal signal, int level,
     {required int jobSize,
     required int overlapLog,
     ZstdDictionary? dictionary,
-    Uint8List Function(bool empty)? header}) async* {
-  final geometry = ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
+    Uint8List Function(bool empty)? header,
+    int size = zstdMtSizeUnknown}) async* {
+  final geometry = ZstdMtFrameEncoder.geometry(level, size,
       jobSize: jobSize, overlapLog: overlapLog);
   final ring = ZstdMtRing(geometry[0], geometry[1]);
   final ldmPass = ZstdMtLdmPass.forParams(
-      zstdParamsForLevel(level, zstdMtSizeUnknown), geometry[0]);
+      zstdParamsForLevel(level, size), geometry[0]);
   var index = 0;
   Uint8List run(Uint8List job, bool first, bool last) {
     final out = OutputMemoryStream();
@@ -97,7 +100,7 @@ Stream<Uint8List> _compressStream(
         ..setRange(content.length, content.length + job.length, job);
       prefix = content.length;
     }
-    ZstdMtFrameEncoder.encodeJob(buffer, prefix, out, level, zstdMtSizeUnknown,
+    ZstdMtFrameEncoder.encodeJob(buffer, prefix, out, level, size,
         firstJob: first,
         lastJob: last,
         jobSize: jobSize,

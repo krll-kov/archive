@@ -465,6 +465,84 @@ void main() {
         }
       }
     });
+
+    // Tests cannot run zstd, so fixtures in pledged/ are made by hand from
+    // source below: st-* with `zstd --single-thread -L --stream-size=N` and
+    // mt-* with `zstd -T2 -3 --stream-size=3145728`
+    Uint8List pledgedSource(int size) {
+      final source = Uint8List(size);
+      for (var i = 0; i < size; i++) {
+        source[i] = (i * 13 + (i >> 9)) & 0xff;
+      }
+      return source;
+    }
+
+    test('contentSize writes what the reference writes for a pledged size', () {
+      for (final size in [1, 255, 256, 65792, 300000]) {
+        final source = pledgedSource(size);
+        for (final level in [1, 3, 19]) {
+          final want = _archive('pledged/st-$size-l$level.zst');
+          for (final piece in [777, 65536]) {
+            final held = _Held();
+            final encoder =
+                ZstdChunkedEncoder(held, level: level, contentSize: size);
+            for (var at = 0; at < size; at += piece) {
+              encoder.addSlice(
+                  source, at, at + piece < size ? at + piece : size, false);
+            }
+            encoder.close();
+            final reason = 'size $size level $level piece $piece';
+            expect(held.bytes, want, reason: reason);
+            expect(ZstdDecoder().uncompressedSize(held.bytes), size,
+                reason: reason);
+          }
+        }
+      }
+    });
+
+    test('contentSize through the threaded converter', () async {
+      Future<List<int>> encode(Uint8List source, int level) =>
+          Stream<List<int>>.fromIterable([
+            for (var at = 0; at < source.length; at += 65536)
+              Uint8List.sublistView(source, at,
+                  at + 65536 < source.length ? at + 65536 : source.length)
+          ])
+              .transform(ZstdEncoderConverter(
+                  level: level,
+                  contentSize: source.length,
+                  multithread:
+                      const ZstdMultithreadOptions.converter(workers: 2)))
+              .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
+
+      expect(await encode(pledgedSource(3145728), 3),
+          _archive('pledged/mt-3145728-l3.zst'));
+      expect(await encode(pledgedSource(300000), 19),
+          _archive('pledged/st-300000-l19.zst'));
+    });
+
+    test('input of other length than contentSize throws', () async {
+      final source = Uint8List(1000);
+      for (final given in [0, 999, 1001]) {
+        expect(() => ZstdEncoderConverter(contentSize: given).convert(source),
+            throwsA(isA<ArchiveException>()),
+            reason: 'contentSize $given');
+        expect(
+            Stream<List<int>>.value(source)
+                .transform(ZstdEncoderConverter(
+                    contentSize: given,
+                    multithread:
+                        const ZstdMultithreadOptions.converter(workers: 2)))
+                .drain<void>(),
+            throwsA(isA<ArchiveException>()),
+            reason: 'threaded contentSize $given');
+      }
+      expect(() => ZstdEncoderConverter(contentSize: 1).convert(Uint8List(0)),
+          throwsA(isA<ArchiveException>()));
+      expect(ZstdEncoderConverter(contentSize: 0).convert(Uint8List(0)),
+          const ZstdEncoderConverter().convert(Uint8List(0)));
+      expect(() => ZstdChunkedEncoder(_Held(), contentSize: -1),
+          throwsArgumentError);
+    });
   });
 }
 

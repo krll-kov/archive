@@ -1638,6 +1638,9 @@ void main() {
         }
       });
       await first.future.timeout(const Duration(seconds: 30));
+      // RSS is shared by all suites in runner process, so with `-j` above 1
+      // other suites allocating in these 2 s fail this test: 645 MB was
+      // measured at `-j 6`. Test passes alone and at `-j 1`
       final held = ProcessInfo.currentRss;
       await Future<void>.delayed(const Duration(seconds: 2));
       final grew = ProcessInfo.currentRss - held;

@@ -290,5 +290,10 @@
 /// gzip and zlib behaviour. Checks CRC or SHA-256 of every block.
 /// {@endtemplate}
 
+/// {@template archive.zstd.content_size}
+/// Streamed frame has no Frame_Content_Size, so reader has to decode whole
+/// frame to learn its size. Pass input length here to write that size
+/// {@endtemplate}
+
 /// Must be after templates
 library;
