@@ -19,6 +19,8 @@
 * Fixed zlib encoder on web
 * Added `CodecsRecognizer` with `ArchiveFormat` to recognize compressed file types with their header bytes
 * Fixed `XZEncoder` (without compression) for large files
+* Fixed(added) LZMA decoding for `ZipDecoder` and encoding for `ZipEncoder` with `CompressionType.lzma`
+* Fixed `mode` 0 file rights for `ArchiveFile` from `ZipDecoder` created on Windows
 * Fixed SHA-256 checks for XZDecoder with `verify: true`
 * Significantly reduced XZDecoder RAM usage for --x86, crc32, crc64 and SHA-256 with `decodeStream`
 * Increased SHA-256 speed for XZDecoder and XZEncoder

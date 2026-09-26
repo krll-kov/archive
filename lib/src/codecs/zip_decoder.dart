@@ -52,7 +52,11 @@ class ZipDecoder {
         archive.add(entry);
       }
 
-      entry.mode = entryMode;
+      // Zips from Windows leave the Unix mode at 0, and extractFileToDisk then
+      // chmod'ed every file to 000, so such entries keep the default mode
+      if (entryMode & 0x1ff != 0) {
+        entry.mode = entryMode;
+      }
 
       // see https://github.com/brendan-duncan/archive/issues/21
       // UNIX systems has a creator version of 3 decimal at 1 byte offset

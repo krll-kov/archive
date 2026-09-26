@@ -826,6 +826,85 @@ void main() async {
       }
     });
 
+    Map<String, List<int>> lzmaExpected() {
+      var state = 3;
+      final binary = List<int>.generate(70000, (_) {
+        state = (state * 1103515245 + 12345) & 0x7fffffff;
+        return (state >> 16) % 5 == 0 ? 0x41 : (state >> 8) & 0xff;
+      });
+      return {
+        'a.txt': utf8.encode('hello lzma\n' * 200),
+        'b.bin': binary,
+        'empty.txt': <int>[],
+        'dir/c.txt': utf8.encode('nested file\n' * 50),
+      };
+    }
+
+    void expectLzmaArchive(Archive archive) {
+      final want = lzmaExpected();
+      final files = {
+        for (final f in archive.files)
+          if (f.isFile) f.name: f
+      };
+      expect(files.keys.toSet(), want.keys.toSet());
+      for (final entry in want.entries) {
+        expect(files[entry.key]!.content, entry.value, reason: entry.key);
+      }
+      for (final name in ['a.txt', 'b.bin', 'dir/c.txt']) {
+        expect(files[name]!.compression, CompressionType.lzma, reason: name);
+      }
+    }
+
+    for (final (name, password) in [('lzma', null), ('lzma_aes', 'secret')]) {
+      test('decode zip $name', () {
+        final path = 'test/_data/zip/$name.zip';
+        expectLzmaArchive(ZipDecoder().decodeBytes(
+            File(path).readAsBytesSync(),
+            verify: true,
+            password: password));
+        final input = InputFileStream(path);
+        expectLzmaArchive(
+            ZipDecoder().decodeStream(input, verify: true, password: password));
+        input.closeSync();
+      });
+    }
+
+    test('a zip made on Windows gets default permissions', () async {
+      final windows = ZipDecoder()
+          .decodeBytes(File('test/_data/zip/winxp.zip').readAsBytesSync());
+      for (final f in windows.files) {
+        expect(f.unixPermissions, f.isFile ? 0x1a4 : 0x1ed, reason: f.name);
+      }
+      final unix = ZipDecoder()
+          .decodeBytes(File('test/_data/zip/test.zip').readAsBytesSync());
+      for (final f in unix.files) {
+        expect(f.mode, 0x81a4, reason: f.name);
+      }
+
+      final dir = Directory.systemTemp.createTempSync('zip_mode');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      await extractFileToDisk('test/_data/zip/winxp.zip', dir.path);
+      final hello = File(p.join(dir.path, 'hello'));
+      expect(hello.readAsBytesSync(), isNotEmpty);
+      if (!Platform.isWindows) {
+        expect(hello.statSync().mode & 0x1ff, 0x1a4);
+      }
+    });
+
+    test('encode keeps lzma entries of a decoded zip', () {
+      final decoded = ZipDecoder()
+          .decodeBytes(File('test/_data/zip/lzma.zip').readAsBytesSync());
+      final encoded = ZipEncoder().encodeBytes(decoded);
+      final again = ZipDecoder().decodeBytes(encoded, verify: true);
+      expectLzmaArchive(again);
+      for (final f in again.files) {
+        if (f.compression != CompressionType.lzma) continue;
+        final zipFile = f.rawContent! as ZipFile;
+        expect(zipFile.flags & 0x02, 0x02, reason: f.name);
+        expect(zipFile.version, 63, reason: f.name);
+      }
+    });
+
     test('encode password', () {
       final archive = Archive();
       final bdata = 'hello world';

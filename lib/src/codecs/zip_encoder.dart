@@ -45,6 +45,7 @@ class _ZipFileData {
   bool zip64 = false;
 
   CompressionType compression = CompressionType.deflate;
+  bool lzmaEndMarker = false;
   String? comment = '';
   int position = 0;
   int mode = 0;
@@ -275,6 +276,7 @@ class ZipEncoder {
           if (file.rawContent is ZipFile) {
             final zipFile = file.rawContent as ZipFile;
             compressionType = zipFile.compressionMethod;
+            fileData.lzmaEndMarker = zipFile.flags & 0x02 != 0;
           }
         }
 
@@ -285,6 +287,9 @@ class ZipEncoder {
         }
       } else {
         // Otherwise we need to compress it now.
+        if (compressionType == CompressionType.lzma) {
+          compressionType = CompressionType.deflate;
+        }
         final streamedDeflate = streamed &&
             compressionType == CompressionType.deflate &&
             password == null;
@@ -412,7 +417,9 @@ class ZipEncoder {
         ? ZipFile.zipCompressionDeflate
         : fileData.compression == CompressionType.bzip2
             ? ZipFile.zipCompressionBZip2
-            : ZipFile.zipCompressionStore;
+            : fileData.compression == CompressionType.lzma
+                ? ZipFile.zipCompressionLzma
+                : ZipFile.zipCompressionStore;
 
     out.writeUint16(_aesEncryptionExtraHeaderId); // AE-x encryption ID
     out.writeUint16(0x0007); // field length
@@ -443,6 +450,10 @@ class ZipEncoder {
     if (password != null) {
       flags |= fileEncryptionBit;
     }
+    final lzma = fileData.compression == CompressionType.lzma;
+    if (lzma && fileData.lzmaEndMarker) {
+      flags |= 0x02;
+    }
 
     final compressionMethod = password != null
         ? ZipFile.zipCompressionAexEncryption
@@ -450,7 +461,9 @@ class ZipEncoder {
             ? ZipFile.zipCompressionDeflate
             : fileData.compression == CompressionType.bzip2
                 ? ZipFile.zipCompressionBZip2
-                : ZipFile.zipCompressionStore;
+                : fileData.compression == CompressionType.lzma
+                    ? ZipFile.zipCompressionLzma
+                    : ZipFile.zipCompressionStore;
     final lastModFileTime = fileData.time;
     final lastModFileDate = fileData.date;
     // With bit 3 the three of them are zero here and carried behind the data
@@ -480,7 +493,11 @@ class ZipEncoder {
     final encodedFilename = filenameEncoding.encode(filename);
 
     // local file header
-    output.writeUint16(needsZip64 || fileData.zip64 ? 45 : version);
+    output.writeUint16(lzma
+        ? _versionLzma
+        : needsZip64 || fileData.zip64
+            ? 45
+            : version);
     output.writeUint16(flags);
     output.writeUint16(compressionMethod);
     output.writeUint16(lastModFileTime);
@@ -546,8 +563,12 @@ class ZipEncoder {
       zipNeedsZip64 |= needsZip64;
 
       final versionMadeBy = (os << 8) | version;
-      final versionNeededToExtract =
-          fileData.zip64 || needsZip64 ? 45 : version;
+      final lzma = fileData.compression == CompressionType.lzma;
+      final versionNeededToExtract = lzma
+          ? _versionLzma
+          : fileData.zip64 || needsZip64
+              ? 45
+              : version;
       // Must match the local header. If only this one sets bit 11, a reader
       // decodes a latin1 name as UTF-8
       var generalPurposeBitFlag = 0;
@@ -560,13 +581,18 @@ class ZipEncoder {
       if (password != null) {
         generalPurposeBitFlag |= fileEncryptionBit;
       }
+      if (lzma && fileData.lzmaEndMarker) {
+        generalPurposeBitFlag |= 0x02;
+      }
       final compressionMethod = password != null
           ? ZipFile.zipCompressionAexEncryption
           : fileData.compression == CompressionType.deflate
               ? ZipFile.zipCompressionDeflate
               : fileData.compression == CompressionType.bzip2
                   ? ZipFile.zipCompressionBZip2
-                  : ZipFile.zipCompressionStore;
+                  : fileData.compression == CompressionType.lzma
+                      ? ZipFile.zipCompressionLzma
+                      : ZipFile.zipCompressionStore;
       final lastModifiedFileTime = fileData.time;
       final lastModifiedFileDate = fileData.date;
       final crc32 = fileData.crc32;
@@ -665,6 +691,7 @@ class ZipEncoder {
   }
 
   static const version = 20;
+  static const _versionLzma = 63;
 
   // enum OS
   static const _osMSDos = 0;

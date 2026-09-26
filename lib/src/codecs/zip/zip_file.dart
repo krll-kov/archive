@@ -11,6 +11,7 @@ import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
 import '../../util/output_stream.dart';
 import '../bzip2_decoder.dart';
+import '../lzma/lzma_decoder.dart';
 import '../zlib_decoder.dart';
 import 'zip_file_header.dart';
 
@@ -32,7 +33,8 @@ enum ZipEncryptionMode { none, zipCrypto, aes }
 const _compressionTypes = <int, CompressionType>{
   0: CompressionType.none,
   8: CompressionType.deflate,
-  12: CompressionType.bzip2
+  12: CompressionType.bzip2,
+  14: CompressionType.lzma
 };
 
 /// A file object used by [ZipDecoder].
@@ -41,6 +43,7 @@ class ZipFile extends FileContent {
   static const zipCompressionStore = 0;
   static const zipCompressionDeflate = 8;
   static const zipCompressionBZip2 = 12;
+  static const zipCompressionLzma = 14;
   static const zipCompressionAexEncryption = 99;
 
   int version = 0;
@@ -231,8 +234,41 @@ class ZipFile extends FileContent {
       if (!ok) {
         throw ArchiveException('Invalid bzip2 data for $filename');
       }
+    } else if (compressionMethod == CompressionType.lzma) {
+      _decodeLzma(output);
     } else {
       output.writeStream(_rawContent!);
+    }
+  }
+
+  void _decodeLzma(OutputStream output) {
+    final input = _rawContent!;
+    final savePos = input.position;
+    try {
+      input.skip(2);
+      final propertiesSize = input.readUint16();
+      final properties = input.readBytes(propertiesSize).toUint8List();
+      if (properties.length < 5 || properties[0] >= 9 * 5 * 5) {
+        throw ArchiveException('Invalid LZMA properties for $filename');
+      }
+      final bits = properties[0];
+      final decoder = LzmaDecoder()
+        ..dictionaryLimit = properties[1] |
+            (properties[2] << 8) |
+            (properties[3] << 16) |
+            (properties[4] << 24)
+        ..reset(
+            literalContextBits: bits % 9,
+            literalPositionBits: bits ~/ 9 % 5,
+            positionBits: bits ~/ 45,
+            resetDictionary: true);
+      decoder.decodeToOutput(input, uncompressedSize, output);
+    } on ArchiveException {
+      rethrow;
+    } catch (error) {
+      throw ArchiveException('Invalid LZMA data for $filename: $error');
+    } finally {
+      input.setPosition(savePos);
     }
   }
 
@@ -288,6 +324,10 @@ class ZipFile extends FileContent {
         throw ArchiveException('Invalid bzip2 data for $filename');
       }
       return InputMemoryStream(content);
+    } else if (compressionMethod == CompressionType.lzma) {
+      final output = OutputMemoryStream(size: uncompressedSize);
+      _decodeLzma(output);
+      return InputMemoryStream(output.getBytes());
     } else {
       final content = _rawContent!.toUint8List();
       return InputMemoryStream(content);
