@@ -707,6 +707,23 @@ void main() {
     }
   });
 
+  test('extractFileToDisk handles tar filenames beginning with codec magic',
+      () async {
+    const name = 'BZh11AY&SY.txt';
+    final bytes = TarEncoder().encodeBytes(
+        Archive()..add(ArchiveFile.string(name, 'archive content')));
+    final archive = TarDecoder().decodeBytes(bytes, verify: true);
+    expect(archive.files.single.name, name);
+    expect(archive.files.single.content, 'archive content'.codeUnits);
+
+    final directory = Directory.systemTemp.createTempSync('archive-extract-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final input = File('${directory.path}/valid.tar')..writeAsBytesSync(bytes);
+    final output = '${directory.path}/out';
+    await extractFileToDisk(input.path, output);
+    expect(File('$output/$name').readAsStringSync(), 'archive content');
+  });
+
   // The file is a gzip with no tar inside. Nothing from it may reach the
   // output directory
   test('extractFileToDisk refuses a gzip that holds no tar', () async {

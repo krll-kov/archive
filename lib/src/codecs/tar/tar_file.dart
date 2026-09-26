@@ -205,6 +205,8 @@ class TarFile {
     } else {
       _writeString(header, '', 100);
     }
+    _writeString(header, 'ustar', 6);
+    _writeString(header, '00', 2);
 
     final remainder = 512 - header.length;
     header.writeBytes(Uint8List(remainder)); // typed arrays default to 0

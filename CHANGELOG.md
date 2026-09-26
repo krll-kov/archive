@@ -13,22 +13,30 @@
 * Added .tar.zst and .tzst to `extractFileToDisk`. Also, `extractFileToDisk` now checks for errors during
   unpack/decompress and does not leak temporary TAR files on fail
 * Fixed symlinks scopes for `extractFileToDisk` that could overwrite existing file on disk outside of output dir
-* Fixed CRC64 `XZEncoder` created files created on dart-js failed to decode on native platforms
+* Fixed Unix mode reading for `ZipDecoder` for archives created on Windows
+* Fixed CRC64 `XZEncoder` files created on dart-js failed to decode on native platforms
 * CRC64 for XZDecoder now works both on io and web (dart2-js) (with new `Crc64` class). Old api `isCrc64Supported` 
   remained unchanged and still returns false and throws with `getCrc64` on dart2-js.
 * Fixed zlib encoder on web
+* `TarEncoder` now writes `"ustar\0"` magic in header for easier recognition
+* `TarEncoder` now writes non-ASCII names and symlink targets as PAX path/linkpath records, so readers that take
+  header bytes in a local code page, such as Windows tar.exe, get the right names
+* Zip passwords are now encoded as UTF-8 to properly handle non-ASCII passwords. `ZipDecoder` tries UTF-8 first 
+  and then bytes that older versions of the package wrote
+* Fixed `ZipDecoder` decrypting AES and ZipCrypto entries inside the buffer, what corrupted it
+* Fixed `ZipDecoder` throwing `RangeError` on AES zips whose AES extra field is not the first one
+* A wrong zip password or a failed AES MAC throws `ArchiveException` instead of previous `Exception`
 * Added `CodecsRecognizer` with `ArchiveFormat` to recognize compressed file types with their header bytes
 * Fixed `XZEncoder` (without compression) for large files
 * Fixed(added) LZMA decoding for `ZipDecoder` and encoding for `ZipEncoder` with `CompressionType.lzma`
 * Fixed `mode` 0 file rights for `ArchiveFile` from `ZipDecoder` created on Windows
 * Fixed SHA-256 checks for XZDecoder with `verify: true`
-* Significantly reduced XZDecoder RAM usage for --x86, crc32, crc64 and SHA-256 with `decodeStream`
+* Significantly reduced XZDecoder RAM usage for --x86, crc32, crc64, SHA-256 and default decoding with `decodeStream`
 * Increased SHA-256 speed for XZDecoder and XZEncoder
 * Made CRC32 faster on IO (non-js-web platforms)
-* Slightly reduces amount of RAM for lzma decoder and zlib encoder
+* Slightly reduces amount of RAM used by zlib encoder
 * Added `ProgressOutputStream` to monitor progress during unpack
 * Fixed `ArchiveFile.directory` mode (0755 instead of 0644) so that it can be opened after unpacking
-* Slightly improved ram for `XZDecoder`
 * Fixed a few cases with accepting corrupted file in `XZDecoder`
 * Fixed some 7z files failed to decode with `XZDecoder`
 * Fixed invalid bzip2 archive returned true from `decodeStream`
@@ -49,8 +57,6 @@
   after it off by 2 and unreachable to a forward-only reader
 * Fixed `ZipEncoder` central directory always claiming UTF-8 file names. It now carries the same
   general purpose flag as the local header, so a non-UTF-8 filenameEncoding is no longer misreported
-* Removed unused localFileSize, centralDirectorySize and endOfCentralDirectorySize from the zip
-  encoder, where localFileSize also counted a streamed entry's header twice
 * Added `XZMultithreadOptions.converter` and `ZstdMultithreadOptions.converter`, the options a
   `Converter` takes for multithreaded decoding/encoding via converter.
 * Fixed extremely high RAM usage on big files (4GB+) for `ZipEncoder(streamed: true)` (use zip64 format from zip APPNOTE)

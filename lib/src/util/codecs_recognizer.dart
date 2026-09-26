@@ -209,8 +209,8 @@ abstract final class CodecsRecognizer {
   /// start of other formats. [withZLib] is off by default for the same reason,
   /// since the check gives false positives.
   static ArchiveFormat recognize(List<int> data, {bool withZLib = false}) {
-    if (isGZip(data)) {
-      return ArchiveFormat.gzip;
+    if (isTar(data)) {
+      return ArchiveFormat.tar;
     }
     if (isXZ(data)) {
       return ArchiveFormat.xz;
@@ -218,14 +218,17 @@ abstract final class CodecsRecognizer {
     if (isZstd(data)) {
       return ArchiveFormat.zstd;
     }
-    if (isBZip2(data)) {
-      return ArchiveFormat.bzip2;
-    }
     if (isZip(data)) {
       return ArchiveFormat.zip;
     }
-    if (isTar(data)) {
-      return ArchiveFormat.tar;
+
+    // Last ones in order to ensure valid most-common archives are not
+    // recognized for text files that start with magic from these codecs
+    if (isGZip(data)) {
+      return ArchiveFormat.gzip;
+    }
+    if (isBZip2(data)) {
+      return ArchiveFormat.bzip2;
     }
     if (withZLib && isZLib(data)) {
       return ArchiveFormat.zlib;

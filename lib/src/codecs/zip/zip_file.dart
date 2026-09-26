@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import '../../archive/compression_type.dart';
@@ -113,11 +114,15 @@ class ZipFile extends FileContent {
     _rawContent = input.readBytes(header!.compressedSize);
 
     if (_encryptionType != ZipEncryptionMode.none && exLen > 2) {
-      final extra = InputMemoryStream(extraField!);
-      while (!extra.isEOS) {
-        final id = extra.readUint16();
-        if (id == ZipAesHeader.signature) {
-          extra.readUint16(); // dataSize = 7
+      final extras = InputMemoryStream(extraField!);
+      while (extras.length >= 4) {
+        final id = extras.readUint16();
+        final size = extras.readUint16();
+        if (size > extras.length) {
+          break;
+        }
+        final extra = extras.readBytes(size);
+        if (id == ZipAesHeader.signature && size >= 7) {
           final vendorVersion = extra.readUint16();
           final vendorId = extra.readString(size: 2);
           final encryptionStrength = extra.readByte();
@@ -137,9 +142,6 @@ class ZipFile extends FileContent {
       }
     }
 
-    if (_encryptionType == ZipEncryptionMode.zipCrypto && password != null) {
-      _initKeys(password);
-    }
 
     // If bit 3 (0x08) of the flags field is set, then the CRC-32 and file
     // sizes are not known when the header is written. The fields in the
@@ -239,7 +241,9 @@ class ZipFile extends FileContent {
     } else if (compressionMethod == CompressionType.lzma) {
       _decodeLzma(output);
     } else {
+      final savePos = _rawContent!.position;
       output.writeStream(_rawContent!);
+      _rawContent!.setPosition(savePos);
     }
   }
 
@@ -346,11 +350,21 @@ class ZipFile extends FileContent {
   @override
   String toString() => filename;
 
-  void _initKeys(String password) {
+  List<Uint8List?> _passwordBytes() {
+    final password = _password;
+    if (password == null) {
+      return [null];
+    }
+    final utf = Uint8List.fromList(utf8.encode(password));
+    final old = Uint8List.fromList(password.codeUnits);
+    return Uint8ListEquality.equals(utf, old) ? [utf] : [utf, old];
+  }
+
+  void _initKeys(Uint8List password) {
     _keys[0] = BigInt.from(305419896);
     _keys[1] = BigInt.from(591751049);
     _keys[2] = BigInt.from(878082192);
-    for (final c in password.codeUnits) {
+    for (final c in password) {
       _updateKeys(c);
     }
   }
@@ -369,9 +383,10 @@ class ZipFile extends FileContent {
     return ((temp * (temp ^ 1)) >> 8) & 0xff;
   }
 
-  void _decodeByte(int c) {
+  int _decodeByte(int c) {
     c ^= _decryptByte();
     _updateKeys(c);
+    return c;
   }
 
   InputStream _decodeZipCrypto(InputStream input) {
@@ -379,9 +394,40 @@ class ZipFile extends FileContent {
       return InputMemoryStream(Uint8List(0));
     }
 
-    for (var i = 0; i < 12; ++i) {
-      _decodeByte(_rawContent!.readByte());
+    final start = _rawContent!.position;
+    final check =
+        flags & 0x08 != 0 ? (lastModFileTime >> 8) & 0xff : crc32 >>> 24;
+    final candidates = _passwordBytes();
+    final passing = [
+      for (final password in candidates)
+        if (_zipCryptoHeader(password, start) == check) password
+    ];
+    if (passing.length > 1) {
+      for (final password in passing) {
+        final bytes = _zipCryptoBody(password, start);
+        if (_plainCrc32(bytes) == crc32) {
+          return InputMemoryStream(bytes);
+        }
+      }
     }
+    return InputMemoryStream(_zipCryptoBody(
+        passing.isEmpty ? candidates.last : passing.first, start));
+  }
+
+  int _zipCryptoHeader(Uint8List? password, int start) {
+    _rawContent!.setPosition(start);
+    if (password != null) {
+      _initKeys(password);
+    }
+    var last = 0;
+    for (var k = 0; k < 12; ++k) {
+      last = _decodeByte(_rawContent!.readByte());
+    }
+    return last;
+  }
+
+  Uint8List _zipCryptoBody(Uint8List? password, int start) {
+    _zipCryptoHeader(password, start);
     final bytes = _rawContent is InputMemoryStream
         ? Uint8List.fromList(_rawContent!.toUint8List())
         : _rawContent!.toUint8List();
@@ -390,7 +436,22 @@ class ZipFile extends FileContent {
       _updateKeys(temp);
       bytes[i] = temp;
     }
-    return InputMemoryStream(bytes);
+    return bytes;
+  }
+
+  int? _plainCrc32(Uint8List decrypted) {
+    final raw = _rawContent;
+    final type = _encryptionType;
+    _rawContent = InputMemoryStream(decrypted);
+    _encryptionType = ZipEncryptionMode.none;
+    try {
+      return getCrc32(getStream().toUint8List());
+    } catch (_) {
+      return null;
+    } finally {
+      _rawContent = raw;
+      _encryptionType = type;
+    }
   }
 
   InputStream _decodeAes(InputStream input) {
@@ -413,36 +474,46 @@ class ZipFile extends FileContent {
     final verify = input.readBytes(2).toUint8List();
     final dataBytes = input.readBytes(input.length - 10);
     final dataMac = input.readBytes(10);
-    // InputMemoryStream gives view into buffer, and decrypting it in
-    // place corrupts zip. InputFileStream gives new bytes
-    final bytes = dataBytes is InputMemoryStream
-        ? Uint8List.fromList(dataBytes.toUint8List())
-        : dataBytes.toUint8List();
 
-    final derivedKey = deriveKey(_password!, salt, derivedKeyLength: keySize);
-    final keyData = Uint8List.fromList(derivedKey.sublist(0, keySize));
-    final hmacKeyData =
-        Uint8List.fromList(derivedKey.sublist(keySize, keySize * 2));
-    // var authCode = deriveKey.sublist(keySize, keySize*2);
-    final pwdCheck = derivedKey.sublist(keySize * 2, keySize * 2 + 2);
-    if (!Uint8ListEquality.equals(pwdCheck, verify)) {
-      throw Exception('password error');
-    }
+    var failure = ArchiveException('password error');
+    for (final password in _passwordBytes()) {
+      final derivedKey =
+          _deriveKey(password!, salt, derivedKeyLength: keySize);
+      final keyData = Uint8List.fromList(derivedKey.sublist(0, keySize));
+      final hmacKeyData =
+          Uint8List.fromList(derivedKey.sublist(keySize, keySize * 2));
+      // var authCode = deriveKey.sublist(keySize, keySize*2);
+      final pwdCheck = derivedKey.sublist(keySize * 2, keySize * 2 + 2);
+      if (!Uint8ListEquality.equals(pwdCheck, verify)) {
+        continue;
+      }
 
-    final aes = Aes(keyData, hmacKeyData, keySize);
-    aes.processData(bytes, 0, bytes.length);
-    if (!Uint8ListEquality.equals(dataMac.toUint8List(), aes.mac)) {
-      throw Exception('macs don\'t match');
+      // InputMemoryStream gives view into buffer, and decrypting it in
+      // place corrupts zip. InputFileStream gives new bytes
+      final bytes = dataBytes is InputMemoryStream
+          ? Uint8List.fromList(dataBytes.toUint8List())
+          : dataBytes.toUint8List();
+      final aes = Aes(keyData, hmacKeyData, keySize);
+      aes.processData(bytes, 0, bytes.length);
+      if (!Uint8ListEquality.equals(dataMac.toUint8List(), aes.mac)) {
+        failure = ArchiveException('macs don\'t match');
+        continue;
+      }
+      return InputMemoryStream(bytes);
     }
-    return InputMemoryStream(bytes);
+    throw failure;
   }
 
   static Uint8List deriveKey(String password, Uint8List salt,
+          {int derivedKeyLength = 32}) =>
+      _deriveKey(Uint8List.fromList(utf8.encode(password)), salt,
+          derivedKeyLength: derivedKeyLength);
+
+  static Uint8List _deriveKey(Uint8List passwordBytes, Uint8List salt,
       {int derivedKeyLength = 32}) {
-    if (password.isEmpty) {
+    if (passwordBytes.isEmpty) {
       return Uint8List(0);
     }
-    final passwordBytes = Uint8List.fromList(password.codeUnits);
     const iterationCount = 1000;
     final totalSize = (derivedKeyLength * 2) + 2;
 

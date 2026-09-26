@@ -806,6 +806,102 @@ void main() async {
       }
     });
 
+    test('a stored entry stays readable after decompressing to a file', () {
+      final expected = 'stored content'.codeUnits;
+      final bytes = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('a.txt', expected)
+          ..compression = CompressionType.none));
+      final entry = ZipDecoder().decodeBytes(bytes).files.single;
+      final directory =
+          Directory.systemTemp.createTempSync('zip_stored_lifetime_');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final file = File('${directory.path}/out');
+      final output = OutputFileStream(file.path, bufferSize: 3);
+      entry.decompress(output);
+      output.closeSync();
+      expect(file.readAsBytesSync(), expected);
+      expect(entry.content, expected);
+    });
+
+    test('encrypting leaves the source zip and stored bytes as they were', () {
+      final bytes = File('test/_data/zip/test.zip').readAsBytesSync();
+      final original = Uint8List.fromList(bytes);
+      final archive = ZipDecoder().decodeBytes(bytes);
+      final contents = [for (final f in archive.files) f.readBytes()!];
+      final archiveUntouched = ZipDecoder().decodeBytes(bytes);
+      final encrypted = ZipEncoder(password: 'pw')
+          .encodeBytes(archiveUntouched, autoClose: false);
+      expect(bytes, original);
+      for (var i = 0; i < contents.length; i++) {
+        expect(archiveUntouched.files[i].readBytes(), contents[i]);
+        expect(ZipDecoder().decodeBytes(bytes).files[i].readBytes(),
+            contents[i]);
+      }
+      for (final f in ZipDecoder().decodeBytes(encrypted, password: 'pw').files) {
+        expect(f.crc32, getCrc32(f.readBytes()!), reason: f.name);
+      }
+
+      final data = Uint8List.fromList(List<int>.generate(1000, (i) => i & 0xff));
+      final stored = Uint8List.fromList(data);
+      ZipEncoder(password: 'pw').encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('a.bin', data)
+          ..compression = CompressionType.none));
+      expect(data, stored);
+    });
+
+    test('a non-ASCII password opens zips from other tools and from before',
+        () {
+      const password = 'pässwort';
+      const expected = {
+        'password_utf8_aes.zip': 'hello\n',
+        'password_utf8_zipcrypto.zip': 'hello\n',
+        'password_old_aes.zip': 'hello utf8 password\n',
+        'password_old_zipcrypto.zip': 'hello crc check\n',
+      };
+      for (final MapEntry(key: name, value: content) in expected.entries) {
+        final entry = ZipDecoder()
+            .decodeBytes(File('test/_data/zip/$name').readAsBytesSync(),
+                password: password)
+            .files
+            .single;
+        expect(utf8.decode(entry.readBytes()!), content, reason: name);
+      }
+
+      final encoded = ZipEncoder(password: password)
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
+      final utf8Bytes = String.fromCharCodes(utf8.encode(password));
+      for (final key in [password, utf8Bytes]) {
+        expect(
+            utf8.decode(ZipDecoder()
+                .decodeBytes(encoded, password: key)
+                .files
+                .single
+                .readBytes()!),
+            'hello',
+            reason: key);
+      }
+      expect(
+          () => ZipDecoder()
+              .decodeBytes(encoded, password: 'wrong')
+              .files
+              .single
+              .readBytes(),
+          throwsA(isA<ArchiveException>()));
+    });
+
+    test('a legacy ZipCrypto password survives a UTF-8 verifier collision', () {
+      final bytes = base64.decode(
+          'UEsDBBQAAQAAAAAAAABcAaBLHAAAABAAAAAFAAAAYS50eHRLpfb7XA4bVEMsFBKkMCd8r6nh'
+          '6FGZsOwRBuLDUEsBAhQAFAABAAAAAAAAAFwBoEscAAAAEAAAAAUAAAAAAAAAAAAAAAAAAAAA'
+          'AGEudHh0UEsFBgAAAAABAAEAMwAAAD8AAAAAAA==');
+      for (final verify in [false, true]) {
+        final archive = ZipDecoder()
+            .decodeBytes(bytes, password: 'pässwort', verify: verify);
+        expect(archive.files.single.content, 'hello crc check\n'.codeUnits,
+            reason: 'verify=$verify');
+      }
+    });
+
     test('an AES zip without a stored CRC passes verifyCrc32', () {
       for (final (name, password) in [
         ('aes256.zip', '12345'),

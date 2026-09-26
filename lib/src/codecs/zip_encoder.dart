@@ -270,6 +270,7 @@ class ZipEncoder {
     fileData.isFile = entry.isFile;
 
     InputStream? compressedData;
+    var ownsData = false;
     int crc32 = 0;
 
     var compressionType = entry.compression ?? CompressionType.deflate;
@@ -341,12 +342,14 @@ class ZipEncoder {
               content!.getStream(decompress: false), output,
               level: chosen, raw: true);
           compressedData = InputMemoryStream(output.getBytes());
+          ownsData = true;
         } else if (compressionType == CompressionType.bzip2) {
           final content = file.rawContent;
           final output = OutputMemoryStream();
           final bzip2 = BZip2Encoder();
           bzip2.encodeStream(content!.getStream(decompress: false), output);
           compressedData = InputMemoryStream(output.getBytes());
+          ownsData = true;
         } else {
           // no compression
           compressedData = file.rawContent?.getStream(decompress: false);
@@ -369,8 +372,12 @@ class ZipEncoder {
       //
       salt = _generateSalt(16);
 
-      final encryptedBytes =
-          _encryptCompressedData(compressedData.toUint8List(), salt);
+      final data = compressedData.toUint8List();
+      final encryptedBytes = _encryptCompressedData(
+          ownsData || compressedData is! InputMemoryStream
+              ? data
+              : Uint8List.fromList(data),
+          salt);
 
       compressedData = InputMemoryStream(encryptedBytes);
     }

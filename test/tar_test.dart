@@ -579,6 +579,28 @@ void main() {
       expect(back.symbolicLink, equals(target));
     });
 
+    test('a non-ASCII name and target are written as pax records', () {
+      final name = 'unicode/Größe ${'é' * 80}.txt';
+      const target = 'unicode/ünïcödé.txt';
+      final tar = TarEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.symlink(name, target))
+        ..add(ArchiveFile.string('plain.txt', 'plain')));
+      expect(String.fromCharCode(tar[156]), equals(TarFile.exHeader));
+      final records = utf8.decode(tar.sublist(512, 1024)).split('\n');
+      expect(records, contains(endsWith(' path=$name')));
+      expect(records, contains(endsWith(' linkpath=$target')));
+      for (final record in records.where((r) => r.contains('='))) {
+        expect(int.parse(record.split(' ').first),
+            utf8.encode('$record\n').length);
+      }
+      final back = TarDecoder().decodeBytes(tar, verify: true);
+      expect(back[0].name, equals(name));
+      expect(back[0].symbolicLink, equals(target));
+      expect(back[1].name, equals('plain.txt'));
+      expect(String.fromCharCode(tar[512 + 512 + 512 + 156]),
+          equals(TarFile.normalFile));
+    });
+
     test('verify rejects a damaged header that starts with zeros', () {
       // A header damaged into starting with zeros used to end the archive,
       // dropping every entry behind it

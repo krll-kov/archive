@@ -161,8 +161,8 @@ void main() {
     });
 
     test('a ustar tar is recognised from its magic, without the checksum', () {
-      // What this package writes is the format before ustar, which carries no
-      // magic at all, so a tar from elsewhere is what shows the short path
+      // What this package writes carries the ustar magic as well, and a tar
+      // from elsewhere shows the short path for other writers
       final tar = File(p.join('test/_data/example.tar')).readAsBytesSync();
       final head = Uint8List.sublistView(tar, 0, 263);
       expect(CodecsRecognizer.isTar(head), isTrue);
@@ -170,12 +170,18 @@ void main() {
           CodecsRecognizer.recognize(head, withZLib: true), ArchiveFormat.tar);
     });
 
-    test('a tar this package wrote needs its whole header', () {
+    test('a tar this package wrote is recognised from its magic', () {
       final tar = archives[ArchiveFormat.tar]!;
-      expect(
-          CodecsRecognizer.isTar(Uint8List.sublistView(tar, 0, 263)), isFalse);
-      expect(
-          CodecsRecognizer.isTar(Uint8List.sublistView(tar, 0, 512)), isTrue);
+      for (final length in [263, 300, 511, 512]) {
+        final head = Uint8List.sublistView(tar, 0, length);
+        expect(CodecsRecognizer.isTar(head), isTrue, reason: '$length bytes');
+        expect(CodecsRecognizer.recognize(head), ArchiveFormat.tar,
+            reason: '$length bytes');
+      }
+      final named = TarEncoder().encodeBytes(
+          Archive()..add(ArchiveFile.string('BZh11AY&SY.txt', 'content')));
+      expect(CodecsRecognizer.recognize(Uint8List.sublistView(named, 0, 300)),
+          ArchiveFormat.tar);
     });
 
     test('a damaged header does not pass the checksum', () {

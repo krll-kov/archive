@@ -63,7 +63,30 @@ class TarEncoder {
     // bytes as encoded, which is what the header field holds, and the size
     // of the separate file
     final name = filenameEncoding.encode(entry.name);
-    if (name.length > 100) {
+    final paxName = entry.name.codeUnits.any((c) => c > 0x7f);
+    final paxLink = entry.isSymbolicLink &&
+        entry.symbolicLink!.codeUnits.any((c) => c > 0x7f);
+    if (paxName || paxLink) {
+      final records = BytesBuilder(copy: false);
+      if (paxName) {
+        records.add(_paxRecord('path', entry.name));
+      }
+      if (paxLink) {
+        records.add(_paxRecord('linkpath', entry.symbolicLink!));
+      }
+      final ts = TarFile();
+      ts.filename = 'PaxHeader';
+      ts.typeFlag = TarFile.exHeader;
+      ts.fileSize = records.length;
+      ts.mode = 0;
+      ts.ownerId = 0;
+      ts.groupId = 0;
+      ts.lastModTime = 0;
+      ts.contentBytes = records.takeBytes();
+      ts.write(_outputStream!, filenameEncoder: filenameEncoding);
+    }
+
+    if (!paxName && name.length > 100) {
       final ts = TarFile();
       ts.filename = '././@LongLink';
       // What other tars key on: the name alone is only read back by this one
@@ -78,7 +101,7 @@ class TarEncoder {
     }
 
     // After the name, which is the order GNU writes the two in
-    if (entry.isSymbolicLink) {
+    if (entry.isSymbolicLink && !paxLink) {
       final link = filenameEncoding.encode(entry.symbolicLink!);
       if (link.length > 100) {
         final ts = TarFile();
@@ -134,6 +157,15 @@ class TarEncoder {
     _outputStream!.writeBytes(eof);
     _outputStream!.flush();
     _outputStream = null;
+  }
+
+  static Uint8List _paxRecord(String key, String value) {
+    final body = [...utf8.encode(' $key='), ...utf8.encode(value), 0x0a];
+    var length = body.length + 1;
+    while ('$length'.length + body.length != length) {
+      length = '$length'.length + body.length;
+    }
+    return Uint8List.fromList([...ascii.encode('$length'), ...body]);
   }
 
   OutputStream? _outputStream;
