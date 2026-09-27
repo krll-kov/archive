@@ -26,6 +26,9 @@ class GZipDecoder {
 
   /// Decompress the given [input] with the GZip format, writing the
   /// decompressed data to the [output] stream.
+  /// Returns false if the archive is malformed or truncated, in which case
+  /// [output] holds however much was decoded before the failure and should be
+  /// discarded.
   ///
   /// {@macro archive.verify_throw_on_error}
   ///

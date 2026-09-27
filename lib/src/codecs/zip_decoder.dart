@@ -109,7 +109,11 @@ class ZipDecoder {
         ..lastModTime = zf.lastModFileDate << 16 | zf.lastModFileTime;
 
       if (callback != null) {
-        callback(entry);
+        try {
+          callback(entry);
+        } catch (error, stackTrace) {
+          throw CallbackFailure(error, stackTrace);
+        }
       }
     }
   }

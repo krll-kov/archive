@@ -673,6 +673,25 @@ void main() async {
             throwsA(isA<ArchiveChecksumException>()));
       });
 
+      test('an error thrown by the callback reaches the caller unchanged', () {
+        final two = ZipEncoder().encodeBytes(Archive()
+          ..add(ArchiveFile.bytes('a', data))
+          ..add(ArchiveFile.bytes('b', data)));
+        for (final (verify, throwOnError) in [
+          (false, false),
+          (true, false),
+          (false, true)
+        ]) {
+          expect(
+              () => ZipDecoder().decodeBytes(two,
+                  verify: verify,
+                  throwOnError: throwOnError,
+                  callback: (_) => throw StateError('callback')),
+              throwsA(isA<StateError>()),
+              reason: 'verify $verify, throwOnError $throwOnError');
+        }
+      });
+
       test('damaged structure throws with either flag and not without', () {
         final bad = Uint8List.fromList(zip);
         final central =
@@ -711,6 +730,54 @@ void main() async {
                   throwsA(isA<ArchivePasswordException>()),
                   reason: '$name, password $password, verify $verify, '
                       'throwOnError $throwOnError');
+            }
+          }
+        }
+      });
+
+      test('extractFileToDisk throws for a wrong or missing password',
+          () async {
+        final dir = Directory.systemTemp.createTempSync('zip_password');
+        addTearDown(() => dir.deleteSync(recursive: true));
+        for (final name in ['aes256.zip', 'zipCrypto.zip']) {
+          for (final password in ['wrong', null]) {
+            await expectLater(
+                extractFileToDisk(
+                    'test/_data/zip/$name', p.join(dir.path, '$name$password'),
+                    password: password),
+                throwsA(isA<ArchivePasswordException>()),
+                reason: '$name, password $password');
+          }
+        }
+      });
+
+      test('extractArchiveToDisk throws for a wrong or missing password',
+          () async {
+        final dir = Directory.systemTemp.createTempSync('zip_password');
+        addTearDown(() => dir.deleteSync(recursive: true));
+        for (final name in ['aes256.zip', 'zipCrypto.zip']) {
+          final bytes = File('test/_data/zip/$name').readAsBytesSync();
+          for (final password in ['wrong', null]) {
+            final out = p.join(dir.path, '$name$password');
+            await expectLater(
+                extractArchiveToDisk(
+                    ZipDecoder().decodeBytes(bytes, password: password), out),
+                throwsA(isA<ArchivePasswordException>()),
+                reason: '$name, password $password');
+            expect(
+                () => extractArchiveToDiskSync(
+                    ZipDecoder().decodeBytes(bytes, password: password),
+                    '${out}sync'),
+                throwsA(isA<ArchivePasswordException>()),
+                reason: '$name, password $password');
+            for (final path in [out, '${out}sync']) {
+              expect(
+                  Directory(path)
+                      .listSync(recursive: true)
+                      .whereType<File>()
+                      .toList(),
+                  isEmpty,
+                  reason: path);
             }
           }
         }
@@ -1144,6 +1211,28 @@ void main() async {
               .single
               .readBytes(),
           throwsA(isA<ArchiveException>()));
+    });
+
+    test('a UTF-8 ZipCrypto password passes the CRC when no check byte matches',
+        () {
+      final bytes =
+          File('test/_data/zip/password_utf8_zipcrypto.zip').readAsBytesSync();
+      int at(List<int> signature) {
+        for (var i = 0;; i++) {
+          if (bytes[i] == signature[0] &&
+              bytes[i + 1] == signature[1] &&
+              bytes[i + 2] == signature[2] &&
+              bytes[i + 3] == signature[3]) {
+            return i;
+          }
+        }
+      }
+
+      bytes[at([0x50, 0x4b, 0x03, 0x04]) + 11] ^= 0xff;
+      bytes[at([0x50, 0x4b, 0x01, 0x02]) + 13] ^= 0xff;
+      final entry =
+          ZipDecoder().decodeBytes(bytes, password: 'pässwort').files.single;
+      expect(utf8.decode(entry.readBytes()!), 'hello\n');
     });
 
     test('a legacy ZipCrypto password survives a UTF-8 verifier collision', () {

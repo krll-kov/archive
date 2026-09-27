@@ -102,6 +102,13 @@ void _extractArchiveEntryToDiskSync(
       try {
         entry.writeContent(output);
       } catch (err) {
+        if (err is ArchivePasswordException) {
+          output.closeSync();
+          try {
+            File(filePath).deleteSync();
+          } catch (_) {}
+          rethrow;
+        }
         //
       }
       output.closeSync();
@@ -167,6 +174,13 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
     try {
       file.writeContent(output);
     } catch (err) {
+      if (err is ArchivePasswordException) {
+        await output.close();
+        try {
+          File(filePath).deleteSync();
+        } catch (_) {}
+        rethrow;
+      }
       //
     }
     await output.close();
@@ -242,27 +256,22 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
     );
   }
 
-  // Each of these returns false where the archive ran out part way through.
+  // Each of these throws where the archive ran out part way through.
   // Dropping that leaves a truncated tar behind, and the entries that did
   // arrive are then extracted as if the whole thing had been read
   Future<void> unwrap(
-      bool Function(InputStream input, OutputStream output) decode,
-      String what) async {
+      bool Function(InputStream input, OutputStream output) decode) async {
     final directory = Directory.systemTemp.createTempSync('dart_archive');
     final target = path.join(directory.path, 'temp.tar');
     tempDir = directory;
     archivePath = target;
     final input = InputFileStream(inputPath);
     final output = OutputFileStream(target, bufferSize: bufferSize);
-    final bool ok;
     try {
-      ok = decode(input, output);
+      decode(input, output);
     } finally {
       await input.close();
       await output.close();
-    }
-    if (!ok) {
-      throw ArchiveException('Could not read the whole $what archive');
     }
     recognized = ArchiveFormat.tar;
   }
@@ -270,18 +279,17 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
   InputStream? toClose;
   try {
     if (recognized == ArchiveFormat.gzip) {
-      await unwrap(
-          (input, output) => GZipDecoder().decodeStream(input, output), 'gzip');
+      await unwrap((input, output) =>
+          GZipDecoder().decodeStream(input, output, throwOnError: true));
     } else if (recognized == ArchiveFormat.bzip2) {
-      await unwrap(
-          (input, output) => BZip2Decoder().decodeStream(input, output),
-          'bzip2');
+      await unwrap((input, output) =>
+          BZip2Decoder().decodeStream(input, output, throwOnError: true));
     } else if (recognized == ArchiveFormat.xz) {
-      await unwrap(
-          (input, output) => XZDecoder().decodeStream(input, output), 'xz');
+      await unwrap((input, output) =>
+          XZDecoder().decodeStream(input, output, throwOnError: true));
     } else if (recognized == ArchiveFormat.zstd) {
-      await unwrap(
-          (input, output) => ZstdDecoder().decodeStream(input, output), 'zstd');
+      await unwrap((input, output) =>
+          ZstdDecoder().decodeStream(input, output, throwOnError: true));
     }
 
     Archive archive;
@@ -331,7 +339,7 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
         final output = OutputFileStream(filePath, bufferSize: bufferSize);
         try {
           file.writeContent(output);
-        } catch (_) {
+        } catch (error) {
           // A partial file from a failed entry looked extracted, so we delete
           // it
           try {
@@ -341,6 +349,9 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
           try {
             File(filePath).deleteSync();
           } catch (_) {}
+          if (error is ArchivePasswordException) {
+            rethrow;
+          }
           continue;
         }
         if (posixSupported) {

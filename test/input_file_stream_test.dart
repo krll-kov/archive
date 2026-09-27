@@ -220,6 +220,27 @@ void main() {
       expect(fs.readUint32(), 116 | (117 << 8) | (118 << 16) | (119 << 24));
     });
 
+    test('reads multi-byte values in its own byte order', () {
+      final memory =
+          InputMemoryStream(testData, byteOrder: ByteOrder.bigEndian);
+      final streams = [
+        InputFileStream(testPath, byteOrder: ByteOrder.bigEndian),
+        InputFileStream.withFileHandle(FileHandle(testPath),
+            byteOrder: ByteOrder.bigEndian),
+        InputFileStream.withFileBuffer(FileBuffer(FileHandle(testPath)),
+            byteOrder: ByteOrder.bigEndian),
+        InputFileStream(testPath)..byteOrder = ByteOrder.bigEndian,
+      ];
+      for (final input in streams) {
+        addTearDown(input.closeSync);
+        memory.setPosition(0);
+        expect(input.readUint16(), memory.readUint16());
+        expect(input.readUint24(), memory.readUint24());
+        expect(input.readUint32(), memory.readUint32());
+        expect(input.readUint64(), memory.readUint64());
+      }
+    });
+
     test("clone", () async {
       final input = InputFileStream(testPath)..open();
       final input2 =

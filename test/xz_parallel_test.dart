@@ -9,6 +9,8 @@ import 'package:archive/src/codecs/bcj_x86.dart';
 import 'package:archive/src/codecs/xz/_xz_parallel_io.dart'
     show xzDecodeMultithreaded;
 import 'package:archive/src/codecs/xz/xz_index.dart';
+import 'package:archive/src/codecs/xz/xz_stream_decoder.dart'
+    show xzStagingSize;
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -80,6 +82,42 @@ Uint8List sampleData(int length) {
     data[i] = (i % 251) ^ ((state & 0xff) < 16 ? state & 0xff : 0);
   }
   return data;
+}
+
+List<int> _uint32(int value) =>
+    [value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, value >>> 24];
+
+Uint8List emptyBlockStream() {
+  const flags = [0x00, 0x01];
+  final blockHeader = [0x02, 0xc0, 0x01, 0x00, 0x21, 0x01, 0x00, 0x00];
+  final block = [
+    ...blockHeader,
+    ..._uint32(getCrc32(blockHeader)),
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    ..._uint32(0),
+  ];
+  final records = [0x00, 0x01, blockHeader.length + 4 + 1 + 4, 0x00];
+  final index = [...records, ..._uint32(getCrc32(records))];
+  final backward = [..._uint32(index.length ~/ 4 - 1), ...flags];
+  return Uint8List.fromList([
+    0xfd,
+    0x37,
+    0x7a,
+    0x58,
+    0x5a,
+    0x00,
+    ...flags,
+    ..._uint32(getCrc32(flags)),
+    ...block,
+    ...index,
+    ..._uint32(getCrc32(backward)),
+    ...backward,
+    0x59,
+    0x5a,
+  ]);
 }
 
 Future<Uint8List> decodeBytesOnIsolates(Uint8List compressed,
@@ -776,6 +814,53 @@ void main() {
           equals(expected));
     });
 
+    test('one worker writes a block that starts on a piece boundary', () async {
+      final part = XZEncoder().encodeBytes(Uint8List(xzStagingSize));
+      final compressed = Uint8List.fromList([...part, ...part]);
+      final output = OutputMemoryStream();
+      expect(
+          await decodeStreamOnIsolates(InputMemoryStream(compressed), output,
+              workers: 1),
+          isTrue);
+      expect(output.length, equals(2 * xzStagingSize));
+
+      final completer = Completer<Uint8List>();
+      XZDecoder(maxPreallocateSize: 0).decodeBytes(compressed,
+          multithread: XZMultithreadOptions(
+            onDone: completer.complete,
+            onError: completer.completeError,
+            workers: 1,
+          ));
+      expect(await completer.future, hasLength(2 * xzStagingSize));
+    });
+
+    test('a block that decodes to nothing keeps the blocks after it', () async {
+      final first =
+          XZEncoder().encodeBytes(Uint8List(300000)..fillRange(0, 300000, 1));
+      final last =
+          XZEncoder().encodeBytes(Uint8List(300000)..fillRange(0, 300000, 2));
+      final compressed =
+          Uint8List.fromList([...first, ...emptyBlockStream(), ...last]);
+      final whole = XZDecoder().decodeBytes(compressed, verify: true);
+      expect(whole, hasLength(600000));
+
+      final output = OutputMemoryStream();
+      expect(
+          await decodeStreamOnIsolates(InputMemoryStream(compressed), output,
+              workers: 2),
+          isTrue);
+      expect(output.getBytes(), equals(whole));
+
+      final completer = Completer<Uint8List>();
+      XZDecoder(maxPreallocateSize: 0).decodeBytes(compressed,
+          multithread: XZMultithreadOptions(
+            onDone: completer.complete,
+            onError: completer.completeError,
+            workers: 2,
+          ));
+      expect(await completer.future, equals(whole));
+    });
+
     test('a worker count above the core count is clamped, not rejected',
         () async {
       final compressed = fixture('blocks');
@@ -1271,17 +1356,21 @@ void main() {
       test('is refused when there is nowhere to deliver the exception', () {
         // Asking to be told and leaving no onError would put the failure back
         // where it started, so it is rejected while the caller can still hear.
-        expect(
-            () => XZDecoder().decodeBytes(broken,
-                throwOnError: true,
-                multithread: XZMultithreadOptions(onDone: (_) {})),
-            throwsArgumentError);
-        expect(
-            () => XZDecoder().decodeStream(
-                InputMemoryStream(broken), OutputMemoryStream(),
-                throwOnError: true,
-                multithread: XZMultithreadOptions(onDone: (_) {})),
-            throwsArgumentError);
+        for (final (verify, throwOnError) in [(false, true), (true, false)]) {
+          expect(
+              () => XZDecoder().decodeBytes(broken,
+                  verify: verify,
+                  throwOnError: throwOnError,
+                  multithread: XZMultithreadOptions(onDone: (_) {})),
+              throwsArgumentError);
+          expect(
+              () => XZDecoder().decodeStream(
+                  InputMemoryStream(broken), OutputMemoryStream(),
+                  verify: verify,
+                  throwOnError: throwOnError,
+                  multithread: XZMultithreadOptions(onDone: (_) {})),
+              throwsArgumentError);
+        }
       });
 
       test('omitting onError is still fine without it', () async {

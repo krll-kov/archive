@@ -17,7 +17,9 @@ class TarDecoder {
 
   TarDecoder({this.filenameEncoding = const Utf8Codec()});
 
-  /// Decodes [data] as a tar archive
+  /// Decode [data] as a tar archive. With [verify], every entry's header
+  /// checksum is checked and an [ArchiveException] thrown if one is wrong,
+  /// which is what tells a tar apart from an unrelated file.
   ///
   /// With [storeData] false the entries hold no content, only their headers
   ///
@@ -36,7 +38,9 @@ class TarDecoder {
         callback: callback);
   }
 
-  /// Decodes [input] of a tar archive
+  /// Decode [input] as a tar archive. With [verify], every entry's header
+  /// checksum is checked and an [ArchiveException] thrown if one is wrong,
+  /// which is what tells a tar apart from an unrelated file.
   ///
   /// With [storeData] false the entries hold no content, only their headers
   ///
@@ -145,7 +149,11 @@ class TarDecoder {
       archive.add(file);
 
       if (callback != null) {
-        callback(file);
+        try {
+          callback(file);
+        } catch (error, stackTrace) {
+          throw CallbackFailure(error, stackTrace);
+        }
       }
     } else {
       final file = ArchiveFile.directory(filename);
@@ -161,7 +169,11 @@ class TarDecoder {
       archive.add(file);
 
       if (callback != null) {
-        callback(file);
+        try {
+          callback(file);
+        } catch (error, stackTrace) {
+          throw CallbackFailure(error, stackTrace);
+        }
       }
     }
   }

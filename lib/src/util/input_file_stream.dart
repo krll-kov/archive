@@ -29,7 +29,7 @@ class InputFileStream extends InputStream {
   /// littleEndian order.
   InputFileStream.withFileHandle(AbstractFileHandle fh,
       {super.byteOrder = ByteOrder.littleEndian})
-      : _file = FileBuffer(fh),
+      : _file = FileBuffer(fh, byteOrder: byteOrder),
         _fileOffset = 0,
         _position = 0 {
     _fileSize = _file.length;
@@ -47,7 +47,8 @@ class InputFileStream extends InputStream {
     int bufferSize = FileBuffer.kDefaultBufferSize,
   }) {
     return InputFileStream.withFileBuffer(
-        FileBuffer(FileHandle(path), bufferSize: bufferSize),
+        FileBuffer(FileHandle(path),
+            byteOrder: byteOrder, bufferSize: bufferSize),
         byteOrder: byteOrder);
   }
 
@@ -55,7 +56,8 @@ class InputFileStream extends InputStream {
       Stream<Uint8List> stream, int fileLength,
       {ByteOrder byteOrder = ByteOrder.littleEndian}) async {
     return InputFileStream.withFileBuffer(
-        FileBuffer(await RamFileHandle.fromStream(stream, fileLength)),
+        FileBuffer(await RamFileHandle.fromStream(stream, fileLength),
+            byteOrder: byteOrder),
         byteOrder: byteOrder);
   }
 
@@ -177,6 +179,9 @@ class InputFileStream extends InputStream {
     if (isEOS) {
       return 0;
     }
+    if (byteOrder != _file.byteOrder) {
+      return super.readUint16();
+    }
     final b = _file.readUint16(_fileOffset + _position);
     _position += 2;
     return b;
@@ -187,6 +192,9 @@ class InputFileStream extends InputStream {
   int readUint24() {
     if (isEOS) {
       return 0;
+    }
+    if (byteOrder != _file.byteOrder) {
+      return super.readUint24();
     }
     final b = _file.readUint24(_fileOffset + _position);
     _position += 3;
@@ -199,6 +207,9 @@ class InputFileStream extends InputStream {
     if (isEOS) {
       return 0;
     }
+    if (byteOrder != _file.byteOrder) {
+      return super.readUint32();
+    }
     final b = _file.readUint32(_fileOffset + _position);
     _position += 4;
     return b;
@@ -209,6 +220,9 @@ class InputFileStream extends InputStream {
   int readUint64() {
     if (isEOS) {
       return 0;
+    }
+    if (byteOrder != _file.byteOrder) {
+      return super.readUint64();
     }
     final b = _file.readUint64(_fileOffset + _position);
     _position += 8;

@@ -109,7 +109,7 @@ Future<bool> xzDecodeMultithreaded({
   int? workers,
   int? memoryBudget,
   required void Function(int outputOffset, Uint8List chunk) onChunk,
-  void Function(int outputOffset, bool ok)? onBlockDone,
+  void Function(int block, bool ok)? onBlockDone,
   void Function(String reason)? onFailureReason,
   bool orderedOutput = false,
   required int fileReadBufferSize,
@@ -154,8 +154,19 @@ Future<bool> xzDecodeMultithreaded({
 
   // Falls back to a single background isolate if the archive is tiny or the
   // worker limit is 1, ensuring the main thread still stays unblocked.
-  // Per-block verdicts are skipped here since a single job processes the entire
-  // archive
+  // A single job processes the entire archive in order, so a block is reported
+  // done once output reaches its end
+  var done = 0;
+  final inOrder = blocks == null || onBlockDone == null
+      ? onChunk
+      : (int offset, Uint8List chunk) {
+          while (done < blocks.length &&
+              blocks[done].outputOffset + blocks[done].uncompressedLength <=
+                  offset) {
+            onBlockDone(done++, true);
+          }
+          onChunk(offset, chunk);
+        };
   return _runJobs([
     _Job(
       kind: _kindStream,
@@ -169,7 +180,7 @@ Future<bool> xzDecodeMultithreaded({
       maxPreallocateSize: maxPreallocateSize,
       fileReadBufferSize: fileReadBufferSize,
     )
-  ], 1, onChunk, null, onFailureReason);
+  ], 1, inOrder, null, onFailureReason);
 }
 
 /// The memory an LZMA2 dictionary will take for the largest sampled block.
@@ -356,7 +367,7 @@ Future<bool> _runJobs(
     List<_Job> jobs,
     int workerCount,
     void Function(int outputOffset, Uint8List chunk) onChunk,
-    void Function(int outputOffset, bool ok)? onBlockDone,
+    void Function(int block, bool ok)? onBlockDone,
     void Function(String reason)? onFailureReason,
     [int? memoryBudget]) async {
   final receive = ReceivePort();
@@ -365,6 +376,7 @@ Future<bool> _runJobs(
   final pending = Queue<int>()..addAll(Iterable<int>.generate(jobs.length));
   final costs = List<int?>.filled(jobs.length, null);
   final costOf = <SendPort, int>{};
+  final jobOf = <SendPort, int>{};
   final idle = <SendPort>[];
   var inFlight = 0;
   RandomAccessFile? headerFile;
@@ -416,7 +428,9 @@ Future<bool> _runJobs(
       final port = idle.removeLast();
       inFlight += cost;
       costOf[port] = cost;
-      port.send(jobs[pending.removeFirst()].toMessage());
+      final job = pending.removeFirst();
+      jobOf[port] = job;
+      port.send(jobs[job].toMessage());
     }
   }
 
@@ -482,7 +496,10 @@ Future<bool> _runJobs(
             if (!blockOk) {
               ok = false;
             }
-            onBlockDone?.call(message[4] as int, blockOk);
+            final job = jobOf.remove(message[1] as SendPort);
+            if (job != null) {
+              onBlockDone?.call(job, blockOk);
+            }
             if (!blockOk) {
               // The first block to be rejected is the one worth reporting:
               // later ones may only be failing because this one did.

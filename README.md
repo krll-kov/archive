@@ -4,24 +4,32 @@
 
 ## 5.0 Update
 
-Decoders now share one contract for errors. Without flags they never throw and return what decoded before the
-damage. `throwOnError: true` throws `ArchiveException` on damaged or cut data, and `verify: true` does the same
-and also checks checksums on top of that, throwing `ArchiveChecksumException` on a mismatch.
+Decoders now share one contract for errors. Without flags they never throw on damaged data and return what decoded 
+before the damage. `throwOnError: true` throws `ArchiveException` on damaged or cut data, and `verify: true` does the
+same and also checks checksums on top of that, throwing `ArchiveChecksumException` on a mismatch.
 
-Converters (`xzCodec`, `zstdCodec`, `bzip2Codec`, `zipCodec` and `tarCodec`) work like `gzip` and `zlib` from 
+`ArchiveCallback` for TAR and ZIP, `ArchivePasswordException` for zip passwords, `ArgumentError` for unrealistic params
+and other similar places remain untouched, they overrule new `throwOnError` and `verify` params and throw
+regardless of these values.
+
+Converters (`xzCodec`, `zstdCodec`, `bzip2Codec` and `tarCodec`) work like `gzip` and `zlib` from 
 `dart:io`, as the format specifications expect: they verify checksums by default and report every error to the stream.
+`zipCodec` has only encoder part so there is nothing it can verify.
 
 ```dart
 try {
   // When `verify: true` is specified, `throwOnError` becomes redundant since verify
-  // does the same job + checksum comparison
+  // does the same job + checksum comparison. `throwOnError` may be used when you don't want to pay for an extra
+  // ~5-10% speed decrease, yet still wish to get the basic validation errors, or work with archives that remain
+  // valid regardless of their incorrect checksum
   final data = XZDecoder().decodeBytes(bytes, verify: true);
   print('${data.length} bytes');
 } on ArchiveChecksumException {
   print('the data decoded but does not match its checksum');
 } on ArchiveException {
   print('the archive is damaged or cut short');
-}
+} // `ZipDecoder` may also throw `ArchivePasswordException` (regardless of `throwOnError`), a subclass of
+  // `ArchiveException`: catch it above `ArchiveException` to tell them apart.
 ```
 
 ### Migration quick tips:

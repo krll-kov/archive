@@ -1,11 +1,11 @@
 # 5.0.0
 
 * *BREAKING CHANGE*: All decoders (`XZDecoder`, `TarDecoder`, `ZipDecoder`, `GZipDecoder`, `ZLibDecoder`,
-  `BZip2Decoder` and `ZstdDecoder`) now share the same contract: by default no errors are thrown anymore. If error
-  is needed, specify `throwOnError: true` to `decodeBytes` or `decodeStream`. If checksum verification is needed,
-  specify `verify: true` (verify also does the same work on top as `throwOnError` along with checksum comparison) to
-  `decodeBytes` or `decodeStream`. All `throwOnError` are reported as `ArchiveException` and `verify` checksum
-  exceptions with `ArchiveChecksumException` that extends `ArchiveException`.
+  `BZip2Decoder` and `ZstdDecoder`) now share the same contract: by default no *damaged data* errors are thrown anymore.
+  If error is needed, specify `throwOnError: true` to `decodeBytes` or `decodeStream`. If checksum verification 
+  is required, specify `verify: true` (verify also does the same work on top as `throwOnError` along with checksum
+  comparison) to `decodeBytes` or `decodeStream`. All `throwOnError` are reported as `ArchiveException` and `verify`
+  checksum exceptions with `ArchiveChecksumException` that extends `ArchiveException`.
 * *BREAKING CHANGE*: Unlike decoders mentioned above, all new converters APIs mentioned beneath use both `verify` and
   `throwOnError` by default due to the specification of their format so that they completely coincide with dart 
   `zlib` and `gzip` transformers.
@@ -21,12 +21,15 @@
 * *BREAKING CHANGE*: `extractFileToDisk` now detects files not only by extension but also by their header bytes as all 
   platform decoders do (like MacOS, Windows, Linux). If detection by headers fails it uses old file
   extension format instead.
-* *BREAKING CHANGE*: `ZipDecoder` and `extractFileToDisk` for Zip that specified an incorrect password or trigger
-  AES MAC error now throw `ArchivePasswordException` that extends `ArchiveException` instead of `Exception` and instead
-  of returning wrong data for ZipCrypto. This exception overrules `throwOnError` and is thrown always when
-  password does not match.
+* *BREAKING CHANGE*: `ZipDecoder` and `extractFileToDisk` for Zip that specified an incorrect password error now throw 
+ `ArchivePasswordException` that extends `ArchiveException` instead of `Exception` and instead of returning wrong data
+  for ZipCrypto. This exception overrules `throwOnError` and is thrown always when password does not match. AES MAC
+  is a part of `verify` now, it properly handles incorrect data with `ArchiveChecksumException` if its specified.
+* `extractArchiveToDisk` and `extractArchiveToDiskSync` throw with `ArchivePasswordException` as well for 
+  bad password case.
 * *BREAKING CHANGE*: `listTarFiles` and `extractTarFiles` now throw an error for a damaged archive instead of
   silently using only its readable part.
+* Multithreaded `XZDecoder` requires `onError` with `verify`, as it already did with `throwOnError`
 * Added Dart async* `StreamTransformer`/`ByteConversionSink`/`Converter` support
   (`xzCodec`, `zstdCodec`, `bzip2Codec`, `tarCodec` and `zipCodec`) for decode and encode (decoders for
   all formats except for zip). xz, zstd and bzip2 are `Converter`s, bytes to bytes; tar and zip are
@@ -110,7 +113,10 @@
 * Fixed `ZipEncoder` failing to create on the web.
 * `TarDecoder` with `verify: true` now reports a file that is cut short, like other tar tools do.
 * Fixed `ZipEncoder` zip64 for small files that follow large ones and for entries over 4 GB.
-
+* Fixed `InputFileStream` ignoring its `byteOrder` for `readUint16`, `readUint24`, `readUint32` and `readUint64`.
+* Fixed `ZLibDecoderWeb` and `GZipDecoderWeb` depending on the byte order of the input stream: `decodeStream`
+  failed `verify` on a whole zlib stream from a little-endian stream, and gzip failed on a big-endian one.
+* Fixed `ZLibDecoderWeb` dropping the decoded data when bytes follow the stream, and accepting an empty input.
 
 # 4.3.0
 

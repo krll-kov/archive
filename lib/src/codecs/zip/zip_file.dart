@@ -460,12 +460,14 @@ class ZipFile extends FileContent {
       }
     }
     if (passing.isEmpty) {
-      final bytes = _zipCryptoBody(candidates.last, start);
-      if (_plainCrc32(bytes) != crc32) {
-        throw ArchivePasswordException(
-            'zip: wrong or missing password for $filename');
+      for (final password in candidates) {
+        final bytes = _zipCryptoBody(password, start);
+        if (_plainCrc32(bytes) == crc32) {
+          return InputMemoryStream(bytes);
+        }
       }
-      return InputMemoryStream(bytes);
+      throw ArchivePasswordException(
+          'zip: wrong or missing password for $filename');
     }
     return InputMemoryStream(_zipCryptoBody(passing.first, start));
   }

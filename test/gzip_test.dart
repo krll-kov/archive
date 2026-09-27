@@ -216,6 +216,19 @@ void main() {
       Uint8List of(String name) => name.startsWith('gzip') ? gzip : zlib;
 
       for (final MapEntry(key: name, value: decode) in decoders.entries) {
+        test('$name: a whole stream passes verify', () {
+          expect(decode(of(name), true, false), isTrue);
+        });
+
+        test('$name: an empty input throws with either flag', () {
+          expect(decode(Uint8List(0), false, false), isFalse);
+          for (final (v, t) in [(true, false), (false, true)]) {
+            expect(() => decode(Uint8List(0), v, t),
+                throwsA(isA<ArchiveException>()),
+                reason: 'verify $v, throwOnError $t');
+          }
+        });
+
         test('$name: a wrong checksum throws only with verify', () {
           final bad = Uint8List.fromList(of(name));
           bad[bad.length - (name.startsWith('gzip') ? 8 : 1)] ^= 1;
@@ -248,6 +261,75 @@ void main() {
           }
         });
       }
+
+      test('gzip web verifies the zlib stream it falls back to', () {
+        expect(const GZipDecoderWeb().decodeBytes(zlib, verify: true), data);
+        expect(const GZipDecoder().decodeBytes(zlib, verify: true), data);
+      });
+
+      test('web decoders read a stream in either byte order', () {
+        for (final order in ByteOrder.values) {
+          for (final (decoder, bytes) in [
+            (const GZipDecoderWeb(), gzip),
+            (const ZLibDecoderWeb(), zlib),
+          ]) {
+            final input = InputMemoryStream(bytes, byteOrder: order);
+            final output = OutputMemoryStream();
+            expect(decoder.decodeStream(input, output, verify: true), isTrue,
+                reason: '$decoder $order');
+            expect(output.getBytes(), data);
+            expect(input.byteOrder, order);
+          }
+        }
+      });
+
+      test('zlib verify accepts a whole stream that bytes follow', () {
+        final padded = Uint8List.fromList([...zlib, 0, 0, 0, 0]);
+        expect(const ZLibDecoder().decodeBytes(padded, verify: true), data);
+        expect(
+            const ZLibDecoder().decodeStream(
+                InputMemoryStream(padded), OutputMemoryStream(),
+                verify: true),
+            isTrue);
+        expect(const GZipDecoder().decodeBytes(padded, verify: true), data);
+        expect(
+            const GZipDecoder().decodeStream(
+                InputMemoryStream(padded), OutputMemoryStream(),
+                verify: true),
+            isTrue);
+      });
+
+      test('zlib verify on dart:io refuses over 4 KB after the stream', () {
+        final padded = Uint8List.fromList([...zlib, ...Uint8List(4097)]);
+        expect(
+            const ZLibDecoder().decodeBytes(padded, throwOnError: true), data);
+        expect(() => const ZLibDecoder().decodeBytes(padded, verify: true),
+            throwsA(isA<ArchiveChecksumException>()));
+        expect(const ZLibDecoderWeb().decodeBytes(padded, verify: true), data);
+      });
+
+      test('zlib web keeps a whole stream that bytes follow', () {
+        final padded = Uint8List.fromList([...zlib, 0, 0, 0, 0]);
+        expect(const ZLibDecoderWeb().decodeBytes(padded), data);
+        expect(const ZLibDecoder().decodeBytes(padded), data);
+      });
+
+      test('zlib web ignores bytes after a whole stream with either flag', () {
+        for (final tail in [
+          [0],
+          [0, 0, 0, 0],
+          [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        ]) {
+          final padded = Uint8List.fromList([...zlib, ...tail]);
+          for (final (v, t) in [(true, false), (false, true)]) {
+            expect(
+                const ZLibDecoderWeb()
+                    .decodeBytes(padded, verify: v, throwOnError: t),
+                data,
+                reason: 'tail $tail, verify $v, throwOnError $t');
+          }
+        }
+      });
     });
 
     test('the web decoder writes a file and a sink it cannot read back', () {

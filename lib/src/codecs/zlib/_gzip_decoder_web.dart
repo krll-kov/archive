@@ -2,6 +2,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import '../../util/archive_exception.dart';
+import '../../util/byte_order.dart';
 import '../../util/crc32.dart';
 import '../../util/decode_guard.dart';
 import '../../util/input_memory_stream.dart';
@@ -31,8 +32,14 @@ class _GZipDecoder extends ZLibDecoderBase {
   @override
   bool decodeStream(InputStream input, OutputStream output,
       {bool verify = false, bool raw = false, bool throwOnError = false}) {
-    return guardDecode('gzip', verify, throwOnError,
-        () => _decode(input, output, verify, raw));
+    final held = input.byteOrder;
+    input.byteOrder = ByteOrder.littleEndian;
+    try {
+      return guardDecode('gzip', verify, throwOnError,
+          () => _decode(input, output, verify, raw));
+    } finally {
+      input.byteOrder = held;
+    }
   }
 
   bool _decode(InputStream input, OutputStream output, bool verify, bool raw) {

@@ -31,4 +31,34 @@ void main() {
       expect(() => guardDecode('x', true, false, decode), throwsA(plain));
     }
   });
+
+  test('throwIfStrict follows the rules of guardDecode', () {
+    String outcome(void Function() f) {
+      try {
+        f();
+        return 'none';
+      } catch (error) {
+        return '${error.runtimeType} ${(error as ArchiveException).message}';
+      }
+    }
+
+    for (final error in [
+      ArchiveException('damage'),
+      ArchiveChecksumException('checksum'),
+      ArchivePasswordException('password'),
+    ]) {
+      for (final (verify, throwOnError) in [
+        (false, false),
+        (false, true),
+        (true, false),
+        (true, true)
+      ]) {
+        expect(
+            outcome(() => throwIfStrict(error, verify, throwOnError)),
+            outcome(() =>
+                guardDecode('x', verify, throwOnError, () => throw error)),
+            reason: '$error, verify $verify, throwOnError $throwOnError');
+      }
+    }
+  });
 }

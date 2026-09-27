@@ -32,14 +32,28 @@ class _ZLibDecoder extends ZLibDecoderBase {
   @override
   bool decodeStream(InputStream input, OutputStream output,
       {bool verify = false, bool raw = false, bool throwOnError = false}) {
-    return guardDecode('zlib', verify, throwOnError,
-        () => _decode(input, output, verify, raw));
+    final held = input.byteOrder;
+    input.byteOrder = ByteOrder.bigEndian;
+    try {
+      return guardDecode('zlib', verify, throwOnError,
+          () => _decode(input, output, verify, raw));
+    } finally {
+      input.byteOrder = held;
+    }
   }
 
   bool _decode(InputStream input, OutputStream output, bool verify, bool raw) {
     Uint8List? buffer;
 
+    if (!raw && input.isEOS) {
+      return false;
+    }
+
     while (!input.isEOS) {
+      if (buffer != null) {
+        output.writeBytes(buffer);
+      }
+
       /*
        * The zlib format has the following structure:
        * CMF  1 byte
@@ -60,7 +74,7 @@ class _ZLibDecoder extends ZLibDecoderBase {
       if (!raw) {
         // Both reads below are unchecked
         if (input.length < 2) {
-          return false;
+          return buffer != null;
         }
         final cmf = input.readByte();
         final flg = input.readByte();
@@ -70,7 +84,7 @@ class _ZLibDecoder extends ZLibDecoderBase {
 
         if (method != deflate) {
           //throw ArchiveException('Only DEFLATE compression supported: $method');
-          return false;
+          return buffer != null;
         }
 
         final fcheck = flg & 16; // ignore: unused_local_variable
@@ -80,7 +94,7 @@ class _ZLibDecoder extends ZLibDecoderBase {
         // FCHECK is set such that (cmf * 256 + flag) must be a multiple of 31.
         if (((cmf * 256) + flg) % 31 != 0) {
           //throw ArchiveException('Invalid FCHECK');
-          return false;
+          return buffer != null;
         }
 
         if (fdict != 0) {
@@ -88,10 +102,6 @@ class _ZLibDecoder extends ZLibDecoderBase {
           //throw ArchiveException('FDICT Encoding not currently supported');
           return false;
         }
-      }
-
-      if (buffer != null) {
-        output.writeBytes(buffer);
       }
 
       // Inflate

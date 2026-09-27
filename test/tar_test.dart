@@ -434,6 +434,25 @@ void main() {
       }
     });
 
+    test('an error thrown by the callback reaches the caller unchanged', () {
+      final tar = TarEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('a.txt', Uint8List(100)))
+        ..add(ArchiveFile.bytes('b.txt', Uint8List(5000))));
+      for (final (verify, throwOnError) in [
+        (false, false),
+        (true, false),
+        (false, true)
+      ]) {
+        expect(
+            () => TarDecoder().decodeBytes(tar,
+                verify: verify,
+                throwOnError: throwOnError,
+                callback: (_) => throw StateError('callback')),
+            throwsA(isA<StateError>()),
+            reason: 'verify $verify, throwOnError $throwOnError');
+      }
+    });
+
     test('verify rejects what is not a tar', () {
       // Without a checksum check nothing tells a tar apart from an unrelated
       // file: every other header field reads as something.

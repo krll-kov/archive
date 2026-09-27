@@ -57,7 +57,7 @@ class XZDecoder {
     if (multithread == null) {
       return _decodeBytes(bytes, verify, throwOnError);
     }
-    _checkOptions(multithread, throwOnError);
+    _checkOptions(multithread, verify || throwOnError);
 
     if (!xzIsolatesSupported) {
       // No isolates here, so this blocks the caller, but the result is still
@@ -93,7 +93,7 @@ class XZDecoder {
     if (multithread == null) {
       return _decodeStream(input, output, verify, throwOnError);
     }
-    _checkOptions(multithread, throwOnError);
+    _checkOptions(multithread, verify || throwOnError);
 
     if (!xzIsolatesSupported) {
       _report(multithread,
@@ -199,7 +199,7 @@ class XZDecoder {
         fileReadBufferSize: options.fileReadBufferSize,
       );
       if (!ok) {
-        guardDecode('XZ', verify, throwOnError, () => throw _invalid(reason));
+        throwIfStrict(_invalid(reason), verify, throwOnError);
       }
       // Whether or not it succeeded, this yields what was decoded, which is
       // what the single threaded path does too.
@@ -260,11 +260,8 @@ class XZDecoder {
           }
         }
       },
-      onBlockDone: (offset, blockOk) {
-        if (blocks.isNotEmpty) {
-          final index = _blockIndexAt(blocks, offset);
-          accepted[index] = accepted[index] && blockOk;
-        }
+      onBlockDone: (index, blockOk) {
+        accepted[index] = accepted[index] && blockOk;
       },
       onFailureReason: (r) => reason = r,
       fileReadBufferSize: options.fileReadBufferSize,
@@ -273,7 +270,7 @@ class XZDecoder {
     if (ok && !overran) {
       return output;
     }
-    guardDecode('XZ', verify, throwOnError, () => throw _invalid(reason));
+    throwIfStrict(_invalid(reason), verify, throwOnError);
 
     // Blocks are decoded out of order, so the output stops where the single
     // threaded decode would have given up: at the first block that is not
@@ -345,7 +342,7 @@ class XZDecoder {
       input.skip(input.length);
     }
     if (!ok) {
-      guardDecode('XZ', verify, throwOnError, () => throw _invalid(reason));
+      throwIfStrict(_invalid(reason), verify, throwOnError);
     }
     return ok;
   }
@@ -387,8 +384,7 @@ class XZDecoder {
 
   // Generic so that onDone reads back at its own type and not Object?, which a
   // function taking Uint8List is not
-  static void _checkOptions<T>(
-      XZMultithreadOptions<T> options, bool throwOnError) {
+  static void _checkOptions<T>(XZMultithreadOptions<T> options, bool strict) {
     if (identical(options.onDone, xzNoResult)) {
       throw ArgumentError.value(
           null,
@@ -398,12 +394,12 @@ class XZDecoder {
     }
     // Asking to hear about failures with nowhere to tell would send the
     // failure back where it started. It is refused before the call returns
-    if (throwOnError && options.onError == null) {
+    if (strict && options.onError == null) {
       throw ArgumentError.value(
           null,
           'onError',
-          'Must be given when throwOnError is set, since that is where the '
-              'exception is delivered');
+          'Must be given when throwOnError or verify is set, since that is '
+              'where the exception is delivered');
     }
     final workers = options.workers;
     if (workers != null && workers < 1) {
@@ -448,12 +444,11 @@ class _OrderedWriter {
     _drain();
   }
 
-  void blockDone(int offset, bool ok) {
+  void blockDone(int index, bool ok) {
     final blocks = _blocks!;
-    final index = _blockIndexAt(blocks, offset);
     if (!ok) {
       final stop = _stop;
-      final end = offset + blocks[index].uncompressedLength;
+      final end = blocks[index].outputOffset + blocks[index].uncompressedLength;
       if (stop == null || end < stop) {
         _stop = end;
       }
@@ -481,8 +476,18 @@ class _OrderedWriter {
       return true;
     }
     final index = _blockIndexAt(blocks, offset);
-    return blocks[index].outputOffset != offset ||
-        _confirmed.contains(index - 1);
+    if (blocks[index].outputOffset != offset) {
+      return true;
+    }
+    for (var i = index - 1; i >= 0; i--) {
+      if (!_confirmed.contains(i)) {
+        return false;
+      }
+      if (blocks[i].outputOffset != offset) {
+        break;
+      }
+    }
+    return true;
   }
 }
 

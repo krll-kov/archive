@@ -5,9 +5,11 @@ import 'dart:typed_data';
 import '../../util/adler32.dart';
 import '../../util/archive_exception.dart';
 import '../../util/crc32.dart';
+import '../../util/decode_guard.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_stream.dart';
 import '_zlib_decoder_base.dart';
+import '_zlib_decoder_io.dart';
 import '_zlib_encoder_base.dart';
 
 const platformGZipDecoder = _GZipDecoder();
@@ -19,36 +21,40 @@ class _GZipDecoder extends ZLibDecoderBase {
   @override
   Uint8List decodeBytes(List<int> data,
       {bool verify = false, bool raw = false, bool throwOnError = false}) {
-    final bytes = data is Uint8List ? data : Uint8List.fromList(data);
-    final seen = bytes.length;
-    final isGZip = seen >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
-    final trailerLength = isGZip ? 8 : 4;
-    if (seen < trailerLength + 2) {
-      _fail(verify || throwOnError);
-      return Uint8List(0);
-    }
-    final Uint8List out;
-    try {
+    var out = Uint8List(0);
+    guardDecode('gzip', verify, throwOnError, () {
+      final bytes = data is Uint8List ? data : Uint8List.fromList(data);
+      final seen = bytes.length;
+      final isGZip = seen >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
+      final trailerLength = isGZip ? 8 : 4;
+      if (seen < trailerLength + 2) {
+        return false;
+      }
       out = GZipCodec()
               .decode(Uint8List.sublistView(bytes, 0, seen - trailerLength))
           as Uint8List;
-    } catch (error) {
-      _fail(verify || throwOnError, error);
-      return Uint8List(0);
-    }
-    final sum = !verify
-        ? 0
-        : isGZip
-            ? getCrc32(out)
-            : getAdler32(out);
-    _checkTrailer(Uint8List.sublistView(bytes, seen - trailerLength), seen,
-        out.length, sum, isGZip, verify, throwOnError);
+      final sum = !verify
+          ? 0
+          : isGZip
+              ? getCrc32(out)
+              : getAdler32(out);
+      final start = isGZip
+          ? seen - trailerLength
+          : max(0, seen - trailerLength - zlibAdlerWindow);
+      return _checkTrailer(Uint8List.sublistView(bytes, start), seen,
+          out.length, sum, isGZip, verify);
+    });
     return out;
   }
 
   @override
   bool decodeStream(InputStream input, OutputStream output,
       {bool verify = false, bool raw = false, bool throwOnError = false}) {
+    return guardDecode('gzip', verify, throwOnError,
+        () => _decodeStream(input, output, verify));
+  }
+
+  bool _decodeStream(InputStream input, OutputStream output, bool verify) {
     final seen = input.length;
     // Whether the input opened with the gzip signature, which decides whether
     // the trailer check below applies at all.
@@ -60,7 +66,7 @@ class _GZipDecoder extends ZLibDecoderBase {
     // Nothing at all is not a gzip stream, and not a zlib one either: the
     // shortest of those is two bytes.
     if (seen < trailerLength + 2) {
-      return _fail(verify || throwOnError);
+      return false;
     }
 
     final outSink = ZLibOutputSink(output);
@@ -69,37 +75,30 @@ class _GZipDecoder extends ZLibDecoderBase {
         ..value = isGZip ? 0 : 1
         ..update = isGZip ? getCrc32 : getAdler32;
     }
-    try {
-      final inSink = GZipCodec().decoder.startChunkedConversion(outSink);
-      var left = seen - trailerLength;
-      while (left > 0) {
-        final chunk = input.readBytes(min(8 * 1024, left)).toUint8List();
-        if (chunk.isEmpty) {
-          break;
-        }
-        inSink.add(chunk);
-        left -= chunk.length;
+    final inSink = GZipCodec().decoder.startChunkedConversion(outSink);
+    var left = seen - trailerLength;
+    while (left > 0) {
+      final chunk = input.readBytes(min(8 * 1024, left)).toUint8List();
+      if (chunk.isEmpty) {
+        break;
       }
-      inSink.close();
-    } catch (error) {
-      return _fail(verify || throwOnError, error);
+      inSink.add(chunk);
+      left -= chunk.length;
     }
-    final trailer = input.readBytes(trailerLength).toUint8List();
-
-    return _checkTrailer(trailer, seen, outSink.written, outSink.value, isGZip,
-        verify, throwOnError);
-  }
-
-  static bool _fail(bool strict, [Object? error]) {
-    if (strict) {
-      throw ArchiveException(
-          error == null ? 'Invalid gzip data' : 'Invalid gzip data: $error');
+    inSink.close();
+    var trailer = input.readBytes(trailerLength).toUint8List();
+    if (!isGZip && verify) {
+      final back = min(zlibAdlerWindow, seen - trailerLength - left);
+      input.rewind(back + trailerLength);
+      trailer = input.readBytes(back + trailerLength).toUint8List();
     }
-    return false;
+
+    return _checkTrailer(
+        trailer, seen, outSink.written, outSink.value, isGZip, verify);
   }
 
   static bool _checkTrailer(Uint8List trailer, int seen, int written, int sum,
-      bool isGZip, bool verify, bool throwOnError) {
+      bool isGZip, bool verify) {
     // The decoder underneath checks the CRC and the length of every member
     // whose trailer it reaches, and rejects trailing bytes that do not begin
     // another member. What it does not reject is a member cut short before its
@@ -120,19 +119,15 @@ class _GZipDecoder extends ZLibDecoderBase {
     // four bytes of Adler-32 that would fail this on sight. That trailer is
     // checked with verify instead.
     if (!isGZip) {
-      final adler = (trailer[0] << 24) |
-          (trailer[1] << 16) |
-          (trailer[2] << 8) |
-          trailer[3];
-      if (verify && sum != adler) {
-        throw ArchiveChecksumException('Invalid zlib checksum');
+      if (verify) {
+        checkZlibAdler(trailer, sum);
       }
       return true;
     }
     // 10 header + 2 deflate + 8 trailer. Below that the last eight bytes are
     // header, not the trailer read next
     if (seen < 20) {
-      return _fail(verify || throwOnError);
+      return false;
     }
     final crc = trailer[0] |
         (trailer[1] << 8) |
@@ -151,6 +146,6 @@ class _GZipDecoder extends ZLibDecoderBase {
     if (written >= 0x100000000 || declared < written) {
       return true;
     }
-    return _fail(verify || throwOnError);
+    return false;
   }
 }

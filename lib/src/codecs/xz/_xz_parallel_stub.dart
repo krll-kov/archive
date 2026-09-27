@@ -40,7 +40,7 @@ Future<bool> xzDecodeMultithreaded({
   int? workers,
   int? memoryBudget,
   required void Function(int outputOffset, Uint8List chunk) onChunk,
-  void Function(int outputOffset, bool ok)? onBlockDone,
+  void Function(int block, bool ok)? onBlockDone,
   void Function(String reason)? onFailureReason,
   bool orderedOutput = false,
   required int fileReadBufferSize,

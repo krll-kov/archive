@@ -27,6 +27,17 @@ void main() {
               .decodeStream(InputMemoryStream(short), OutputMemoryStream()),
           isFalse);
     });
+
+    test('decodeStream verifies a little-endian input', () {
+      final origData = Uint8List.fromList(List.generate(5000, (i) => i * 7));
+      final compressed = ZLibEncoder().encodeBytes(origData);
+      final out = OutputMemoryStream();
+      expect(
+          ZLibDecoder()
+              .decodeStream(InputMemoryStream(compressed), out, verify: true),
+          isTrue);
+      compareBytes(out.getBytes(), origData);
+    });
   });
 
   group('gzip web', () {

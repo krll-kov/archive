@@ -22,6 +22,7 @@ class ZLibDecoder {
   /// {@macro archive.verify_throw_on_error}
   ///
   /// On dart:io only `verify` finds a cut stream: `ArchiveChecksumException`.
+  /// Over 4 KB of bytes after the stream also read as a wrong checksum there.
   Uint8List decodeBytes(List<int> bytes,
           {bool verify = false, bool raw = false, bool throwOnError = false}) =>
       platformZLibDecoder.decodeBytes(bytes,
@@ -36,6 +37,7 @@ class ZLibDecoder {
   /// {@macro archive.verify_throw_on_error}
   ///
   /// On dart:io only `verify` finds a cut stream: `ArchiveChecksumException`.
+  /// Over 4 KB of bytes after the stream also read as a wrong checksum there.
   bool decodeStream(InputStream input, OutputStream output,
           {bool verify = false, bool raw = false, bool throwOnError = false}) =>
       platformZLibDecoder.decodeStream(input, output,

@@ -15,6 +15,8 @@ bool guardDecode(
       throw ArchiveException('Invalid $format data');
     }
     return false;
+  } on CallbackFailure catch (failure) {
+    Error.throwWithStackTrace(failure.error, failure.stackTrace);
   } on ArchivePasswordException {
     rethrow;
   } on ArchiveChecksumException catch (error) {
@@ -36,4 +38,26 @@ bool guardDecode(
     }
     return false;
   }
+}
+
+void throwIfStrict(ArchiveException error, bool verify, bool throwOnError) {
+  if (error is ArchivePasswordException) {
+    throw error;
+  }
+  if (error is ArchiveChecksumException && !verify) {
+    if (throwOnError) {
+      throw ArchiveException(error.message);
+    }
+    return;
+  }
+  if (verify || throwOnError) {
+    throw error;
+  }
+}
+
+class CallbackFailure {
+  final Object error;
+  final StackTrace stackTrace;
+
+  CallbackFailure(this.error, this.stackTrace);
 }

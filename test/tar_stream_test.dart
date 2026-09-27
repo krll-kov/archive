@@ -310,13 +310,7 @@ void main() {
     for (final name in archives) {
       test('$name reads as the whole-archive decoder does', () async {
         final archive = File('${directory.path}/$name').readAsBytesSync();
-        List<List<Object>> want;
-        try {
-          want = _whole(archive);
-        } catch (_) {
-          // Not every file here is one this package reads whole either
-          return;
-        }
+        final want = _whole(archive);
         for (final piece in [1, 137, 512, 4096, archive.length]) {
           expect(await _stream(archive, piece), want,
               reason: '$name piece $piece');
