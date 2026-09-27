@@ -5,6 +5,67 @@ import 'package:archive/src/codecs/zstd/zstd_web.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('streaming jobs and their tail emit at most 64 KiB per piece', () async {
+    final input = Uint8List(600001);
+    var state = 1;
+    for (var i = 0; i < input.length; i++) {
+      state = state * 48271 % 2147483647;
+      input[i] = state & 255;
+    }
+    final parts = await Stream<List<int>>.value(input)
+        .transform(const ZstdCodec(
+          level: 1,
+          multithread:
+              ZstdMultithreadOptions.converter(workers: 2, jobSize: 524288),
+        ).encoder)
+        .toList();
+    for (final part in parts) {
+      expect(part.length, lessThanOrEqualTo(1 << 16));
+    }
+    expect(
+        ZstdDecoder().decodeBytes(
+            Uint8List.fromList(parts.expand((part) => part).toList()),
+            verify: true,
+            throwOnError: true),
+        input);
+  });
+
+  for (final entry in {
+    6: [694, 1987124167],
+    9: [236, 2451839013],
+  }.entries) {
+    test(
+        'contentSize matches loadDictionary streaming with a short dictionary at level ${entry.key}',
+        () async {
+      final source = Uint8List.fromList(
+          List<int>.generate(16383, (i) => (i * 7 + i ~/ 23) % 11));
+      final dictionary = ZstdDictionary(Uint8List(7));
+      for (final multithread in [
+        null,
+        const ZstdMultithreadOptions<Uint8List>.converter(workers: 1),
+      ]) {
+        final encoded = await Stream<List<int>>.fromIterable([
+          for (var at = 0; at < source.length; at += 777)
+            Uint8List.sublistView(source, at,
+                at + 777 < source.length ? at + 777 : source.length),
+        ])
+            .transform(ZstdEncoderConverter(
+                level: entry.key,
+                checksum: false,
+                dictionary: dictionary,
+                contentSize: source.length,
+                multithread: multithread))
+            .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
+        expect(encoded.length, entry.value[0]);
+        expect(getCrc32(encoded), entry.value[1]);
+        expect(
+            ZstdDecoder(dictionary: dictionary)
+                .decodeBytes(encoded, throwOnError: true),
+            source);
+      }
+    });
+  }
+
   test('FSE fixed-point rounding retains bits beyond JS precision', () {
     const roundUp = [0, 473195, 504333, 520860, 550000, 700000, 750000, 830000];
     const cases = [

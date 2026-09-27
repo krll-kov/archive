@@ -369,6 +369,52 @@ void main() {
   });
 
   group('sink output stream', () {
+    for (final kind in ['memory', 'file']) {
+      for (final failureAt in ['sink', 'watch']) {
+        test('writeStream restores a $kind subset after a $failureAt failure',
+            () {
+          final data = _sample(131120);
+          late InputStream input;
+          if (kind == 'memory') {
+            final outer = InputMemoryStream(data, offset: 11, length: 131100);
+            input = InputMemoryStream(outer.toUint8List(),
+                offset: 7, length: 131073);
+          } else {
+            final dir = Directory.systemTemp.createTempSync('archive_sink_');
+            addTearDown(() => dir.deleteSync(recursive: true));
+            final file = File(p.join(dir.path, 'input'))
+              ..writeAsBytesSync(data);
+            final source = InputFileStream(file.path, bufferSize: 17);
+            addTearDown(source.closeSync);
+            final outer = InputFileStream.fromFileStream(source,
+                position: 11, length: 131100);
+            input = InputFileStream.fromFileStream(outer,
+                position: 7, length: 131073);
+          }
+          input.position = 17;
+          final failure = StateError('output failed');
+          final output = SinkOutputStream(
+              failureAt == 'sink' ? _FailingSink(failure) : _Held());
+          if (failureAt == 'watch') {
+            output.watch = (_) => throw failure;
+          }
+
+          expect(() => output.writeStream(input), throwsA(same(failure)));
+          expect(input.position, 17);
+          expect(input.readByte(), data[35]);
+        });
+      }
+    }
+
+    test('writeStream restores the position after reading fails', () {
+      final failure = StateError('input failed');
+      final input = _FailingInput(_sample(131073), failure)..position = 17;
+      final output = SinkOutputStream(_Held());
+
+      expect(() => output.writeStream(input), throwsA(same(failure)));
+      expect(input.position, 17);
+    });
+
     test('what it hands over is a copy, not a view', () {
       final held = _Held();
       final out = SinkOutputStream(held);
@@ -559,5 +605,29 @@ class _Held implements Sink<List<int>> {
       at += piece.length;
     }
     return out;
+  }
+}
+
+class _FailingSink implements Sink<List<int>> {
+  final Object failure;
+
+  _FailingSink(this.failure);
+
+  @override
+  void add(List<int> data) => throw failure;
+
+  @override
+  void close() {}
+}
+
+class _FailingInput extends InputMemoryStream {
+  final Object failure;
+
+  _FailingInput(super.bytes, this.failure);
+
+  @override
+  int readInto(Uint8List into, int at, int count) {
+    super.readInto(into, at, count);
+    throw failure;
   }
 }

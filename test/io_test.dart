@@ -871,6 +871,97 @@ void main() {
     expect(files.length, 2);
   });
 
+  for (final method in ['sync', 'async', 'tar', 'zip']) {
+    Future<void> extract(Archive archive, String output, String root) async {
+      if (method == 'sync') {
+        extractArchiveToDiskSync(archive, output);
+      } else if (method == 'async') {
+        await extractArchiveToDisk(archive, output);
+      } else {
+        final input = File(p.join(root, 'input.$method'))
+          ..writeAsBytesSync(method == 'tar'
+              ? TarEncoder().encodeBytes(archive)
+              : ZipEncoder().encodeBytes(archive));
+        await extractFileToDisk(input.path, output);
+      }
+    }
+
+    test('$method extraction resolves output symlinks before parent components',
+        () async {
+      final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      Directory(p.join(root.path, 'nested', 'target'))
+          .createSync(recursive: true);
+      final actual = p.join(root.path, 'nested', 'out');
+      Directory(p.join(actual, 'link')).createSync(recursive: true);
+      Directory(p.join(root.path, 'out')).createSync();
+      final outside = Directory(p.join(root.path, 'outside'))..createSync();
+      final sentinel = File(p.join(outside.path, 'payload'))
+        ..writeAsStringSync('keep');
+      Link(p.join(root.path, 'alias')).createSync(p.join('nested', 'target'));
+      Link(p.join(root.path, 'out', 'link'))
+          .createSync(p.join('..', 'outside'));
+      final output = p.join(root.path, 'alias', '..', 'out');
+      expect(Directory(output).resolveSymbolicLinksSync(),
+          Directory(actual).resolveSymbolicLinksSync());
+      final archive = Archive()
+        ..add(ArchiveFile.string('link/payload', 'new'))
+        ..add(ArchiveFile.string('safe/é.txt', 'safe'))
+        ..add(ArchiveFile.symlink('link/ref', '../safe/é.txt'));
+
+      await extract(archive, output, root.path);
+
+      expect(File(p.join(actual, 'link', 'payload')).readAsStringSync(), 'new');
+      expect(File(p.join(actual, 'link', 'ref')).readAsStringSync(), 'safe');
+      expect(sentinel.readAsStringSync(), 'keep');
+    }, testOn: '!windows');
+
+    test('$method extraction checks links under the physical output directory',
+        () async {
+      final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      Directory(p.join(root.path, 'nested', 'target'))
+          .createSync(recursive: true);
+      final actual = p.join(root.path, 'nested', 'out');
+      Directory(actual).createSync();
+      final outside = Directory(p.join(root.path, 'outside'))..createSync();
+      final sentinel = File(p.join(outside.path, 'payload'))
+        ..writeAsStringSync('keep');
+      Link(p.join(root.path, 'alias')).createSync(p.join('nested', 'target'));
+      for (final name in ['escape', 'broken', 'loop']) {
+        Directory(p.join(root.path, 'out', name)).createSync(recursive: true);
+      }
+      Link(p.join(actual, 'escape')).createSync(p.join('..', '..', 'outside'));
+      Link(p.join(actual, 'broken')).createSync('missing');
+      Link(p.join(actual, 'loop')).createSync('loop');
+      final output = p.join(root.path, 'alias', '..', 'out');
+      await extract(
+          Archive()..add(ArchiveFile.string('escape/payload', 'changed')),
+          output,
+          root.path);
+      expect(sentinel.readAsStringSync(), 'keep');
+
+      final archive = Archive()
+        ..add(ArchiveFile.string('broken/payload', 'changed'))
+        ..add(ArchiveFile.string('loop/payload', 'changed'))
+        ..add(ArchiveFile.symlink('indirect', 'escape/payload'))
+        ..add(ArchiveFile.string('safe/payload', 'safe'))
+        ..add(ArchiveFile.symlink('safe/ref', 'payload'));
+
+      await extract(archive, output, root.path);
+
+      expect(sentinel.readAsStringSync(), 'keep');
+      expect(File(p.join(actual, 'safe', 'ref')).readAsStringSync(), 'safe');
+      expect(File(p.join(actual, 'missing', 'payload')).existsSync(), isFalse);
+      expect(
+          FileSystemEntity.typeSync(p.join(actual, 'indirect'),
+              followLinks: false),
+          FileSystemEntityType.notFound);
+      expect(Link(p.join(actual, 'broken')).targetSync(), 'missing');
+      expect(Link(p.join(actual, 'loop')).targetSync(), 'loop');
+    }, testOn: '!windows');
+  }
+
   test('extractArchiveToDisk symlink', () async {
     final f1 = ArchiveFile.string('test', 'foo');
     final f2 = ArchiveFile.symlink('link', './../test.tar');

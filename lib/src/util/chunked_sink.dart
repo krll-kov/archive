@@ -369,14 +369,17 @@ class SinkOutputStream extends OutputStream {
   void writeStream(InputStream stream) {
     final held = stream.position;
     final buffer = Uint8List(_streamPiece);
-    while (!stream.isEOS) {
-      final got = stream.readInto(buffer, 0, buffer.length);
-      if (got <= 0) {
-        break;
+    try {
+      while (!stream.isEOS) {
+        final got = stream.readInto(buffer, 0, buffer.length);
+        if (got <= 0) {
+          break;
+        }
+        _emit(Uint8List.sublistView(buffer, 0, got));
       }
-      _emit(Uint8List.sublistView(buffer, 0, got));
+    } finally {
+      stream.setPosition(held);
     }
-    stream.setPosition(held);
   }
 
   void _emit(Uint8List piece) {

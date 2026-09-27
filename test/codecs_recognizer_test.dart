@@ -71,6 +71,42 @@ void main() {
           ArchiveFormat.zip);
     });
 
+    test('an empty ZIP64 archive is recognised from its end record', () {
+      final bytes = Uint8List(98);
+      final fields = ByteData.sublistView(bytes);
+      for (final entry in {
+        0: 0x06064b50,
+        4: 44,
+        12: 0x002d002d,
+        56: 0x07064b50,
+        72: 1,
+        76: 0x06054b50,
+        84: 0xffffffff,
+        88: 0xffffffff,
+        92: 0xffffffff,
+      }.entries) {
+        fields.setUint32(entry.key, entry.value, Endian.little);
+      }
+      expect(ZipDecoder().decodeBytes(bytes).files, isEmpty);
+      for (var length = 0; length <= bytes.length; length++) {
+        final prefix = Uint8List.sublistView(bytes, 0, length);
+        expect(CodecsRecognizer.isZip(prefix), length >= 4,
+            reason: '$length bytes');
+        expect(CodecsRecognizer.recognize(prefix, withZLib: true),
+            length >= 4 ? ArchiveFormat.zip : ArchiveFormat.unknown,
+            reason: '$length bytes');
+      }
+    });
+
+    test('a tar filename beginning with ZIP64 magic does not hide its format',
+        () {
+      final name = String.fromCharCodes([0x50, 0x4b, 0x06, 0x06]);
+      final bytes = TarEncoder().encodeBytes(
+          Archive()..add(ArchiveFile.bytes(name, Uint8List.fromList([1]))));
+      expect(CodecsRecognizer.isZip(bytes), isTrue);
+      expect(CodecsRecognizer.recognize(bytes), ArchiveFormat.tar);
+    });
+
     test('the archives in the test data are recognised', () {
       expect(
           CodecsRecognizer.recognize(

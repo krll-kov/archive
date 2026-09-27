@@ -9,6 +9,7 @@ import 'zstd_level_params.dart';
 import 'zstd_mt_frame_encoder.dart';
 
 const bool zstdIsolatesSupported = false;
+const _streamPieceSize = 1 << 16;
 
 /// Compresses the jobs in the calling isolate, all a target without [Isolate]
 /// can do. The bytes are the ones the workers would have produced
@@ -110,6 +111,15 @@ Stream<Uint8List> _compressStream(
     return out.getBytes();
   }
 
+  Iterable<Uint8List> pieces(Uint8List bytes) sync* {
+    for (var at = 0; at < bytes.length; at += _streamPieceSize) {
+      final end = at + _streamPieceSize < bytes.length
+          ? at + _streamPieceSize
+          : bytes.length;
+      yield Uint8List.sublistView(bytes, at, end);
+    }
+  }
+
   // The frame header waits for the first part, since only by then is whether
   // anything arrived at all settled
   var content = 0;
@@ -126,7 +136,9 @@ Stream<Uint8List> _compressStream(
           yield head;
         }
       }
-      yield part;
+      for (final piece in pieces(part)) {
+        yield piece;
+      }
       index++;
     }
   }
@@ -140,7 +152,9 @@ Stream<Uint8List> _compressStream(
       yield head;
     }
   }
-  yield tail;
+  for (final piece in pieces(tail)) {
+    yield piece;
+  }
 }
 
 /// There are no files to read from where this file is chosen

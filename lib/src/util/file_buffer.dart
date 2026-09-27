@@ -213,16 +213,35 @@ class FileBuffer {
       return 0;
     }
     if (count > buffer.length) {
-      file.position = position;
-      return file.readInto(Uint8List.sublistView(into, at, at + count), count);
+      return _readIntoFile(position, into, at, count);
     }
     if (position < _position ||
         (position + count) > (_position + _bufferLength)) {
       _readBuffer(position);
     }
     final start = position - _position;
-    into.setRange(at, at + count, _buffer!, start);
-    return count;
+    final buffered = min(count, _bufferLength - start);
+    into.setRange(at, at + buffered, _buffer!, start);
+    if (buffered == count) {
+      return count;
+    }
+    return buffered +
+        _readIntoFile(
+            position + buffered, into, at + buffered, count - buffered);
+  }
+
+  int _readIntoFile(int position, Uint8List into, int at, int count) {
+    file.position = position;
+    var total = 0;
+    while (total < count) {
+      final got = file.readInto(
+          Uint8List.sublistView(into, at + total, at + count), count - total);
+      if (got == 0) {
+        break;
+      }
+      total += got;
+    }
+    return total;
   }
 
   /// Read [count] bytes starting at the given [position] within the file.

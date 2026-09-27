@@ -48,6 +48,26 @@ void main() {
   };
 
   group('ProgressOutputStream', () {
+    for (final synchronous in [false, true]) {
+      test('closes output when final progress throws (sync: $synchronous)',
+          () async {
+        final output = _CloseTrackingOutput();
+        final failure = StateError('progress failed');
+        final out = ProgressOutputStream(output, (_) => throw failure);
+        out.writeBytes([1, 2, 3]);
+
+        if (synchronous) {
+          expect(out.closeSync, throwsA(same(failure)));
+        } else {
+          await expectLater(
+              Future<void>.sync(out.close), throwsA(same(failure)));
+        }
+
+        expect(output.closed, isTrue);
+        expect(output.getBytes(), [1, 2, 3]);
+      });
+    }
+
     for (final MapEntry(key: name, value: (packed, decode))
         in decoders.entries) {
       test('$name reports as it decodes', () {
@@ -110,4 +130,19 @@ void main() {
       expect(seen, [250, 280]);
     });
   });
+}
+
+class _CloseTrackingOutput extends OutputMemoryStream {
+  bool closed = false;
+
+  @override
+  Future<void> close() async {
+    await Future<void>.value();
+    closeSync();
+  }
+
+  @override
+  void closeSync() {
+    closed = true;
+  }
 }

@@ -1144,6 +1144,122 @@ void main() async {
       });
     }
 
+    test('LZMA dictionary properties honor the 4096-byte minimum', () {
+      final nearBytes = File('test/_data/zip/lzma_near.zip').readAsBytesSync();
+      final farBytes = File('test/_data/zip/lzma_far.zip').readAsBytesSync();
+      for (final nearMatches in [true, false]) {
+        final expected = nearMatches
+            ? List<int>.generate(1024, (i) => i % 64)
+            : List<int>.generate(
+                24576, (i) => i >= 8192 && i < 16384 ? 64 + i % 64 : i % 64);
+        final sizes =
+            nearMatches ? [0, 1, 63, 64, 4095, 4096] : [0, 4096, 8192, 16384];
+        for (final dictionarySize in sizes) {
+          final bytes = Uint8List.fromList(nearMatches ? nearBytes : farBytes);
+          final view = ByteData.sublistView(bytes);
+          final payload = 30 +
+              view.getUint16(26, Endian.little) +
+              view.getUint16(28, Endian.little);
+          view.setUint32(payload + 5, dictionarySize, Endian.little);
+          for (final verify in [false, true]) {
+            for (final writeContent in [false, true]) {
+              Uint8List read() {
+                final file = ZipDecoder()
+                    .decodeBytes(bytes, verify: verify)
+                    .files
+                    .single;
+                if (!writeContent) {
+                  return file.content;
+                }
+                final output = OutputMemoryStream();
+                file.writeContent(output);
+                return output.getBytes();
+              }
+
+              final reason =
+                  'near $nearMatches, dictionary $dictionarySize, verify $verify, write $writeContent';
+              if (nearMatches || dictionarySize == 16384) {
+                expect(read(), expected, reason: reason);
+              } else {
+                expect(read, throwsA(isA<ArchiveException>()), reason: reason);
+              }
+            }
+          }
+        }
+      }
+    });
+
+    test('LZMA entries grow past 2 MiB without exceeding their declared size',
+        () {
+      final encoded = File('test/_data/zip/lzma_2mib.zip').readAsBytesSync();
+      final expected = Uint8List(2 * 1024 * 1024 + 273)
+        ..fillRange(0, 2 * 1024 * 1024 + 273, 97);
+      for (final missing in [0, 1]) {
+        final bytes = Uint8List.fromList(encoded);
+        final view = ByteData.sublistView(bytes);
+        final central = view.getUint32(bytes.length - 6, Endian.little);
+        view.setUint32(22, expected.length - missing, Endian.little);
+        view.setUint32(central + 24, expected.length - missing, Endian.little);
+        for (final verify in [false, true]) {
+          for (final writeContent in [false, true]) {
+            Uint8List read() {
+              final file =
+                  ZipDecoder().decodeBytes(bytes, verify: verify).files.single;
+              if (!writeContent) {
+                return file.content;
+              }
+              final output = OutputMemoryStream();
+              file.writeContent(output);
+              return output.getBytes();
+            }
+
+            if (missing == 0) {
+              expect(read(), expected);
+            } else {
+              expect(read, throwsA(isA<ArchiveException>()));
+            }
+          }
+        }
+      }
+    });
+
+    test('an LZMA size claim does not allocate before validating the data', () {
+      for (final property in [225, 93]) {
+        final bytes = ZipEncoder().encodeBytes(Archive()
+          ..add(ArchiveFile.file(
+              'a',
+              9007199254740991,
+              FileContentMemory(
+                  [9, 4, 5, 0, property, 0, 0, 128, 0, 0, 0, 0, 0, 0]))
+            ..compression = CompressionType.none));
+        final view = ByteData.sublistView(bytes);
+        view.setUint16(8, ZipFile.zipCompressionLzma, Endian.little);
+        var central = 0;
+        while (view.getUint32(central, Endian.little) != 0x02014b50) {
+          central++;
+        }
+        view.setUint16(central + 10, ZipFile.zipCompressionLzma, Endian.little);
+        for (final verify in [false, true]) {
+          for (final writeContent in [false, true]) {
+            final file =
+                ZipDecoder().decodeBytes(bytes, verify: verify).files.single;
+            expect(
+                () => writeContent
+                    ? file.writeContent(OutputMemoryStream())
+                    : file.content,
+                throwsA(isA<ArchiveException>().having(
+                    (error) => error.message,
+                    'message',
+                    contains(property == 225
+                        ? 'Invalid LZMA properties'
+                        : 'truncated or corrupt'))),
+                reason:
+                    'property $property, verify $verify, write $writeContent');
+          }
+        }
+      }
+    });
+
     test('a zip made on Windows gets default permissions', () async {
       final windows = ZipDecoder()
           .decodeBytes(File('test/_data/zip/winxp.zip').readAsBytesSync());

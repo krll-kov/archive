@@ -177,7 +177,7 @@ abstract final class CodecsRecognizer {
       return false;
     }
     final kind = (data[2] << 8) | data[3];
-    return kind == 0x0304 || kind == 0x0506 || kind == 0x0708;
+    return kind == 0x0304 || kind == 0x0506 || kind == 0x0606 || kind == 0x0708;
   }
 
   /// Recognizes tar by its 512-byte header. Pre-ustar tar has no magic, so only

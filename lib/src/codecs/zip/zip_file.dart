@@ -275,11 +275,12 @@ class ZipFile extends FileContent {
         throw ArchiveException('Invalid LZMA properties for $filename');
       }
       final bits = properties[0];
+      final dictionarySize = properties[1] |
+          (properties[2] << 8) |
+          (properties[3] << 16) |
+          (properties[4] << 24);
       final decoder = LzmaDecoder()
-        ..dictionaryLimit = properties[1] |
-            (properties[2] << 8) |
-            (properties[3] << 16) |
-            (properties[4] << 24)
+        ..dictionaryLimit = dictionarySize < 4096 ? 4096 : dictionarySize
         ..reset(
             literalContextBits: bits % 9,
             literalPositionBits: bits ~/ 9 % 5,
@@ -356,7 +357,7 @@ class ZipFile extends FileContent {
       }
       return InputMemoryStream(content);
     } else if (compressionMethod == CompressionType.lzma) {
-      final output = OutputMemoryStream(size: uncompressedSize);
+      final output = OutputMemoryStream();
       _decodeLzma(output);
       return InputMemoryStream(output.getBytes());
     } else {

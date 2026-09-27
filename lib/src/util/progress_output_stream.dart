@@ -45,15 +45,21 @@ class ProgressOutputStream implements OutputStream {
   void open() => output.open();
 
   @override
-  Future<void> close() {
-    _report();
-    return output.close();
+  Future<void> close() async {
+    try {
+      _report();
+    } finally {
+      await output.close();
+    }
   }
 
   @override
   void closeSync() {
-    _report();
-    output.closeSync();
+    try {
+      _report();
+    } finally {
+      output.closeSync();
+    }
   }
 
   @override

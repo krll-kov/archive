@@ -259,8 +259,27 @@ class LzmaDecoder {
     _rc.setBuffer(input.toUint8List());
     _rc.initialize();
 
-    final initialSize = _reserve(uncompressedLength);
-    _decodePackets(initialSize + uncompressedLength);
+    final initialSize = _writePosition;
+    final finalSize = initialSize + uncompressedLength;
+    if (uncompressedLength <= 2 * 1024 * 1024) {
+      _reserve(uncompressedLength);
+      _decodePackets(finalSize);
+    } else {
+      const chunkSize = 65536;
+      const maxMatchLength = 273;
+      while (_writePosition < finalSize) {
+        final remaining = finalSize - _writePosition;
+        final count = remaining < chunkSize ? remaining : chunkSize;
+        final end = _writePosition + count;
+        final tail = finalSize - end;
+        final extra = tail < maxMatchLength - 1 ? tail : maxMatchLength - 1;
+        _reserve(count + extra);
+        _decodePackets(end);
+      }
+      if (_writePosition != finalSize) {
+        throw RangeError('LZMA output exceeds the declared size');
+      }
+    }
 
     output.writeRange(_dictionary, initialSize, _writePosition);
   }

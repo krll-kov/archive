@@ -22,6 +22,28 @@ void main() {
       expect(fs.length, testData.length);
     });
 
+    for (final count in [8, 16, 127]) {
+      test('readInto completes short file reads for $count bytes', () {
+        final input = InputFileStream.withFileBuffer(
+            FileBuffer(_ShortReadHandle(testPath), bufferSize: 8));
+        addTearDown(input.closeSync);
+        final bytes = Uint8List(count + 2)..fillRange(0, count + 2, 255);
+        final expected = count < testData.length ? count : testData.length;
+
+        expect(input.readInto(bytes, 1, count), expected);
+        expect(bytes.sublist(1, 1 + expected), testData.sublist(0, expected));
+        expect(bytes.first, 255);
+        expect(bytes.skip(1 + expected), everyElement(255));
+        expect(input.position, expected);
+
+        final tail = Uint8List(testData.length);
+        final remaining = testData.length - expected;
+        expect(input.readInto(tail, 0, tail.length), remaining);
+        expect(tail.sublist(0, remaining), testData.sublist(expected));
+        expect(input.isEOS, isTrue);
+      });
+    }
+
     test('readInto stays within a subset and stops at its end', () {
       final file = InputFileStream(testPath, bufferSize: 2);
       addTearDown(file.closeSync);
@@ -241,4 +263,14 @@ class _CountingHandle extends AbstractFileHandle {
   @override
   void writeFromSync(List<int> buffer, [int start = 0, int? end]) =>
       _inner.writeFromSync(buffer, start, end);
+}
+
+class _ShortReadHandle extends _CountingHandle {
+  _ShortReadHandle(super.path);
+
+  @override
+  int readInto(Uint8List buffer, [int? length]) {
+    final count = length ?? buffer.length;
+    return super.readInto(buffer, count > 3 ? 3 : count);
+  }
 }

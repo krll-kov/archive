@@ -28,7 +28,7 @@ bool _isWithinOutputPath(String? realOut, String filePath) {
 
 /// canonicalize ignores symlinks out of outputPath, so we resolve them on disk
 String? _realPath(String filePath) {
-  var existing = path.canonicalize(filePath);
+  var existing = path.absolute(filePath);
   final rest = <String>[];
   while (FileSystemEntity.typeSync(existing, followLinks: false) ==
       FileSystemEntityType.notFound) {
@@ -135,7 +135,7 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
   final realOut = _realPath(outputPath);
 
   for (final entry in archive) {
-    final filePath = path.normalize(path.join(outputPath, entry.name));
+    final filePath = path.join(outputPath, path.normalize(entry.name));
 
     if ((entry.isDirectory && !entry.isSymbolicLink) ||
         !_isWithinOutputPath(realOut, filePath)) {
