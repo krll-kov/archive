@@ -37,6 +37,19 @@ import '../lzma/lzma_decoder.dart';
   );
 }
 
+const xzCrc32Failed = 'CRC32 check failed';
+const xzCrc64Failed = 'CRC64 check failed';
+const xzSha256Failed = 'SHA-256 check failed';
+const xzBlockCheckFailed = 'Block check failed';
+
+/// Failure reasons that mean a block decoded but its check does not match
+const xzCheckFailures = {
+  xzCrc32Failed,
+  xzCrc64Failed,
+  xzSha256Failed,
+  xzBlockCheckFailed,
+};
+
 int xzDictionaryCap(int dictionarySize) =>
     dictionarySize + (dictionarySize >> 2) + (2 << 20) + 16;
 
@@ -327,7 +340,7 @@ class XZStreamDecoder {
                 ? !checked!.checkMatches(stored)
                 : getCrc32(blockData ?? output.subset(startDataLength)) !=
                     expectedCrc)) {
-          return _fail('CRC32 check failed');
+          return _fail(xzCrc32Failed);
         }
         break;
       case 0x2:
@@ -341,13 +354,13 @@ class XZStreamDecoder {
         final stored = input.readBytes(8).toUint8List();
         if (checked != null) {
           if (!checked.checkMatches(stored)) {
-            return _fail('CRC64 check failed');
+            return _fail(xzCrc64Failed);
           }
         } else if (verify) {
           final actual = Crc64()
             ..update(blockData ?? output.subset(startDataLength));
           if (!actual.matches(stored, 0)) {
-            return _fail('CRC64 check failed');
+            return _fail(xzCrc64Failed);
           }
         }
         break;
@@ -370,13 +383,13 @@ class XZStreamDecoder {
         final stored = input.readBytes(32).toUint8List();
         if (checked != null) {
           if (!checked.checkMatches(stored)) {
-            return _fail('SHA-256 check failed');
+            return _fail(xzSha256Failed);
           }
         } else if (verify) {
           final actual = Sha256.of(blockData ?? output.subset(startDataLength));
           for (var i = 0; i < 32; i++) {
             if (actual[i] != stored[i]) {
-              return _fail('SHA-256 check failed');
+              return _fail(xzSha256Failed);
             }
           }
         }

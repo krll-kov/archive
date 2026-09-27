@@ -724,7 +724,7 @@ class ZstdChunkedDecoder extends ChunkedSink {
     final stored = _uint32(view(4));
     skip(4);
     if (_checked && _hash.digestLow != stored) {
-      throw ArchiveException('zstd: content checksum does not match');
+      throw ArchiveChecksumException('zstd: content checksum does not match');
     }
     _endFrame();
   }

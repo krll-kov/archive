@@ -651,6 +651,72 @@ void main() async {
           isEmpty);
     });
 
+    group('verify, throwOnError and passwords', () {
+      final data = Uint8List.fromList(
+          List.generate(70000, (i) => (i * 7 + (i >> 9)) % 251));
+      final zip = ZipEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.bytes('a', data)));
+
+      Uint8List read(Uint8List bytes, bool verify, bool throwOnError) =>
+          ZipDecoder()
+              .decodeBytes(bytes, verify: verify, throwOnError: throwOnError)
+              .files
+              .single
+              .content;
+
+      test('a wrong CRC throws only with verify', () {
+        final bad = Uint8List.fromList(zip);
+        bad[14] ^= 1;
+        expect(read(bad, false, false), data);
+        expect(read(bad, false, true), data);
+        expect(() => read(bad, true, false),
+            throwsA(isA<ArchiveChecksumException>()));
+      });
+
+      test('damaged structure throws with either flag and not without', () {
+        final bad = Uint8List.fromList(zip);
+        final central =
+            ByteData.sublistView(bad).getUint32(bad.length - 6, Endian.little);
+        ByteData.sublistView(bad)
+            .setUint32(central + 42, bad.length + 1000, Endian.little);
+        expect(() => ZipDecoder().decodeBytes(bad), returnsNormally);
+        for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+          expect(
+              () => read(bad, verify, throwOnError),
+              throwsA(allOf(isA<ArchiveException>(),
+                  isNot(isA<ArchiveChecksumException>()))),
+              reason: 'verify $verify, throwOnError $throwOnError');
+        }
+      });
+
+      test('a wrong or missing password throws regardless of flags', () {
+        for (final name in ['aes256.zip', 'zipCrypto.zip']) {
+          final bytes = File('test/_data/zip/$name').readAsBytesSync();
+          for (final password in ['wrong', null]) {
+            for (final (verify, throwOnError) in [
+              (false, false),
+              (true, false),
+              (false, true)
+            ]) {
+              expect(
+                  () => ZipDecoder()
+                      .decodeBytes(bytes,
+                          verify: verify,
+                          throwOnError: throwOnError,
+                          password: password)
+                      .files
+                      .where((f) => f.isFile && f.size > 0)
+                      .map((f) => f.content)
+                      .toList(),
+                  throwsA(isA<ArchivePasswordException>()),
+                  reason: '$name, password $password, verify $verify, '
+                      'throwOnError $throwOnError');
+            }
+          }
+        }
+      });
+    });
+
     test('verify refuses a local header offset past the end', () {
       final bytes = ZipEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
@@ -1238,11 +1304,16 @@ void main() async {
               view.getUint16(26, Endian.little) +
               view.getUint16(28, Endian.little);
           view.setUint32(payload + 5, dictionarySize, Endian.little);
-          for (final verify in [false, true]) {
+          if (!nearMatches && dictionarySize != 16384) {
+            expect(() => ZipDecoder().decodeBytes(bytes).files.single.content,
+                returnsNormally);
+          }
+          for (final (verify, throwOnError) in [(false, true), (true, false)]) {
             for (final writeContent in [false, true]) {
               Uint8List read() {
                 final file = ZipDecoder()
-                    .decodeBytes(bytes, verify: verify)
+                    .decodeBytes(bytes,
+                        verify: verify, throwOnError: throwOnError)
                     .files
                     .single;
                 if (!writeContent) {
@@ -1277,11 +1348,18 @@ void main() async {
         final central = view.getUint32(bytes.length - 6, Endian.little);
         view.setUint32(22, expected.length - missing, Endian.little);
         view.setUint32(central + 24, expected.length - missing, Endian.little);
-        for (final verify in [false, true]) {
+        if (missing == 1) {
+          expect(() => ZipDecoder().decodeBytes(bytes).files.single.content,
+              returnsNormally);
+        }
+        for (final (verify, throwOnError) in [(false, true), (true, false)]) {
           for (final writeContent in [false, true]) {
             Uint8List read() {
-              final file =
-                  ZipDecoder().decodeBytes(bytes, verify: verify).files.single;
+              final file = ZipDecoder()
+                  .decodeBytes(bytes,
+                      verify: verify, throwOnError: throwOnError)
+                  .files
+                  .single;
               if (!writeContent) {
                 return file.content;
               }
@@ -1316,10 +1394,14 @@ void main() async {
           central++;
         }
         view.setUint16(central + 10, ZipFile.zipCompressionLzma, Endian.little);
-        for (final verify in [false, true]) {
+        expect(() => ZipDecoder().decodeBytes(bytes).files.single.content,
+            returnsNormally);
+        for (final (verify, throwOnError) in [(false, true), (true, false)]) {
           for (final writeContent in [false, true]) {
-            final file =
-                ZipDecoder().decodeBytes(bytes, verify: verify).files.single;
+            final file = ZipDecoder()
+                .decodeBytes(bytes, verify: verify, throwOnError: throwOnError)
+                .files
+                .single;
             expect(
                 () => writeContent
                     ? file.writeContent(OutputMemoryStream())

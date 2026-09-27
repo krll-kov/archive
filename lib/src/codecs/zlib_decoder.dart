@@ -15,21 +15,29 @@ class ZLibDecoder {
   const ZLibDecoder();
 
   /// Decompress the given [bytes] with the ZLib format.
-  /// [verify] can be used to validate the checksum of the decompressed data,
-  /// though it is not guaranteed this will be used.
+  ///
   /// If [raw] is true, the input will be considered deflate compressed data
   /// without a zlib header.
+  ///
+  /// {@macro archive.verify_throw_on_error}
+  ///
+  /// On dart:io only `verify` finds a cut stream: `ArchiveChecksumException`.
   Uint8List decodeBytes(List<int> bytes,
-          {bool verify = false, bool raw = false}) =>
-      platformZLibDecoder.decodeBytes(bytes, verify: verify, raw: raw);
+          {bool verify = false, bool raw = false, bool throwOnError = false}) =>
+      platformZLibDecoder.decodeBytes(bytes,
+          verify: verify, raw: raw, throwOnError: throwOnError);
 
   /// Decompress the given [input] with the ZLib format, writing the
   /// decompressed data to the [output] stream.
-  /// [verify] can be used to validate the checksum of the decompressed data,
-  /// though it is not guaranteed this will be used.
+  ///
   /// If [raw] is true, the input will be considered deflate compressed data
   /// without a zlib header.
+  ///
+  /// {@macro archive.verify_throw_on_error}
+  ///
+  /// On dart:io only `verify` finds a cut stream: `ArchiveChecksumException`.
   bool decodeStream(InputStream input, OutputStream output,
-          {bool verify = false, bool raw = false}) =>
-      platformZLibDecoder.decodeStream(input, output, verify: verify, raw: raw);
+          {bool verify = false, bool raw = false, bool throwOnError = false}) =>
+      platformZLibDecoder.decodeStream(input, output,
+          verify: verify, raw: raw, throwOnError: throwOnError);
 }

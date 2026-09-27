@@ -212,12 +212,10 @@ var tarTests = [
 void main() {
   group('tar', () {
     test('invalid archive', () {
-      try {
-        TarDecoder().decodeBytes(Uint8List.fromList([1, 2, 3]));
-        assert(false);
-      } catch (e) {
-        // pass
-      }
+      final bytes = Uint8List.fromList([1, 2, 3]);
+      expect(TarDecoder().decodeBytes(bytes), isEmpty);
+      expect(() => TarDecoder().decodeBytes(bytes, throwOnError: true),
+          throwsA(isA<ArchiveException>()));
     });
 
     test('file', () {
@@ -415,6 +413,27 @@ void main() {
           ['././@LongLink=${'z' * 120}', 'victim.txt=hello']);
     });
 
+    test('cut or foreign data throws with either flag and not without', () {
+      final tar = TarEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('a.txt', Uint8List(100)))
+        ..add(ArchiveFile.bytes('b.txt', Uint8List(5000))));
+      final cut = Uint8List.sublistView(tar, 0, 512 + 512 + 512 + 1000);
+      expect(TarDecoder().decodeBytes(cut).files.map((f) => f.name),
+          contains('a.txt'));
+      final zip = File('test/_data/tar/folder.zip').readAsBytesSync();
+      for (final bad in [cut, zip]) {
+        expect(() => TarDecoder().decodeBytes(bad), returnsNormally);
+        for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+          expect(
+              () => TarDecoder()
+                  .decodeBytes(bad, verify: verify, throwOnError: throwOnError),
+              throwsA(allOf(isA<ArchiveException>(),
+                  isNot(isA<ArchiveChecksumException>()))),
+              reason: 'verify $verify, throwOnError $throwOnError');
+        }
+      }
+    });
+
     test('verify rejects what is not a tar', () {
       // Without a checksum check nothing tells a tar apart from an unrelated
       // file: every other header field reads as something.
@@ -430,7 +449,9 @@ void main() {
         expect(
             () =>
                 TarDecoder().decodeBytes(path.readAsBytesSync(), verify: true),
-            returnsNormally,
+            path.path.endsWith('writer-big.tar')
+                ? throwsA(isA<ArchiveException>())
+                : returnsNormally,
             reason: path.path);
       }
     });
@@ -581,12 +602,24 @@ void main() {
 
       // The field is 88 bits wide, more than an int holds. A value that
       // doesn't fit has to be refused, not reported as something unrelated.
+      void seal(Uint8List header) {
+        header.fillRange(148, 156, 0x20);
+        var sum = 0;
+        for (var i = 0; i < 512; i++) {
+          sum += header[i];
+        }
+        header.setRange(
+            148, 156, '${sum.toRadixString(8).padLeft(6, '0')}\x00 '.codeUnits);
+      }
+
       final tooWide = Uint8List(1024);
       tooWide.setRange(0, 5, 'a.txt'.codeUnits);
       tooWide.setRange(124, 136, [0x80, 0x7f, ...List.filled(10, 0xff)]);
       tooWide[156] = 0x30;
       tooWide.setRange(257, 263, 'ustar '.codeUnits);
-      expect(() => TarDecoder().decodeBytes(tooWide),
+      seal(tooWide);
+      expect(TarDecoder().decodeBytes(tooWide).files, isEmpty);
+      expect(() => TarDecoder().decodeBytes(tooWide, throwOnError: true),
           throwsA(isA<ArchiveException>()));
 
       // The encoding can express a negative number, which no size can be.
@@ -595,7 +628,9 @@ void main() {
       header.fillRange(124, 136, 0xff);
       header[156] = 0x30; // normal file
       header.setRange(257, 263, 'ustar '.codeUnits);
-      expect(() => TarDecoder().decodeBytes(header),
+      seal(header);
+      expect(TarDecoder().decodeBytes(header).files, isEmpty);
+      expect(() => TarDecoder().decodeBytes(header, throwOnError: true),
           throwsA(isA<ArchiveException>()));
     });
 

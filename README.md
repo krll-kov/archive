@@ -2,6 +2,37 @@
 [![Dart CI](https://github.com/brendan-duncan/archive/actions/workflows/build.yaml/badge.svg)](https://github.com/brendan-duncan/archive/actions/workflows/build.yaml)
 [![pub package](https://img.shields.io/pub/v/archive.svg)](https://pub.dev/packages/archive)
 
+## 5.0 Update
+
+Decoders now share one contract for errors. Without flags they never throw and return what decoded before the
+damage. `throwOnError: true` throws `ArchiveException` on damaged or cut data, and `verify: true` does the same
+and also checks checksums on top of that, throwing `ArchiveChecksumException` on a mismatch.
+
+Converters (`xzCodec`, `zstdCodec`, `bzip2Codec`, `zipCodec` and `tarCodec`) work like `gzip` and `zlib` from 
+`dart:io`, as the format specifications expect: they verify checksums by default and report every error to the stream.
+
+```dart
+try {
+  // When `verify: true` is specified, `throwOnError` becomes redundant since verify
+  // does the same job + checksum comparison
+  final data = XZDecoder().decodeBytes(bytes, verify: true);
+  print('${data.length} bytes');
+} on ArchiveChecksumException {
+  print('the data decoded but does not match its checksum');
+} on ArchiveException {
+  print('the archive is damaged or cut short');
+}
+```
+
+### Migration quick tips:
+* Code that relied on a decoder throwing without flags has to pass `throwOnError: true`.
+* `verify: true` now throws instead of returning `false` or partial data.
+* A wrong or missing zip password throws `ArchivePasswordException` regardless of flags.
+* Classes that implement `InputStream` or `OutputStream` must add `readInto`, `viewBytes`, `writeRange` and
+  `reserve`. Classes that extend them need no change.
+
+---
+
 ## 4.0 Update
 
 The Archive library was originally written when the web was the primary use of Dart. File IO was less of a concern

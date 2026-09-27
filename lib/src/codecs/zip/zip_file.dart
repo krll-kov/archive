@@ -6,6 +6,7 @@ import '../../util/aes.dart';
 import '../../util/archive_exception.dart';
 import '../../util/chunked_sink.dart';
 import '../../util/crc32.dart';
+import '../../util/decode_guard.dart';
 import '../../util/encryption.dart';
 import '../../util/file_content.dart';
 import '../../util/input_memory_stream.dart';
@@ -60,6 +61,7 @@ class ZipFile extends FileContent {
   Uint8List? extraField;
   ZipFileHeader? header;
   bool verify = false;
+  bool throwOnError = false;
 
   // Content of the file. If compressionMethod is not STORE, then it is
   // still compressed.
@@ -220,15 +222,18 @@ class ZipFile extends FileContent {
 
   @override
   void decompress(OutputStream output) {
-    if (!verify) {
-      _decompress(output);
-      return;
-    }
-    final crc = _Crc32Tee(output);
-    final tee = SinkOutputStream(crc);
-    _decompress(tee);
-    tee.flush();
-    _checkCrc32(crc.value);
+    guardDecode('zip', verify, throwOnError, () {
+      if (!verify) {
+        _decompress(output);
+        return true;
+      }
+      final crc = _Crc32Tee(output);
+      final tee = SinkOutputStream(crc);
+      _decompress(tee);
+      tee.flush();
+      _checkCrc32(crc.value);
+      return true;
+    });
   }
 
   void _decompress(OutputStream output) {
@@ -251,7 +256,10 @@ class ZipFile extends FileContent {
 
     if (compressionMethod == CompressionType.deflate) {
       final savePos = _rawContent!.position;
-      ZLibDecoder().decodeStream(_rawContent!, output, raw: true);
+      // Raw deflate has no checksum of its own, zip checks CRC32
+      // in _checkCrc32
+      ZLibDecoder()
+          .decodeStream(_rawContent!, output, raw: true, throwOnError: true);
       _rawContent!.setPosition(savePos);
     } else if (compressionMethod == CompressionType.bzip2) {
       final savePos = _rawContent!.position;
@@ -308,10 +316,14 @@ class ZipFile extends FileContent {
   /// until it is requested.
   @override
   InputStream getStream({bool decompress = true}) {
-    final stream = _getStream(decompress: decompress);
-    if (verify && decompress) {
-      _checkCrc32(getCrc32(stream.toUint8List()));
-    }
+    InputStream stream = InputMemoryStream(Uint8List(0));
+    guardDecode('zip', verify, throwOnError, () {
+      stream = _getStream(decompress: decompress);
+      if (verify && decompress) {
+        _checkCrc32(getCrc32(stream.toUint8List()));
+      }
+      return true;
+    });
     return stream;
   }
 
@@ -343,10 +355,16 @@ class ZipFile extends FileContent {
       late Uint8List content;
       if (_rawContent!.length <= maxDecodeBufferSize) {
         final compressed = _rawContent!.toUint8List();
-        content = ZLibDecoder().decodeBytes(compressed, raw: true);
+        // Raw deflate has no checksum of its own, zip checks CRC32
+        // in _checkCrc32
+        content = ZLibDecoder()
+            .decodeBytes(compressed, raw: true, throwOnError: true);
       } else {
         final decompress = OutputMemoryStream(size: uncompressedSize);
-        ZLibDecoder().decodeStream(_rawContent!, decompress, raw: true);
+        // Raw deflate has no checksum of its own, zip checks CRC32
+        // in _checkCrc32
+        ZLibDecoder().decodeStream(_rawContent!, decompress,
+            raw: true, throwOnError: true);
         content = decompress.getBytes();
       }
       _rawContent!.setPosition(savePos);
@@ -441,8 +459,15 @@ class ZipFile extends FileContent {
         }
       }
     }
-    return InputMemoryStream(_zipCryptoBody(
-        passing.isEmpty ? candidates.last : passing.first, start));
+    if (passing.isEmpty) {
+      final bytes = _zipCryptoBody(candidates.last, start);
+      if (_plainCrc32(bytes) != crc32) {
+        throw ArchivePasswordException(
+            'zip: wrong or missing password for $filename');
+      }
+      return InputMemoryStream(bytes);
+    }
+    return InputMemoryStream(_zipCryptoBody(passing.first, start));
   }
 
   int _zipCryptoHeader(Uint8List? password, int start) {
@@ -506,7 +531,7 @@ class ZipFile extends FileContent {
     final dataBytes = input.readBytes(input.length - 10);
     final dataMac = input.readBytes(10);
 
-    var failure = ArchiveException('password error');
+    ArchiveException failure = ArchivePasswordException('password error');
     for (final password in _passwordBytes()) {
       if (password == null) {
         continue;
@@ -529,7 +554,7 @@ class ZipFile extends FileContent {
       final aes = Aes(keyData, hmacKeyData, keySize);
       aes.processData(bytes, 0, bytes.length);
       if (!Uint8ListEquality.equals(dataMac.toUint8List(), aes.mac)) {
-        failure = ArchiveException('macs don\'t match');
+        failure = ArchiveChecksumException('macs don\'t match');
         continue;
       }
       return InputMemoryStream(bytes);
@@ -572,7 +597,7 @@ class ZipFile extends FileContent {
 
   void _checkCrc32(int value) {
     if (hasCrc32 && value != crc32) {
-      throw ArchiveException('zip: CRC32 of $filename does not match');
+      throw ArchiveChecksumException('zip: CRC32 of $filename does not match');
     }
   }
 }

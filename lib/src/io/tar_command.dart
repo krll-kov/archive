@@ -17,9 +17,9 @@ void listTarFiles(String path) {
 
   //List<int> data = file.readAsBytesSync();
   if (path.endsWith('tar.gz') || path.endsWith('tgz')) {
-    GZipDecoder().decodeStream(input, output);
+    GZipDecoder().decodeStream(input, output, throwOnError: true);
   } else if (path.endsWith('tar.bz2') || path.endsWith('tbz')) {
-    BZip2Decoder().decodeStream(input, output);
+    BZip2Decoder().decodeStream(input, output, throwOnError: true);
   }
 
   final tarInput = InputFileStream(tempTarPath);
@@ -27,7 +27,7 @@ void listTarFiles(String path) {
   final tarArchive = TarDecoder();
   // Tell the decoder not to store the actual file data since we don't need
   // it.
-  tarArchive.decodeStream(tarInput, storeData: false);
+  tarArchive.decodeStream(tarInput, throwOnError: true, storeData: false);
 
   print('${tarArchive.files.length} file(s)');
   for (final f in tarArchive.files) {
@@ -45,7 +45,7 @@ Directory extractTarFiles(String inputPath, String outputPath) {
     tarPath = '${tempDir.path}${Platform.pathSeparator}temp.tar';
     final input = InputFileStream(inputPath);
     final tarOutput = OutputFileStream(tarPath);
-    GZipDecoder().decodeStream(input, tarOutput);
+    GZipDecoder().decodeStream(input, tarOutput, throwOnError: true);
     input.closeSync();
     tarOutput.closeSync();
   }
@@ -56,7 +56,7 @@ Directory extractTarFiles(String inputPath, String outputPath) {
   }
 
   final input = InputFileStream(tarPath);
-  final tarArchive = TarDecoder().decodeStream(input);
+  final tarArchive = TarDecoder().decodeStream(input, throwOnError: true);
 
   for (final entry in tarArchive) {
     final path = '$outputPath${Platform.pathSeparator}${entry.name}';

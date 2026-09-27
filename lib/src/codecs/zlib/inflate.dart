@@ -13,6 +13,7 @@ class Inflate {
   InputStream? _input;
   InputStream? _nextInput;
   OutputStream _output;
+  OutputStream? _sink;
 
   /// Decompress the given [bytes].
   /// If [output] is provided, the decompressed data will be written to that,
@@ -108,11 +109,41 @@ class Inflate {
       return;
     }
 
-    while (!_inputStream!.isEOS) {
-      if (!_parseBlock()) {
-        return;
-      }
+    final sink = _output;
+    if (sink is! OutputMemoryStream) {
+      _sink = sink;
+      _output = OutputMemoryStream();
     }
+    try {
+      while (!_inputStream!.isEOS) {
+        if (!_parseBlock()) {
+          return;
+        }
+        _drain(_window);
+      }
+    } finally {
+      _drain(0);
+      _output = sink;
+      _sink = null;
+    }
+  }
+
+  static const _window = 32768;
+
+  void _drain(int keep) {
+    final sink = _sink;
+    if (sink == null) {
+      return;
+    }
+    final buffer = _output as OutputMemoryStream;
+    final length = buffer.length;
+    if (length - keep < (keep == 0 ? 1 : 1024 * 1024)) {
+      return;
+    }
+    final bytes = buffer.getBytes();
+    sink.writeBytes(Uint8List.sublistView(bytes, 0, length - keep));
+    _output = OutputMemoryStream(size: 2 * 1024 * 1024)
+      ..writeBytes(Uint8List.sublistView(bytes, length - keep));
   }
 
   /// Parse deflated block.  Returns true if there is more to read, false

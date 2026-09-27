@@ -1,7 +1,9 @@
 import 'dart:typed_data';
 
 import '../../util/adler32.dart';
+import '../../util/archive_exception.dart';
 import '../../util/byte_order.dart';
+import '../../util/decode_guard.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
@@ -19,17 +21,22 @@ class _ZLibDecoder extends ZLibDecoderBase {
 
   @override
   Uint8List decodeBytes(List<int> data,
-      {bool verify = false, bool raw = false}) {
+      {bool verify = false, bool raw = false, bool throwOnError = false}) {
     final output = OutputMemoryStream();
     decodeStream(
         InputMemoryStream(data, byteOrder: ByteOrder.bigEndian), output,
-        verify: verify, raw: raw);
+        verify: verify, raw: raw, throwOnError: throwOnError);
     return output.getBytes();
   }
 
   @override
   bool decodeStream(InputStream input, OutputStream output,
-      {bool verify = false, bool raw = false}) {
+      {bool verify = false, bool raw = false, bool throwOnError = false}) {
+    return guardDecode('zlib', verify, throwOnError,
+        () => _decode(input, output, verify, raw));
+  }
+
+  bool _decode(InputStream input, OutputStream output, bool verify, bool raw) {
     Uint8List? buffer;
 
     while (!input.isEOS) {
@@ -96,8 +103,7 @@ class _ZLibDecoder extends ZLibDecoderBase {
         if (verify) {
           final a = getAdler32(buffer);
           if (adler32 != a) {
-            buffer = null;
-            return false;
+            throw ArchiveChecksumException('Invalid zlib checksum');
           }
         }
       }

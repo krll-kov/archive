@@ -1,11 +1,13 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:archive/src/codecs/zstd/zstd_chunked.dart';
 import 'package:archive/src/codecs/zstd/zstd_dictionary.dart';
 import 'package:archive/src/codecs/zstd/zstd_frame_decoder.dart';
 import 'package:archive/src/codecs/zstd/zstd_window.dart';
 import 'package:archive/src/codecs/zstd_decoder.dart';
 import 'package:archive/src/codecs/zstd_encoder.dart';
+import 'package:archive/src/util/archive_exception.dart';
 import 'package:archive/src/util/crc32.dart';
 import 'package:archive/src/util/input_memory_stream.dart';
 import 'package:archive/src/util/output_memory_stream.dart';
@@ -315,6 +317,44 @@ void main() {
     });
   });
 
+  group('zstd verify and throwOnError', () {
+    final data = Uint8List.fromList(
+        List.generate(300000, (i) => (i * 7 + (i >> 9)) % 251));
+    final whole = const ZstdEncoder().encodeBytes(data);
+    bool decode(Uint8List bytes, bool verify, bool throwOnError) =>
+        ZstdDecoder().decodeStream(
+            InputMemoryStream(bytes), OutputMemoryStream(),
+            verify: verify, throwOnError: throwOnError);
+
+    test('a wrong checksum throws only with verify', () async {
+      final bad = Uint8List.fromList(whole);
+      bad[bad.length - 1] ^= 1;
+      expect(decode(bad, false, false), isTrue);
+      expect(decode(bad, false, true), isTrue);
+      expect(() => decode(bad, true, false),
+          throwsA(isA<ArchiveChecksumException>()));
+      await expectLater(
+          Stream<List<int>>.value(bad).transform(const ZstdCodec().decoder),
+          emitsThrough(emitsError(isA<ArchiveChecksumException>())));
+    });
+
+    test('cut or foreign data throws with either flag', () {
+      for (final bad in [
+        Uint8List.sublistView(whole, 0, whole.length ~/ 2),
+        Uint8List.fromList(List.filled(40, 7)),
+      ]) {
+        expect(decode(bad, false, false), isFalse);
+        for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+          expect(
+              () => decode(bad, verify, throwOnError),
+              throwsA(allOf(isA<ArchiveException>(),
+                  isNot(isA<ArchiveChecksumException>()))),
+              reason: 'verify $verify, throwOnError $throwOnError');
+        }
+      }
+    });
+  });
+
   group('zstd concatenated windows', () {
     final source = Uint8List.fromList(
         List.generate(32 << 10, (i) => (i * 7 + (i >> 9)) & 255));
@@ -350,7 +390,15 @@ void main() {
           broken[6 + 31 * 1027] |= 6;
         }
         final joined = Uint8List.fromList([...first, ...broken]);
-        expect(ZstdDecoder().decodeBytes(joined, verify: true), prefix);
+        if (failure == 'checksum') {
+          expect(ZstdDecoder().decodeBytes(joined), [...prefix, ...source]);
+          expect(() => ZstdDecoder().decodeBytes(joined, verify: true),
+              throwsA(isA<ArchiveChecksumException>()));
+        } else {
+          expect(ZstdDecoder().decodeBytes(joined), prefix);
+          expect(() => ZstdDecoder().decodeBytes(joined, verify: true),
+              throwsA(isA<ArchiveException>()));
+        }
         expect(
             () => ZstdDecoder()
                 .decodeBytes(joined, verify: true, throwOnError: true),

@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../archive/archive.dart';
 import '../archive/archive_file.dart';
 import '../util/archive_exception.dart';
+import '../util/decode_guard.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import 'tar/tar_file.dart';
@@ -16,23 +17,48 @@ class TarDecoder {
 
   TarDecoder({this.filenameEncoding = const Utf8Codec()});
 
-  /// Decode [data] as a tar archive. With [verify], every entry's header
-  /// checksum is checked and an [ArchiveException] thrown if one is wrong,
-  /// which is what tells a tar apart from an unrelated file.
+  /// Decodes [data] as a tar archive
+  ///
+  /// With [storeData] false the entries hold no content, only their headers
+  ///
+  /// {@macro archive.decoder_callback}
+  ///
+  /// {@macro archive.verify_throw_on_error}
   Archive decodeBytes(List<int> data,
-      {bool verify = false, bool storeData = true, ArchiveCallback? callback}) {
+      {bool verify = false,
+      bool throwOnError = false,
+      bool storeData = true,
+      ArchiveCallback? callback}) {
     return decodeStream(InputMemoryStream(data),
-        verify: verify, storeData: storeData, callback: callback);
+        verify: verify,
+        throwOnError: throwOnError,
+        storeData: storeData,
+        callback: callback);
   }
 
-  /// Decode [input] as a tar archive. With [verify], every entry's header
-  /// checksum is checked and an [ArchiveException] thrown if one is wrong,
-  /// which is what tells a tar apart from an unrelated file.
+  /// Decodes [input] of a tar archive
+  ///
+  /// With [storeData] false the entries hold no content, only their headers
+  ///
+  /// {@macro archive.decoder_callback}
+  ///
+  /// {@macro archive.verify_throw_on_error}
   Archive decodeStream(InputStream input,
-      {bool verify = false, bool storeData = true, ArchiveCallback? callback}) {
+      {bool verify = false,
+      bool throwOnError = false,
+      bool storeData = true,
+      ArchiveCallback? callback}) {
     final archive = Archive();
     files.clear();
+    guardDecode('tar', verify, throwOnError, () {
+      _decode(input, archive, verify || throwOnError, storeData, callback);
+      return true;
+    });
+    return archive;
+  }
 
+  void _decode(InputStream input, Archive archive, bool verify, bool storeData,
+      ArchiveCallback? callback) {
     final metadata = TarMetadata();
     void add(TarFile tf) => _add(archive, tf, storeData, callback);
 
@@ -62,10 +88,14 @@ class TarDecoder {
         }
       }
 
+      final available = input.length;
       final tf = TarFile.read(input,
           storeData: storeData,
           encoding: filenameEncoding,
           size: metadata.size);
+      if (verify && available < 512 + tf.fileSize) {
+        throw ArchiveException('Unexpected end of tar data');
+      }
       // A header that carries the next entry's name or its PAX records is not
       // an entry of its own
       if (metadata.take(tf, filenameEncoding)) {
@@ -86,8 +116,6 @@ class TarDecoder {
     if (orphan != null) {
       add(orphan);
     }
-
-    return archive;
   }
 
   void _add(

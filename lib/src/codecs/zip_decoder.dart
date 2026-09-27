@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../archive/archive.dart';
 import '../archive/archive_file.dart';
 import '../util/archive_exception.dart';
+import '../util/decode_guard.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import 'zip/zip_directory.dart';
@@ -11,20 +12,52 @@ import 'zip/zip_directory.dart';
 class ZipDecoder {
   late ZipDirectory directory;
 
+  /// Decodes [bytes] as a zip archive
+  ///
+  /// {@macro archive.decoder_callback}
+  ///
+  /// {@macro archive.verify_throw_on_error}
+  ///
+  /// A wrong or missing password throws `ArchivePasswordException` always
   Archive decodeBytes(List<int> bytes,
-          {bool verify = false, String? password, ArchiveCallback? callback}) =>
+          {bool verify = false,
+          bool throwOnError = false,
+          String? password,
+          ArchiveCallback? callback}) =>
       decodeStream(InputMemoryStream(bytes),
-          verify: verify, password: password, callback: callback);
+          verify: verify,
+          throwOnError: throwOnError,
+          password: password,
+          callback: callback);
 
+  /// Decodes [input] of a zip archive
+  ///
+  /// {@macro archive.decoder_callback}
+  ///
+  /// {@macro archive.verify_throw_on_error}
+  ///
+  /// A wrong or missing password throws `ArchivePasswordException` always
   Archive decodeStream(InputStream input,
-      {bool verify = false, String? password, ArchiveCallback? callback}) {
+      {bool verify = false,
+      bool throwOnError = false,
+      String? password,
+      ArchiveCallback? callback}) {
+    final archive = Archive();
+    guardDecode('zip', verify, throwOnError, () {
+      _decode(input, archive, verify, throwOnError, password, callback);
+      return true;
+    });
+    return archive;
+  }
+
+  void _decode(InputStream input, Archive archive, bool verify,
+      bool throwOnError, String? password, ArchiveCallback? callback) {
     directory = ZipDirectory();
-    directory.read(input, password: password, verify: verify);
-    if (verify && directory.filePosition < 0) {
+    directory.read(input, password: password, verify: verify || throwOnError);
+    if ((verify || throwOnError) && directory.filePosition < 0) {
       throw ArchiveException('zip: end of central directory not found');
     }
 
-    final archive = Archive();
     for (final zfh in directory.fileHeaders) {
       final zf = zfh.file!;
 
@@ -32,6 +65,7 @@ class ZipDecoder {
       final mode = zfh.externalFileAttributes;
 
       zf.verify = verify;
+      zf.throwOnError = throwOnError;
 
       final entryMode = mode >> 16;
 
@@ -78,7 +112,5 @@ class ZipDecoder {
         callback(entry);
       }
     }
-
-    return archive;
   }
 }

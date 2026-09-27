@@ -74,11 +74,16 @@ void main() {
     ]) {
       final archive = Uint8List.fromList([...stream, ...tail]);
       expect(
-          BZip2Decoder().decodeStream(
-              InputMemoryStream(archive), OutputMemoryStream(),
-              verify: true),
+          BZip2Decoder()
+              .decodeStream(InputMemoryStream(archive), OutputMemoryStream()),
           isFalse,
           reason: 'decodeStream, tail $tail');
+      expect(
+          () => BZip2Decoder().decodeStream(
+              InputMemoryStream(archive), OutputMemoryStream(),
+              verify: true),
+          throwsA(isA<ArchiveException>()),
+          reason: 'decodeStream with verify, tail $tail');
       expect(() => bzip2Codec.decode(archive), throwsA(isA<ArchiveException>()),
           reason: 'converter, tail $tail');
     }
@@ -114,6 +119,41 @@ void main() {
     }
   });
 
+  test('a wrong block checksum throws only with verify', () async {
+    final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
+    final bad = Uint8List.fromList(BZip2Encoder().encodeBytes(data));
+    bad[10] ^= 0xff;
+    expect(BZip2Decoder().decodeBytes(bad), data);
+    expect(BZip2Decoder().decodeBytes(bad, throwOnError: true), data);
+    expect(() => BZip2Decoder().decodeBytes(bad, verify: true),
+        throwsA(isA<ArchiveChecksumException>()));
+    await expectLater(
+        Stream<List<int>>.value(bad).transform(bzip2Codec.decoder),
+        emitsThrough(emitsError(isA<ArchiveChecksumException>())));
+  });
+
+  test('damaged or cut data throws with either flag and not without', () {
+    final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
+    final whole = BZip2Encoder().encodeBytes(data);
+    for (final bad in [
+      Uint8List.sublistView(whole, 0, whole.length ~/ 2),
+      Uint8List.fromList([1, 2, 3, 4, 5]),
+    ]) {
+      expect(
+          BZip2Decoder()
+              .decodeStream(InputMemoryStream(bad), OutputMemoryStream()),
+          isFalse);
+      for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+        expect(
+            () => BZip2Decoder()
+                .decodeBytes(bad, verify: verify, throwOnError: throwOnError),
+            throwsA(allOf(isA<ArchiveException>(),
+                isNot(isA<ArchiveChecksumException>()))),
+            reason: 'verify $verify, throwOnError $throwOnError');
+      }
+    }
+  });
+
   test('a zip entry with damaged bzip2 data reports it', () {
     final source = Uint8List(200000);
     for (var i = 0; i < source.length; i++) {
@@ -128,7 +168,9 @@ void main() {
       bad[i] = bad[i] ^ 0xff;
     }
 
-    final entry = ZipDecoder().decodeBytes(bad).files.single;
+    expect(ZipDecoder().decodeBytes(bad).files.single.readBytes(), isEmpty);
+    final entry =
+        ZipDecoder().decodeBytes(bad, throwOnError: true).files.single;
     expect(entry.readBytes, throwsA(isA<ArchiveException>()));
   });
 
@@ -136,7 +178,9 @@ void main() {
     final good = BZip2Encoder().encodeBytes([1, 2, 3]);
     final bad = Uint8List.fromList(good)..[3] = 0x30;
 
-    expect(BZip2Decoder().decodeBytes(bad, verify: true), isEmpty);
+    expect(BZip2Decoder().decodeBytes(bad), isEmpty);
+    expect(() => BZip2Decoder().decodeBytes(bad, verify: true),
+        throwsA(isA<ArchiveException>()));
     expect(
         BZip2Decoder()
             .decodeStream(InputMemoryStream(bad), OutputMemoryStream()),

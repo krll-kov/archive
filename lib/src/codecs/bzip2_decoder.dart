@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../util/archive_exception.dart';
+import '../util/decode_guard.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
@@ -10,15 +12,23 @@ import 'bzip2/bzip2.dart';
 /// Decompress bzip2 compressed data.
 /// Derived from libbzip2 (http://www.bzip.org).
 class BZip2Decoder {
-  Uint8List decodeBytes(List<int> data, {bool verify = false}) {
+  /// {@macro archive.verify_throw_on_error}
+  Uint8List decodeBytes(List<int> data,
+      {bool verify = false, bool throwOnError = false}) {
     final input = InputMemoryStream(data);
     final output = OutputMemoryStream();
-    decodeStream(input, output, verify: verify);
+    decodeStream(input, output, verify: verify, throwOnError: throwOnError);
     return output.getBytes();
   }
 
+  /// {@macro archive.verify_throw_on_error}
   bool decodeStream(InputStream input, OutputStream output,
-      {bool verify = false}) {
+      {bool verify = false, bool throwOnError = false}) {
+    return guardDecode('bzip2', verify, throwOnError,
+        () => _decodeStreams(input, output, verify));
+  }
+
+  bool _decodeStreams(InputStream input, OutputStream output, bool verify) {
     // Support concatenated streams (like pbzip2, which writes one stream per
     // block). Any trailing data that doesn't start a new stream is safely
     // ignored
@@ -84,8 +94,7 @@ class BZip2Decoder {
         blockCrc = BZip2.finalizeCrc(blockCrc);
 
         if (verify && blockCrc != storedBlockCrc) {
-          return false;
-          //throw ArchiveException('Invalid block checksum.');
+          throw ArchiveChecksumException('Invalid block checksum.');
         }
         combinedCrc = ((combinedCrc << 1) | (combinedCrc >> 31)) & 0xffffffff;
         combinedCrc ^= blockCrc;
@@ -102,10 +111,12 @@ class BZip2Decoder {
         storedCrc = (storedCrc << 8) | br.readByte();
         storedCrc = (storedCrc << 8) | br.readByte();
 
-        if (br.overrun || (verify && storedCrc != combinedCrc)) {
+        if (br.overrun) {
           return false;
-          //throw ArchiveException(
-          //    'Invalid combined checksum: $combinedCrc : $storedCrc');
+        }
+        if (verify && storedCrc != combinedCrc) {
+          throw ArchiveChecksumException(
+              'Invalid combined checksum: $combinedCrc : $storedCrc');
         }
 
         output.flush();

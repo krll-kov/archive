@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
 import '../../util/input_stream.dart';
 import '../../util/xxh64.dart';
 import 'zstd_block_decoder.dart';
@@ -201,7 +202,7 @@ class ZstdFrameDecoder {
   /// The frame carries the low half of an XXH64 of everything it decoded to
   void _checkDigest(int stored, bool checked) {
     if (checked && _hash.digestLow != stored) {
-      throw ZstdFrameException('Content checksum does not match');
+      throw ArchiveChecksumException('Content checksum does not match');
     }
   }
 

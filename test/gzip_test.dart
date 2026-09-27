@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -189,6 +190,91 @@ void main() {
               isTrue);
         }
       });
+    });
+
+    group('verify and throwOnError', () {
+      final data = Uint8List(300000);
+      for (var i = 0; i < data.length; i++) {
+        data[i] = (i * 7 + (i >> 9)) % 251;
+      }
+      final gzip = Uint8List.fromList(GZipEncoder().encodeBytes(data));
+      final zlib = Uint8List.fromList(ZLibEncoder().encodeBytes(data));
+      final decoders = {
+        'gzip': (Uint8List b, bool v, bool t) => const GZipDecoder()
+            .decodeStream(InputMemoryStream(b), OutputMemoryStream(),
+                verify: v, throwOnError: t),
+        'gzip web': (Uint8List b, bool v, bool t) => const GZipDecoderWeb()
+            .decodeStream(InputMemoryStream(b), OutputMemoryStream(),
+                verify: v, throwOnError: t),
+        'zlib': (Uint8List b, bool v, bool t) => const ZLibDecoder()
+            .decodeStream(InputMemoryStream(b), OutputMemoryStream(),
+                verify: v, throwOnError: t),
+        'zlib web': (Uint8List b, bool v, bool t) => const ZLibDecoderWeb()
+            .decodeStream(InputMemoryStream(b), OutputMemoryStream(),
+                verify: v, throwOnError: t),
+      };
+      Uint8List of(String name) => name.startsWith('gzip') ? gzip : zlib;
+
+      for (final MapEntry(key: name, value: decode) in decoders.entries) {
+        test('$name: a wrong checksum throws only with verify', () {
+          final bad = Uint8List.fromList(of(name));
+          bad[bad.length - (name.startsWith('gzip') ? 8 : 1)] ^= 1;
+          expect(decode(bad, false, false), isTrue);
+          expect(decode(bad, false, true), isTrue);
+          expect(() => decode(bad, true, false),
+              throwsA(isA<ArchiveChecksumException>()));
+        });
+
+        test('$name: cut or foreign data throws with either flag', () {
+          final whole = of(name);
+          final cut = Uint8List.sublistView(whole, 0, whole.length ~/ 2);
+          if (name == 'zlib') {
+            expect(decode(cut, false, true), isTrue);
+            expect(() => decode(cut, true, false),
+                throwsA(isA<ArchiveChecksumException>()));
+          }
+          for (final bad in [
+            if (name != 'zlib') cut,
+            Uint8List.fromList(List.filled(40, 7)),
+          ]) {
+            expect(decode(bad, false, false), isFalse);
+            for (final (v, t) in [(true, false), (false, true)]) {
+              expect(
+                  () => decode(bad, v, t),
+                  throwsA(allOf(isA<ArchiveException>(),
+                      isNot(isA<ArchiveChecksumException>()))),
+                  reason: 'verify $v, throwOnError $t');
+            }
+          }
+        });
+      }
+    });
+
+    test('the web decoder writes a file and a sink it cannot read back', () {
+      final data = Uint8List(3 * 1024 * 1024 + 12345);
+      for (var i = 0; i < data.length; i++) {
+        data[i] = (i * 31 + (i >> 11)) & 0xff;
+      }
+      final one = Uint8List.fromList(GZipEncoder().encodeBytes(data));
+      final gz = Uint8List.fromList([...one, ...one]);
+      final want = [...data, ...data];
+
+      final path = '$testOutputPath/web_decode.bin';
+      final file = OutputFileStream(path);
+      expect(
+          GZipDecoderWeb()
+              .decodeStream(InputMemoryStream(gz), file, verify: true),
+          isTrue);
+      file.closeSync();
+      expect(File(path).readAsBytesSync(), want);
+
+      List<List<int>>? chunks;
+      final sink = SinkOutputStream(
+          ChunkedConversionSink<List<int>>.withCallback((all) => chunks = all));
+      expect(
+          GZipDecoderWeb().decodeStream(InputMemoryStream(gz), sink), isTrue);
+      sink.sink.close();
+      expect(chunks!.expand((c) => c).toList(), want);
     });
   });
 }

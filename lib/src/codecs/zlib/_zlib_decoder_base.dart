@@ -6,8 +6,8 @@ abstract class ZLibDecoderBase {
   const ZLibDecoderBase();
 
   Uint8List decodeBytes(List<int> bytes,
-      {bool verify = false, bool raw = false});
+      {bool verify = false, bool raw = false, bool throwOnError = false});
 
   bool decodeStream(InputStream input, OutputStream output,
-      {bool verify = false, bool raw = false});
+      {bool verify = false, bool raw = false, bool throwOnError = false});
 }

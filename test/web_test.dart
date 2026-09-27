@@ -52,10 +52,10 @@ void main() {
       final damaged = Uint8List.fromList(compressed);
       damaged[damaged.length - 8] ^= 0xff;
       expect(
-          GZipDecoderWeb().decodeStream(
+          () => GZipDecoderWeb().decodeStream(
               InputMemoryStream(damaged), OutputMemoryStream(),
               verify: true),
-          isFalse);
+          throwsA(isA<ArchiveChecksumException>()));
       // A second pass over the output, so without verify it is not read
       expect(
           GZipDecoderWeb()

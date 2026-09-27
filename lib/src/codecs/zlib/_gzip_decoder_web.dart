@@ -1,7 +1,9 @@
 import 'dart:math';
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
 import '../../util/crc32.dart';
+import '../../util/decode_guard.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
@@ -19,15 +21,21 @@ class _GZipDecoder extends ZLibDecoderBase {
 
   @override
   Uint8List decodeBytes(List<int> data,
-      {bool verify = false, bool raw = false}) {
+      {bool verify = false, bool raw = false, bool throwOnError = false}) {
     final output = OutputMemoryStream();
-    decodeStream(InputMemoryStream(data), output, verify: verify, raw: raw);
+    decodeStream(InputMemoryStream(data), output,
+        verify: verify, raw: raw, throwOnError: throwOnError);
     return output.getBytes();
   }
 
   @override
   bool decodeStream(InputStream input, OutputStream output,
-      {bool verify = false, bool raw = false}) {
+      {bool verify = false, bool raw = false, bool throwOnError = false}) {
+    return guardDecode('gzip', verify, throwOnError,
+        () => _decode(input, output, verify, raw));
+  }
+
+  bool _decode(InputStream input, OutputStream output, bool verify, bool raw) {
     var members = 0;
     while (!input.isEOS) {
       final startPos = input.position;
@@ -78,7 +86,7 @@ class _GZipDecoder extends ZLibDecoderBase {
           at = end;
         }
         if (sum != crc) {
-          return false;
+          throw ArchiveChecksumException('Invalid gzip checksum');
         }
       }
       members++;

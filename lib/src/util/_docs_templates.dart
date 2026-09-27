@@ -194,8 +194,9 @@
 /// Pass this to the the call to spread it over isolates. You cannot wait for an
 /// isolate synchronously, so the call returns an empty result at once and the
 /// real result goes to [onDone], error is placed inside the [onError] callback.
-/// If error happens, onDone returns an empty list for decodeBytes/encodeBytes
-/// or false for decodeStream/encodeStream.
+/// Without [onError] a failure goes to onDone as an empty list for
+/// decodeBytes/encodeBytes, the same as an empty archive, or as false for
+/// decodeStream/encodeStream.
 /// {@endtemplate}
 
 /// ------------------------------------------------------------------------
@@ -276,10 +277,21 @@
 /// ------------------------------------------------------------------------
 /// ------------------------------------------------------------------------
 
+/// {@template archive.decoder_callback}
+/// [callback] gets every entry as soon as it is read, so each entry can be
+/// written out before the next one is decoded
+/// {@endtemplate}
+
+/// ------------------------------------------------------------------------
+/// ------------------------------------------------------------------------
+/// ------------------------------------------------------------------------
+
 /// {@template archive.verify_throw_on_error}
-/// Decode might be put an empty Uint8List into result variable/provided stream
-/// unless `throwOnError` and `verify` are specified to handle corrupted
-/// files or inner errors.
+/// `throwOnError` throws `ArchiveException` on damaged or cut data.
+/// `verify` does the same, also checks checksums at a tiny cost of ~5-10% speed
+/// decrease depending on archive file and throws `ArchiveChecksumException` on
+/// mismatch.
+/// With neither, decodeBytes returns partial data, decodeStream returns false
 /// {@endtemplate}
 
 /// ------------------------------------------------------------------------

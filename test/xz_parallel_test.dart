@@ -256,11 +256,10 @@ void main() {
       final data = Uint8List.fromList(built.bytes);
       data[built.blocks[1].checkOffset(32)] ^= 0xff;
       expect(await decodeBytesOnIsolates(data, workers: 4), equals(expected));
-      expect(
-          await decodeStreamOnIsolates(
-              InputMemoryStream(data), OutputMemoryStream(),
+      await expectLater(
+          decodeStreamOnIsolates(InputMemoryStream(data), OutputMemoryStream(),
               verify: true, workers: 4),
-          isFalse);
+          throwsA(isA<ArchiveChecksumException>()));
     });
 
     group('corrupt archives', () {
@@ -660,15 +659,15 @@ void main() {
 
         // With verification both refuse it.
         expect(
-            XZDecoder().decodeStream(
+            () => XZDecoder().decodeStream(
                 InputMemoryStream(data), OutputMemoryStream(),
                 verify: true),
-            isFalse);
-        expect(
-            await decodeStreamOnIsolates(
+            throwsA(isA<ArchiveChecksumException>()));
+        await expectLater(
+            decodeStreamOnIsolates(
                 InputMemoryStream(data), OutputMemoryStream(),
                 verify: true, workers: 4),
-            isFalse);
+            throwsA(isA<ArchiveChecksumException>()));
 
         // Both stop in the same place, and that place is the end of the block
         // whose check failed: writing straight through to an output stream
@@ -676,11 +675,18 @@ void main() {
         // them behind and the parallel one matches it rather than inventing a
         // stricter rule for itself. Neither vouches for them; both reported
         // the failure above.
-        final sequential = XZDecoder().decodeBytes(data, verify: true);
-        final parallel =
-            await decodeBytesOnIsolates(data, verify: true, workers: 4);
-        expectGenuinePrefix(sequential, 'sequential');
-        expectGenuinePrefix(parallel, 'parallel');
+        final sequential = OutputMemoryStream();
+        expect(
+            () => XZDecoder().decodeStream(InputMemoryStream(data), sequential,
+                verify: true),
+            throwsA(isA<ArchiveChecksumException>()));
+        final parallel = OutputMemoryStream();
+        await expectLater(
+            decodeStreamOnIsolates(InputMemoryStream(data), parallel,
+                verify: true, workers: 4),
+            throwsA(isA<ArchiveChecksumException>()));
+        expectGenuinePrefix(sequential.getBytes(), 'sequential');
+        expectGenuinePrefix(parallel.getBytes(), 'parallel');
         expect(parallel.length, equals(sequential.length));
         expect(parallel.length,
             equals(blocks[1].uncompOffset + blocks[1].uncompSize));
@@ -993,26 +999,40 @@ void main() {
       // and then runs out of input, which is the shape being tested and does
       // not depend on where a particular xz build put its chunk boundaries.
       final compressed = Uint8List.sublistView(source, 0, source.length ~/ 2);
-      final partial = XZDecoder().decodeBytes(compressed, verify: true).length;
+      final partial = XZDecoder().decodeBytes(compressed).length;
       expect(partial, greaterThan(0));
       expect(partial, lessThan(full));
 
       // Every way of asking has to stop in the same place, whether or not the
       // check is verified and whether or not the output can be read back.
-      expect(XZDecoder().decodeBytes(compressed).length, equals(partial));
       expect(await decodeBytesOnIsolates(compressed), hasLength(partial));
-      expect(await decodeBytesOnIsolates(compressed, verify: true),
-          hasLength(partial));
+      final verified = OutputMemoryStream();
+      expect(
+          () => XZDecoder().decodeStream(
+              InputMemoryStream(compressed), verified,
+              verify: true),
+          throwsA(isA<ArchiveException>()));
+      expect(verified.length, equals(partial));
+      await expectLater(decodeBytesOnIsolates(compressed, verify: true),
+          throwsA(isA<ArchiveException>()));
 
       final dir = Directory.systemTemp.createTempSync('archive_xz_partial');
       try {
         for (final verify in [false, true]) {
           final path = p.join(dir.path, 'out_$verify.bin');
           final output = OutputFileStream(path);
-          expect(
-              XZDecoder().decodeStream(InputMemoryStream(compressed), output,
-                  verify: verify),
-              isFalse);
+          if (verify) {
+            expect(
+                () => XZDecoder().decodeStream(
+                    InputMemoryStream(compressed), output,
+                    verify: verify),
+                throwsA(isA<ArchiveException>()));
+          } else {
+            expect(
+                XZDecoder().decodeStream(InputMemoryStream(compressed), output,
+                    verify: verify),
+                isFalse);
+          }
           await output.close();
           expect(File(path).lengthSync(), equals(partial),
               reason: 'sync, verify: $verify');
@@ -1391,8 +1411,23 @@ void main() {
         ];
       });
 
-      bool pull(Uint8List data, OutputStream output) => XZDecoder()
-          .decodeStream(InputMemoryStream(data), output, verify: true);
+      bool pull(Uint8List data, OutputStream output) {
+        try {
+          return XZDecoder()
+              .decodeStream(InputMemoryStream(data), output, verify: true);
+        } on ArchiveException {
+          return false;
+        }
+      }
+
+      Future<bool> pullParallel(Uint8List data, OutputStream output) async {
+        try {
+          return await decodeStreamOnIsolates(InputMemoryStream(data), output,
+              verify: true, workers: 4);
+        } on ArchiveException {
+          return false;
+        }
+      }
 
       bool push(Uint8List data, BytesBuilder output) {
         try {
@@ -1418,9 +1453,7 @@ void main() {
           final chunked = BytesBuilder();
           final chunkedOk = push(data, chunked);
           final parallelOut = OutputMemoryStream();
-          final parallelOk = await decodeStreamOnIsolates(
-              InputMemoryStream(data), parallelOut,
-              verify: true, workers: 4);
+          final parallelOk = await pullParallel(data, parallelOut);
 
           expect(chunkedOk, equals(sequentialOk),
               reason: 'byte $at, converter');
@@ -1454,11 +1487,7 @@ void main() {
           }
           expect(pull(data, OutputMemoryStream()), isFalse, reason: entry.key);
           expect(push(data, BytesBuilder()), isFalse, reason: entry.key);
-          expect(
-              await decodeStreamOnIsolates(
-                  InputMemoryStream(data), OutputMemoryStream(),
-                  verify: true, workers: 4),
-              isFalse,
+          expect(await pullParallel(data, OutputMemoryStream()), isFalse,
               reason: entry.key);
         }
       });

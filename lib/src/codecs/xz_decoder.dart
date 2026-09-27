@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../util/archive_exception.dart';
+import '../util/decode_guard.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
@@ -35,6 +36,7 @@ class XZDecoder {
   }
 
   /// Decompress the given [bytes] with the xz format.
+  ///
   /// {@macro archive.verify_throw_on_error}
   ///
   /// Splitting only helps if the archive has several blocks. That is what
@@ -74,6 +76,7 @@ class XZDecoder {
 
   /// Decompress the given [input] with the xz format, writing the
   /// decompressed data to the [output] stream.
+  ///
   /// {@macro archive.verify_throw_on_error}
   ///
   /// | input, output | peak memory | time |
@@ -138,22 +141,27 @@ class XZDecoder {
       InputStream input, OutputStream output, bool verify, bool throwOnError) {
     final decoder =
         XZStreamDecoder(verify: verify, maxPreallocateSize: maxPreallocateSize);
-    try {
-      if (decoder.decode(input, output)) return true;
-    } catch (error) {
-      if (throwOnError) throw ArchiveException('Invalid XZ archive: $error');
-      return false;
-    }
-    // The decoder records why it gave up, so the exception can say more than
-    // that something was wrong somewhere.
-    if (throwOnError) throw _invalid(decoder.failureReason);
-    return false;
+    return guardDecode('XZ', verify, throwOnError, () {
+      try {
+        if (decoder.decode(input, output)) return true;
+      } catch (error) {
+        throw ArchiveException('Invalid XZ archive: $error');
+      }
+      // The decoder records why it gave up, so the exception can say more than
+      // that something was wrong somewhere.
+      throw _invalid(decoder.failureReason);
+    });
   }
 
   // The exception a rejected archive turns into, naming the reason when the
   // decoder managed to identify one.
-  static ArchiveException _invalid(String? reason) => ArchiveException(
-      reason == null ? 'Invalid XZ archive' : 'Invalid XZ archive: $reason');
+  static ArchiveException _invalid(String? reason) {
+    final message =
+        reason == null ? 'Invalid XZ archive' : 'Invalid XZ archive: $reason';
+    return xzCheckFailures.contains(reason)
+        ? ArchiveChecksumException(message)
+        : ArchiveException(message);
+  }
 
   Future<Uint8List> _decodeBytesOnIsolates(Uint8List bytes, bool verify,
       bool throwOnError, XZMultithreadOptions<Uint8List> options) async {
@@ -172,7 +180,8 @@ class XZDecoder {
       // out of order and an OutputMemoryStream only appends, so the ones that
       // run ahead wait their turn in the ordered writer.
       final output = OutputMemoryStream();
-      final writer = layout == null ? null : _OrderedWriter(output);
+      final writer =
+          layout == null ? null : _OrderedWriter(output, layout.blocks);
       String? reason;
       final ok = await xzDecodeMultithreaded(
         bytes: bytes,
@@ -184,12 +193,13 @@ class XZDecoder {
         onChunk: writer == null
             ? (offset, chunk) => output.writeBytes(chunk)
             : writer.add,
+        onBlockDone: writer?.blockDone,
         onFailureReason: (r) => reason = r,
         orderedOutput: writer != null,
         fileReadBufferSize: options.fileReadBufferSize,
       );
-      if (!ok && throwOnError) {
-        throw _invalid(reason);
+      if (!ok) {
+        guardDecode('XZ', verify, throwOnError, () => throw _invalid(reason));
       }
       // Whether or not it succeeded, this yields what was decoded, which is
       // what the single threaded path does too.
@@ -263,9 +273,7 @@ class XZDecoder {
     if (ok && !overran) {
       return output;
     }
-    if (throwOnError) {
-      throw _invalid(reason);
-    }
+    guardDecode('XZ', verify, throwOnError, () => throw _invalid(reason));
 
     // Blocks are decoded out of order, so the output stops where the single
     // threaded decode would have given up: at the first block that is not
@@ -314,7 +322,7 @@ class XZDecoder {
 
     // An OutputStream can only be appended to, so blocks that finish early are
     // held back until the blocks in front of them have been written.
-    final writer = _OrderedWriter(output);
+    final writer = _OrderedWriter(output, layout?.blocks);
     String? reason;
 
     final ok = await xzDecodeMultithreaded(
@@ -328,6 +336,7 @@ class XZDecoder {
       workers: options.workers,
       memoryBudget: options.memoryBudget,
       onChunk: writer.add,
+      onBlockDone: layout == null ? null : writer.blockDone,
       onFailureReason: (r) => reason = r,
       orderedOutput: true,
       fileReadBufferSize: options.fileReadBufferSize,
@@ -335,8 +344,8 @@ class XZDecoder {
     if (ok) {
       input.skip(input.length);
     }
-    if (!ok && throwOnError) {
-      throw _invalid(reason);
+    if (!ok) {
+      guardDecode('XZ', verify, throwOnError, () => throw _invalid(reason));
     }
     return ok;
   }
@@ -414,13 +423,20 @@ class XZDecoder {
 /// Writes chunks to an append-only [OutputStream] in offset order.
 class _OrderedWriter {
   final OutputStream _output;
+  final List<XZBlockLayout>? _blocks;
   final _waiting = <int, Uint8List>{};
+  final _confirmed = <int>{};
   int _written = 0;
+  int? _stop;
 
-  _OrderedWriter(this._output);
+  _OrderedWriter(this._output, [this._blocks]);
 
   void add(int offset, Uint8List chunk) {
-    if (offset != _written) {
+    final stop = _stop;
+    if (stop != null && offset >= stop) {
+      return;
+    }
+    if (offset != _written || !_open(offset)) {
       _waiting[offset] = chunk;
       return;
     }
@@ -429,7 +445,27 @@ class _OrderedWriter {
     _written += chunk.length;
 
     // Writing this chunk may have joined up chunks that arrived before it.
-    while (true) {
+    _drain();
+  }
+
+  void blockDone(int offset, bool ok) {
+    final blocks = _blocks!;
+    final index = _blockIndexAt(blocks, offset);
+    if (!ok) {
+      final stop = _stop;
+      final end = offset + blocks[index].uncompressedLength;
+      if (stop == null || end < stop) {
+        _stop = end;
+      }
+      _waiting.removeWhere((at, _) => at >= _stop!);
+      return;
+    }
+    _confirmed.add(index);
+    _drain();
+  }
+
+  void _drain() {
+    while (_open(_written)) {
       final next = _waiting.remove(_written);
       if (next == null) {
         return;
@@ -437,6 +473,16 @@ class _OrderedWriter {
       _output.writeBytes(next);
       _written += next.length;
     }
+  }
+
+  bool _open(int offset) {
+    final blocks = _blocks;
+    if (blocks == null || offset == 0) {
+      return true;
+    }
+    final index = _blockIndexAt(blocks, offset);
+    return blocks[index].outputOffset != offset ||
+        _confirmed.contains(index - 1);
   }
 }
 

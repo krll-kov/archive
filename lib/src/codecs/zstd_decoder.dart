@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import '../util/archive_exception.dart';
+import '../util/decode_guard.dart';
 import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
 import '../util/output_stream.dart';
@@ -29,10 +29,9 @@ class ZstdDecoder {
     }
   }
 
-  /// Decompress [data], which must hold whole frames. A malformed archive
-  /// yields the frames that decoded whole before the failure, unless
-  /// [throwOnError]. [verify] checks the checksum of every frame carrying one,
-  /// at the cost of hashing the whole output
+  /// Decompress the given [bytes] with the zstd format.
+  ///
+  /// {@macro archive.verify_throw_on_error}
   Uint8List decodeBytes(List<int> data,
       {bool verify = false, bool throwOnError = false}) {
     final bytes = data is Uint8List ? data : Uint8List.fromList(data);
@@ -45,23 +44,17 @@ class ZstdDecoder {
       if (total != null && total > 0) {
         sink.reserve(_affordable(total, bytes.length, zstdBlockMaximumSize));
       }
-      try {
+      guardDecode('zstd', verify, throwOnError, () {
         _decode(bytes, verify, sink, null);
-      } catch (error) {
-        if (throwOnError) {
-          throw ArchiveException('Invalid zstd archive: $error');
-        }
-      }
+        return true;
+      });
       return sink.getBytes();
     }
     final parts = <Uint8List>[];
-    try {
+    guardDecode('zstd', verify, throwOnError, () {
       _decode(bytes, verify, null, parts);
-    } catch (error) {
-      if (throwOnError) {
-        throw ArchiveException('Invalid zstd archive: $error');
-      }
-    }
+      return true;
+    });
     return parts.isEmpty ? Uint8List(0) : parts[0];
   }
 
@@ -95,19 +88,16 @@ class ZstdDecoder {
     return frames;
   }
 
-  /// Decompress [input] into [output], holding one block of the compressed
-  /// side and a window of the result, whatever the archive weighs
+  /// Decompress the given [input] with the zstd format, writing the
+  /// decompressed data to the [output] stream.
+  ///
+  /// {@macro archive.verify_throw_on_error}
   bool decodeStream(InputStream input, OutputStream output,
       {bool verify = false, bool throwOnError = false}) {
-    try {
+    return guardDecode('zstd', verify, throwOnError, () {
       _stream(input, output, verify);
       return true;
-    } catch (error) {
-      if (throwOnError) {
-        throw ArchiveException('Invalid zstd archive: $error');
-      }
-      return false;
-    }
+    });
   }
 
   /// Walks the frames of [input] a block at a time, so neither the compressed

@@ -26,12 +26,20 @@ class ZLibOutputSink implements Sink<List<int>> {
   /// hold other data, so its length can be larger
   var written = 0;
 
+  /// Checksum of the written bytes, updated when [update] is set
+  var value = 0;
+  int Function(List<int> data, int value)? update;
+
   ZLibOutputSink(this._output);
 
   @override
   void add(List<int> data) {
     _output.writeBytes(data);
     written += data.length;
+    final update = this.update;
+    if (update != null) {
+      value = update(data, value);
+    }
   }
 
   @override

@@ -1134,7 +1134,9 @@ void main() {
       const localHeader = 30;
       const bzipSignature = 4;
       zip[localHeader + 'b.bin'.length + bzipSignature] ^= 0x55;
-      expect(() => ZipDecoder().decodeBytes(zip).first.content,
+      expect(ZipDecoder().decodeBytes(zip).first.content, isEmpty);
+      expect(
+          () => ZipDecoder().decodeBytes(zip, throwOnError: true).first.content,
           throwsA(isA<ArchiveException>()));
       final input = File(p.join(directory.path, 'damaged.zip'))
         ..writeAsBytesSync(zip);

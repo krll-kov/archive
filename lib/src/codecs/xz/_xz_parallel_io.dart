@@ -596,7 +596,10 @@ Stream<Uint8List> _xzDecodeStream(
         return;
       }
       if (!head.ok) {
-        failure ??= ArchiveException('xz: ${head.reason ?? 'a block failed'}');
+        final message = 'xz: ${head.reason ?? 'a block failed'}';
+        failure ??= xzCheckFailures.contains(head.reason)
+            ? ArchiveChecksumException(message)
+            : ArchiveException(message);
         return;
       }
       for (final piece in head.pieces) {
@@ -1128,7 +1131,7 @@ void _xzWorker(SendPort toMain) {
       ok = sink.checkMatches(
           _readCheckField(input, data, length, xzCheckSize(checkType)));
       if (!ok) {
-        reason = 'Block check failed';
+        reason = xzBlockCheckFailed;
       }
     } catch (error) {
       ok = false;

@@ -323,7 +323,7 @@ class BZip2ChunkedDecoder extends ChunkedSink {
         throw ArchiveException('bzip2: a block is malformed');
       }
       if (verify && crc != _storedBlockCrc) {
-        throw ArchiveException('bzip2: block checksum does not match');
+        throw ArchiveChecksumException('bzip2: block checksum does not match');
       }
       _combinedCrc = ((_combinedCrc << 1) | (_combinedCrc >> 31)) & 0xffffffff;
       _combinedCrc ^= crc;
@@ -354,7 +354,7 @@ class BZip2ChunkedDecoder extends ChunkedSink {
   void _readStreamCrc() {
     final stored = _readBits(32);
     if (verify && stored != _combinedCrc) {
-      throw ArchiveException('bzip2: stream checksum does not match');
+      throw ArchiveChecksumException('bzip2: stream checksum does not match');
     }
     // After the checksum, we skip padding to the end of the byte,
     // followed by the rest of the input

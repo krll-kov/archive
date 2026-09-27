@@ -171,6 +171,40 @@ void main() {
     });
   });
 
+  group('xz verify and throwOnError', () {
+    bool decode(Uint8List bytes, bool verify, bool throwOnError) =>
+        XZDecoder().decodeStream(InputMemoryStream(bytes), OutputMemoryStream(),
+            verify: verify, throwOnError: throwOnError);
+
+    test('a wrong check throws only with verify', () async {
+      final bad = Uint8List.fromList(archiveBytes('crc64.xz'));
+      bad[bad.length - 21] ^= 0xff;
+      expect(decode(bad, false, false), isTrue);
+      expect(decode(bad, false, true), isTrue);
+      expect(() => decode(bad, true, false),
+          throwsA(isA<ArchiveChecksumException>()));
+      await expectLater(Stream<List<int>>.value(bad).transform(xzCodec.decoder),
+          emitsThrough(emitsError(isA<ArchiveChecksumException>())));
+    });
+
+    test('cut or foreign data throws with either flag', () {
+      final whole = archiveBytes('crc64.xz');
+      for (final bad in [
+        Uint8List.sublistView(whole, 0, whole.length ~/ 2),
+        Uint8List.fromList(List.filled(40, 7)),
+      ]) {
+        expect(decode(bad, false, false), isFalse);
+        for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+          expect(
+              () => decode(bad, verify, throwOnError),
+              throwsA(allOf(isA<ArchiveException>(),
+                  isNot(isA<ArchiveChecksumException>()))),
+              reason: 'verify $verify, throwOnError $throwOnError');
+        }
+      }
+    });
+  });
+
   group('xz decoder', () {
     test('decodes an archive written with pb=4', () {
       // Four position bits is legal and rarely used, and reading the position
@@ -317,12 +351,13 @@ void main() {
                 InputMemoryStream(compressed), OutputMemoryStream()),
             isTrue);
         expect(
-            XZDecoder().decodeStream(
+            () => XZDecoder().decodeStream(
                 InputMemoryStream(compressed), OutputMemoryStream(),
                 verify: true),
-            isFalse);
+            throwsA(isA<ArchiveChecksumException>()));
 
-        expect(XZDecoder().decodeBytes(compressed, verify: true), isNotEmpty);
+        expect(() => XZDecoder().decodeBytes(compressed, verify: true),
+            throwsA(isA<ArchiveChecksumException>()));
         expect(
             () => XZDecoder()
                 .decodeBytes(compressed, verify: true, throwOnError: true),

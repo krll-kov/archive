@@ -516,17 +516,17 @@ class XzChunkedDecoder extends ChunkedSink {
       final expected =
           field[0] | (field[1] << 8) | (field[2] << 16) | (field[3] << 24);
       if (_blockCrc32 != expected) {
-        throw ArchiveException('xz: CRC32 check failed');
+        throw ArchiveChecksumException('xz: $xzCrc32Failed');
       }
     } else if (verify && checkType == 0x4) {
       if (!_blockCrc64.matches(field, 0)) {
-        throw ArchiveException('xz: CRC64 check failed');
+        throw ArchiveChecksumException('xz: $xzCrc64Failed');
       }
     } else if (verify && checkType == 0xa) {
       final actual = _blockSha256.digest();
       for (var i = 0; i < 32; i++) {
         if (actual[i] != field[i]) {
-          throw ArchiveException('xz: SHA-256 check failed');
+          throw ArchiveChecksumException('xz: $xzSha256Failed');
         }
       }
     }

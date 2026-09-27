@@ -291,15 +291,15 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
       // tar has no magic bytes. The file under the gzip or zstd might not be a
       // tar at all. The header checksum rejects it. Without the check a
       // .sql.gz is extracted as tar entries
-      // Truncated tar entry is written partially without error. bsdtar and
-      // python tarfile also leave partial file on disk, but they report error
+      // Truncated tar entry throws before it is written. bsdtar and python
+      // tarfile leave partial file on disk, but they report error too
       archive =
           TarDecoder().decodeStream(input, verify: true, callback: callback);
     } else if (recognized == ArchiveFormat.zip) {
       final input = InputFileStream(archivePath);
       toClose = input;
-      archive = ZipDecoder()
-          .decodeStream(input, password: password, callback: callback);
+      archive = ZipDecoder().decodeStream(input,
+          throwOnError: true, password: password, callback: callback);
     } else {
       throw ArgumentError.value(
           inputPath, 'inputPath', 'Must end $extensionMsg');
