@@ -341,6 +341,9 @@ Stream<TarEntry> _read(
       // as a header consumes and destroys that data. The checksum is the
       // sole indicator that we're looking at a real header
       if (!tarHeaderChecksumMatches(header)) {
+        // A header checksum guards structure, so a mismatch is ArchiveException
+        // do not remove or even slightly corrupted tar will report dozens of
+        // thousands of invalid files and folders
         throw ArchiveException('tar: invalid header checksum');
       }
       // The header is read again, followed immediately by its content,

@@ -635,8 +635,7 @@ class XZStreamDecoder {
             resetDictionary: reset == 3);
       }
 
-      if ((verify || checkRangeCoderStart) &&
-          input.peekBytes(1).readByte() != 0) {
+      if (input.peekBytes(1).readByte() != 0) {
         return _fail('LZMA2 range coder does not start with 0');
       }
       decoder.decodeToOutput(

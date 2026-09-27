@@ -62,6 +62,7 @@ class ZipFile extends FileContent {
   ZipFileHeader? header;
   bool verify = false;
   bool throwOnError = false;
+  var _unsupportedMethod = false;
 
   // Content of the file. If compressionMethod is not STORE, then it is
   // still compressed.
@@ -103,6 +104,10 @@ class ZipFile extends FileContent {
     uncompressedSize = input.readUint32();
     final fnLen = input.readUint16();
     final exLen = input.readUint16();
+    if (verify && fnLen + exLen > input.length) {
+      throw ArchiveException(
+          'zip: local header of ${header?.filename} is damaged');
+    }
     filename = input.readString(size: fnLen);
     extraField = input.readBytes(exLen).toUint8List();
 
@@ -112,6 +117,12 @@ class ZipFile extends FileContent {
     // itself. The null checks stay for a future ZipFile without a header
     compressedSize = header?.compressedSize ?? compressedSize;
     uncompressedSize = header?.uncompressedSize ?? uncompressedSize;
+    if (verify &&
+        (compressedSize < 0 ||
+            uncompressedSize < 0 ||
+            compressedSize > input.length)) {
+      throw ArchiveException('zip: content of $filename is truncated');
+    }
 
     _encryptionType = (flags & 0x1) != 0
         ? ZipEncryptionMode.zipCrypto
@@ -150,19 +161,39 @@ class ZipFile extends FileContent {
         }
       }
     }
+    _unsupportedMethod = !_compressionTypes
+        .containsKey(_aesHeader?.compressionMethod ?? compression);
 
     // If bit 3 (0x08) of the flags field is set, then the CRC-32 and file
     // sizes are not known when the header is written. The fields in the
     // local header are filled with zero, and the CRC-32 and size are
     // appended in a 12-byte structure (optionally preceded by a 4-byte
     // signature) immediately after the compressed data:
-    if (verify && flags & 0x08 != 0 && input.length < 24) {
+    if (verify && flags & 0x08 != 0 && input.length < 12) {
       throw ArchiveException(
           'zip: data descriptor of ${header?.filename} is damaged');
     }
-    if (flags & 0x08 != 0 && input.length >= 24) {
+    if (flags & 0x08 != 0 && input.length >= 12) {
       final sigOrCrc = input.readUint32();
-      if (sigOrCrc == 0x08074b50) {
+      final zip64 = _hasZip64(extraField);
+      var hasSignature = sigOrCrc == 0x08074b50;
+      if (hasSignature && header?.crc32 == sigOrCrc) {
+        final sizes = input.peekBytes(zip64 ? 16 : 8);
+        if (sizes.length == (zip64 ? 16 : 8)) {
+          final compressed = zip64 ? sizes.readUint64() : sizes.readUint32();
+          final uncompressed = zip64 ? sizes.readUint64() : sizes.readUint32();
+          if (compressed == compressedSize &&
+              uncompressed == uncompressedSize) {
+            hasSignature = false;
+          }
+        }
+      }
+      final descriptorSize = (zip64 ? 16 : 8) + (hasSignature ? 4 : 0);
+      if (verify && input.length < descriptorSize) {
+        throw ArchiveException(
+            'zip: data descriptor of ${header?.filename} is damaged');
+      }
+      if (hasSignature) {
         crc32 = input.readUint32();
       } else {
         crc32 = sigOrCrc;
@@ -173,7 +204,6 @@ class ZipFile extends FileContent {
       // carry an offset past 4 GB while the sizes here stay 4 bytes, and an
       // entry whose central field holds the sizes needs nothing from here
       final central = header;
-      final zip64 = _hasZip64(extraField);
       final descriptorCompressed =
           zip64 ? input.readUint64() : input.readUint32();
       final descriptorUncompressed =
@@ -217,20 +247,27 @@ class ZipFile extends FileContent {
   bool verifyCrc32() {
     final contentStream = _getStream();
     _computedCrc32 ??= getCrc32(contentStream.toUint8List());
-    return !hasCrc32 || _computedCrc32 == crc32;
+    return !hasCrc32 ||
+        (_computedCrc32 == crc32 &&
+            (header == null || _computedCrc32 == header!.crc32));
   }
 
   @override
   void decompress(OutputStream output) {
     guardDecode('zip', verify, throwOnError, () {
       if (!verify) {
+        final start = output.length;
         _decompress(output);
+        if (throwOnError) {
+          _checkSize(output.length - start);
+        }
         return true;
       }
       final crc = _Crc32Tee(output);
       final tee = SinkOutputStream(crc);
       _decompress(tee);
       tee.flush();
+      _checkSize(tee.length);
       _checkCrc32(crc.value);
       return true;
     });
@@ -240,6 +277,7 @@ class ZipFile extends FileContent {
     if (_rawContent == null) {
       return;
     }
+    _checkMethod();
 
     if (_encryptionType != ZipEncryptionMode.none) {
       if (_rawContent!.length <= 0) {
@@ -319,6 +357,9 @@ class ZipFile extends FileContent {
     InputStream stream = InputMemoryStream(Uint8List(0));
     guardDecode('zip', verify, throwOnError, () {
       stream = _getStream(decompress: decompress);
+      if ((verify || throwOnError) && decompress) {
+        _checkSize(stream.length);
+      }
       if (verify && decompress) {
         _checkCrc32(getCrc32(stream.toUint8List()));
       }
@@ -347,6 +388,7 @@ class ZipFile extends FileContent {
     if (!decompress) {
       return _rawContent!;
     }
+    _checkMethod();
 
     const maxDecodeBufferSize = 500 * 1024 * 1024; // 500MB
 
@@ -571,9 +613,6 @@ class ZipFile extends FileContent {
 
   static Uint8List _deriveKey(Uint8List passwordBytes, Uint8List salt,
       {int derivedKeyLength = 32}) {
-    if (passwordBytes.isEmpty) {
-      return Uint8List(0);
-    }
     const iterationCount = 1000;
     final totalSize = (derivedKeyLength * 2) + 2;
 
@@ -598,8 +637,23 @@ class ZipFile extends FileContent {
   void write(OutputStream output) => output.writeStream(getStream());
 
   void _checkCrc32(int value) {
-    if (hasCrc32 && value != crc32) {
+    if (hasCrc32 &&
+        (value != crc32 || (header != null && value != header!.crc32))) {
       throw ArchiveChecksumException('zip: CRC32 of $filename does not match');
+    }
+  }
+
+  void _checkMethod() {
+    if (_unsupportedMethod) {
+      throw ArchiveException(
+          'zip: unsupported compression method for $filename');
+    }
+  }
+
+  void _checkSize(int size) {
+    if (size != uncompressedSize) {
+      throw ArchiveException(
+          'zip: uncompressed size of $filename does not match');
     }
   }
 }

@@ -145,6 +145,9 @@ class XZDecoder {
       try {
         if (decoder.decode(input, output)) return true;
       } catch (error) {
+        if (isDecodeCallbackError(error)) {
+          rethrow;
+        }
         throw ArchiveException('Invalid XZ archive: $error');
       }
       // The decoder records why it gave up, so the exception can say more than

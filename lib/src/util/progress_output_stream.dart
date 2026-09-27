@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'byte_order.dart';
+import 'decode_guard.dart';
 import 'input_stream.dart';
 import 'output_stream.dart';
 
@@ -133,14 +134,14 @@ class ProgressOutputStream implements OutputStream {
     _written += count;
     if (_written - _reported >= interval) {
       _reported = _written;
-      onProgress(_written);
+      invokeDecodeCallback(onProgress, _written);
     }
   }
 
   void _report() {
     if (_written != _reported) {
       _reported = _written;
-      onProgress(_written);
+      invokeDecodeCallback(onProgress, _written);
     }
   }
 }

@@ -567,7 +567,15 @@ void main() {
               onError: (e, _) => loose.complete(e),
               workers: 4,
             ));
-        expect(await loose.future, XZDecoder().decodeBytes(data));
+        expect(await loose.future, isA<ArchiveException>());
+        await expectLater(
+            const XzCodec(
+                    verify: false,
+                    multithread: XZMultithreadOptions.converter(workers: 4))
+                .decoder
+                .bind(Stream<List<int>>.value(data))
+                .toList(),
+            throwsA(isA<ArchiveException>()));
       });
 
       // Whatever a failed decode hands back has to be genuine as far as it

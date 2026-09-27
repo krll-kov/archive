@@ -87,6 +87,9 @@ class TarDecoder {
         if (endCheck.length < 512) {
           throw ArchiveException('Invalid tar header');
         }
+        // Tar has no magic bytes, so only the header checksum rejects a file
+        // that is not tar. The checksum guards structure, so either flag
+        // checks it and a mismatch throws ArchiveException.
         if (!tarHeaderChecksumMatches(endCheck)) {
           throw ArchiveException('Invalid tar header checksum');
         }
@@ -97,7 +100,7 @@ class TarDecoder {
           storeData: storeData,
           encoding: filenameEncoding,
           size: metadata.size);
-      if (verify && available < 512 + tf.fileSize) {
+      if (verify && available < 512 + tf.fileSize + tf.padding) {
         throw ArchiveException('Unexpected end of tar data');
       }
       // A header that carries the next entry's name or its PAX records is not

@@ -215,6 +215,125 @@ void main() {
       };
       Uint8List of(String name) => name.startsWith('gzip') ? gzip : zlib;
 
+      for (final web in [false, true]) {
+        test('verified members write to a sink without readback, web $web', () {
+          final joined = Uint8List.fromList([...gzip, ...gzip]);
+          List<List<int>>? chunks;
+          final output = SinkOutputStream(
+              ChunkedConversionSink<List<int>>.withCallback(
+                  (all) => chunks = all));
+          output.writeBytes([1, 2, 3]);
+          final input = InputMemoryStream([4, 5, ...joined, 6, 7])
+              .subset(position: 1, length: joined.length + 1)
+            ..skip(1);
+          final ok = web
+              ? const GZipDecoderWeb().decodeStream(input, output, verify: true)
+              : const GZipDecoder().decodeStream(input, output, verify: true);
+          expect(ok, isTrue);
+          output.sink.close();
+          expect(chunks!.expand((chunk) => chunk), [1, 2, 3, ...data, ...data]);
+        });
+
+        test('verified members report progress callback failures, web $web',
+            () {
+          final error = StateError('progress callback failed');
+          final input = InputMemoryStream([4, 5, ...gzip, ...gzip])..skip(2);
+          final output = ProgressOutputStream(
+              OutputMemoryStream(), (_) => throw error,
+              interval: 1);
+          expect(
+              () => web
+                  ? const GZipDecoderWeb()
+                      .decodeStream(input, output, verify: true)
+                  : const GZipDecoder()
+                      .decodeStream(input, output, verify: true),
+              throwsA(same(error)));
+        });
+      }
+
+      for (final stream in [false, true]) {
+        test('native gzip checks optional header CRC, stream $stream', () {
+          final header = gzip.sublist(0, 10)..[3] |= 2;
+          final crc = getCrc32(header);
+          final member = Uint8List.fromList([
+            ...header,
+            crc & 255,
+            (crc >> 8) & 255,
+            ...gzip.sublist(10),
+          ]);
+          Object decode(List<int> bytes,
+                  {bool verify = false, bool throwOnError = false}) =>
+              stream
+                  ? const GZipDecoder().decodeStream(
+                      InputMemoryStream(bytes), OutputMemoryStream(),
+                      verify: verify, throwOnError: throwOnError)
+                  : const GZipDecoder().decodeBytes(bytes,
+                      verify: verify, throwOnError: throwOnError);
+          expect(decode(member, verify: true), stream ? isTrue : equals(data));
+          for (final byte in [3, 10, 11]) {
+            final bad = Uint8List.fromList(member);
+            bad[byte] ^= byte == 3 ? 0x80 : 1;
+            expect(() => decode(bad, verify: true),
+                throwsA(isA<ArchiveException>()));
+            expect(() => decode(bad, throwOnError: true),
+                throwsA(isA<ArchiveException>()));
+          }
+        });
+
+        test('strict options reject damaged later gzip headers, stream $stream',
+            () {
+          for (final byte in [0, 1, 2]) {
+            final bad = Uint8List.fromList([...gzip, ...gzip]);
+            bad[gzip.length + byte] ^= 1;
+            for (final (verify, throwOnError) in [
+              (true, false),
+              (false, true)
+            ]) {
+              expect(
+                  () => stream
+                      ? const GZipDecoder().decodeStream(
+                          InputMemoryStream(bad), OutputMemoryStream(),
+                          verify: verify, throwOnError: throwOnError)
+                      : const GZipDecoder().decodeBytes(bad,
+                          verify: verify, throwOnError: throwOnError),
+                  throwsA(isA<ArchiveException>()),
+                  reason: 'header byte $byte, verify $verify');
+            }
+          }
+        });
+
+        test('verify checks every concatenated gzip member, stream $stream',
+            () {
+          final joined = Uint8List.fromList([...gzip, ...gzip, ...gzip]);
+          Object decode(List<int> bytes,
+              {bool verify = false, bool throwOnError = false}) {
+            if (stream) {
+              return const GZipDecoder().decodeStream(
+                  InputMemoryStream(bytes), OutputMemoryStream(),
+                  verify: verify, throwOnError: throwOnError);
+            }
+            return const GZipDecoder()
+                .decodeBytes(bytes, verify: verify, throwOnError: throwOnError);
+          }
+
+          final expected =
+              stream ? isTrue : equals([...data, ...data, ...data]);
+          expect(decode(joined, verify: true), expected);
+          for (var member = 0; member < 3; member++) {
+            for (var byte = 0; byte < 8; byte++) {
+              final bad = Uint8List.fromList(joined);
+              bad[(member + 1) * gzip.length - 8 + byte] ^= 1;
+              expect(() => decode(bad, verify: true),
+                  throwsA(isA<ArchiveException>()),
+                  reason: 'member $member, trailer byte $byte');
+              if (byte < 4 && member == 2) {
+                expect(decode(bad, throwOnError: true), expected);
+              }
+            }
+          }
+        });
+      }
+
       for (final MapEntry(key: name, value: decode) in decoders.entries) {
         test('$name: a whole stream passes verify', () {
           expect(decode(of(name), true, false), isTrue);

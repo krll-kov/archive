@@ -48,6 +48,10 @@ class ZipFileHeader {
     externalFileAttributes = input.readUint32();
     localHeaderOffset = input.readUint32();
 
+    if (verify && fnameLen + extraLen + commentLen > input.length) {
+      throw ArchiveException('zip: central directory header is damaged');
+    }
+
     if (fnameLen > 0) {
       filename = input.readString(size: fnameLen);
     }

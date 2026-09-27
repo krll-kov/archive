@@ -1,12 +1,16 @@
 import 'archive_exception.dart';
 
+_DecodeContext? _activeDecodeContext;
+
 /// Runs [decode] under the `verify` and `throwOnError` rules shared by every
 /// decoder: without `verify` a checksum failure is never thrown as
-/// [ArchiveChecksumException], and without either flag nothing is thrown but
-/// [ArchivePasswordException]
+/// [ArchiveChecksumException], and without either flag decoding errors are
+/// suppressed except [ArchivePasswordException], while callback errors propagate
 bool guardDecode(
     String format, bool verify, bool throwOnError, bool Function() decode) {
   final strict = verify || throwOnError;
+  final context = _DecodeContext(_activeDecodeContext);
+  _activeDecodeContext = context;
   try {
     if (decode()) {
       return true;
@@ -15,29 +19,61 @@ bool guardDecode(
       throw ArchiveException('Invalid $format data');
     }
     return false;
-  } on CallbackFailure catch (failure) {
-    Error.throwWithStackTrace(failure.error, failure.stackTrace);
-  } on ArchivePasswordException {
-    rethrow;
-  } on ArchiveChecksumException catch (error) {
-    if (verify) {
-      rethrow;
-    }
-    if (throwOnError) {
-      throw ArchiveException(error.message);
-    }
-    return false;
-  } on ArchiveException {
-    if (strict) {
-      rethrow;
-    }
-    return false;
   } catch (error) {
+    if (isDecodeCallbackError(error)) {
+      rethrow;
+    }
+    if (error is CallbackFailure) {
+      Error.throwWithStackTrace(error.error, error.stackTrace);
+    }
+    if (error is ArchivePasswordException) {
+      rethrow;
+    }
+    if (error is ArchiveChecksumException) {
+      if (verify) {
+        rethrow;
+      }
+      if (throwOnError) {
+        throw ArchiveException(error.message);
+      }
+      return false;
+    }
+    if (error is ArchiveException) {
+      if (strict) {
+        rethrow;
+      }
+      return false;
+    }
     if (strict) {
       throw ArchiveException('Invalid $format data: $error');
     }
     return false;
+  } finally {
+    _activeDecodeContext = context.parent;
   }
+}
+
+bool isDecodeCallbackError(Object error) =>
+    _activeDecodeContext?.callbackErrors?.contains(error) ?? false;
+
+void invokeDecodeCallback<T>(void Function(T) callback, T value) {
+  try {
+    callback(value);
+  } catch (error) {
+    for (var context = _activeDecodeContext;
+        context != null;
+        context = context.parent) {
+      (context.callbackErrors ??= Set<Object>.identity()).add(error);
+    }
+    rethrow;
+  }
+}
+
+class _DecodeContext {
+  final _DecodeContext? parent;
+  Set<Object>? callbackErrors;
+
+  _DecodeContext(this.parent);
 }
 
 void throwIfStrict(ArchiveException error, bool verify, bool throwOnError) {

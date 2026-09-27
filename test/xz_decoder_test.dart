@@ -409,7 +409,7 @@ void main() {
         final pb4 = archiveBytes('pb4.xz');
         final cases = <String, String>{
           'Invalid XZ stream header signature':
-              reasonFor(utf8.encode('not an archive at all')),
+              reasonFor(Uint8List.fromList(utf8.encode('not an archive at all'))),
           'Invalid stream flags': reasonFor(flipped('pb4.xz', 6)),
           'Invalid stream header CRC checksum': reasonFor(flipped('pb4.xz', 8)),
           'Stream footer has invalid index size':

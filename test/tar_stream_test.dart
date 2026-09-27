@@ -299,6 +299,16 @@ void main() {
   });
 
   group('tar stream reader', () {
+    test('a header checksum failure is a damaged structure', () async {
+      final bytes = TarEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'content')));
+      bytes[0] = 98;
+      await expectLater(
+          _stream(bytes, 13),
+          throwsA(allOf(isA<ArchiveException>(),
+              isNot(isA<ArchiveChecksumException>()))));
+    });
+
     test('a corrupted size is rejected instead of losing content', () async {
       final archive = Archive()..add(ArchiveFile.string('a', 'abcdef'));
       final bytes = TarEncoder().encodeBytes(archive)..[134] = 0x31;

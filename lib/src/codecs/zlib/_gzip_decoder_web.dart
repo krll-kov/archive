@@ -1,8 +1,8 @@
-import 'dart:math';
 import 'dart:typed_data';
 
 import '../../util/archive_exception.dart';
 import '../../util/byte_order.dart';
+import '../../util/chunked_sink.dart';
 import '../../util/crc32.dart';
 import '../../util/decode_guard.dart';
 import '../../util/input_memory_stream.dart';
@@ -11,14 +11,18 @@ import '../../util/output_memory_stream.dart';
 import '../../util/output_stream.dart';
 import '_zlib_decoder_base.dart';
 import '_zlib_decoder_web.dart';
+import '_zlib_encoder_base.dart';
 import 'gzip_flag.dart';
 import 'inflate.dart';
 
 const platformGZipDecoder = _GZipDecoder();
+const nativeGZipDecoder = _GZipDecoder(true);
 
 /// Decompress data with the zlib format decoder.
 class _GZipDecoder extends ZLibDecoderBase {
-  const _GZipDecoder();
+  final bool _verifyHeader;
+
+  const _GZipDecoder([this._verifyHeader = false]);
 
   @override
   Uint8List decodeBytes(List<int> data,
@@ -61,7 +65,13 @@ class _GZipDecoder extends ZLibDecoderBase {
       final memberStart = output.length;
       // Damage inside the deflate data stops the inflate short, and is caught
       // by the trailer checks below
-      Inflate.stream(input, output: output);
+      var sum = 0;
+      final checked = verify
+          ? (SinkOutputStream(ZLibOutputSink(output))
+            ..watch = (bytes) => sum = getCrc32(bytes, sum))
+          : null;
+      Inflate.stream(input, output: checked ?? output);
+      checked?.flush();
 
       // A member cut short before its trailer would otherwise decode to a
       // short result and be reported as a success, which is a truncated
@@ -81,20 +91,11 @@ class _GZipDecoder extends ZLibDecoderBase {
         return false;
       }
 
-      // The length above says nothing about the bytes. Read back rather than
-      // summed while writing, so it costs a second pass and waits to be asked
-      // for. In pieces, since a member can be larger than memory
-      if (verify) {
-        var sum = 0;
-        var at = memberStart;
-        while (at < output.length) {
-          final end = min(at + 65536, output.length);
-          sum = getCrc32(output.subset(at, end), sum);
-          at = end;
-        }
-        if (sum != crc) {
-          throw ArchiveChecksumException('Invalid gzip checksum');
-        }
+      // The length above says nothing about the bytes. A streamed output cannot
+      // be read back, so its checksum is summed while writing, in pieces since
+      // a member can be larger than memory
+      if (verify && sum != crc) {
+        throw ArchiveChecksumException('Invalid gzip checksum');
       }
       members++;
     }
@@ -151,6 +152,7 @@ class _GZipDecoder extends ZLibDecoderBase {
       return false;
     }
 
+    final headerStart = input.position;
     final signature = input.readUint16();
     if (signature != GZipFlag.signature) {
       return false;
@@ -164,6 +166,9 @@ class _GZipDecoder extends ZLibDecoderBase {
     }
 
     final flags = input.readByte();
+    if (_verifyHeader && flags & 0xe0 != 0) {
+      return false;
+    }
     /*int fileModTime =*/ input.readUint32();
     /*int extraFlags =*/ input.readByte();
     /*int osType =*/ input.readByte();
@@ -193,12 +198,26 @@ class _GZipDecoder extends ZLibDecoderBase {
       }
     }
 
-    // just throw away for now
     if (flags & GZipFlag.hcrc != 0) {
       if (input.length < 2) {
         return false;
       }
-      input.readUint16();
+      if (_verifyHeader) {
+        final expected = input.readUint16();
+        final header = input.subset(
+            position: headerStart, length: input.position - headerStart - 2);
+        var checksum = 0;
+        while (!header.isEOS) {
+          final count = header.length < 8192 ? header.length : 8192;
+          checksum = getCrc32(header.readBytes(count).toUint8List(), checksum);
+        }
+        if (checksum & 0xffff != expected) {
+          throw ArchiveException('Invalid gzip header checksum');
+        }
+      } else {
+        // just throw away for now
+        input.readUint16();
+      }
     }
 
     return true;

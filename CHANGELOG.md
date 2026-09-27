@@ -117,6 +117,10 @@
 * Fixed `ZLibDecoderWeb` and `GZipDecoderWeb` depending on the byte order of the input stream: `decodeStream`
   failed `verify` on a whole zlib stream from a little-endian stream, and gzip failed on a big-endian one.
 * Fixed `ZLibDecoderWeb` dropping the decoded data when bytes follow the stream, and accepting an empty input.
+* Fixed `ZipDecoder` returning the raw compressed bytes as the content of an entry with an unsupported compression
+  method. With `throwOnError` or `verify` reading that entry throws `ArchiveException`, without them it is empty,
+  and `extractFileToDisk` skips it and extracts the rest.
+* Fixed an empty zip password encrypting and decrypting entries with an empty key.
 
 # 4.3.0
 

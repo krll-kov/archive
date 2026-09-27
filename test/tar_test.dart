@@ -218,6 +218,54 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
+    test('a header checksum is checked with either flag', () {
+      final bytes = TarEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'content')));
+      bytes[0] = 98;
+      for (final decode in [
+        (bool verify, bool throwOnError) => TarDecoder()
+            .decodeBytes(bytes, verify: verify, throwOnError: throwOnError),
+        (bool verify, bool throwOnError) => TarDecoder().decodeStream(
+            InputMemoryStream(bytes),
+            verify: verify,
+            throwOnError: throwOnError),
+      ]) {
+        final file = decode(false, false).files.single;
+        expect(file.name, 'b.txt');
+        expect(file.content, utf8.encode('content'));
+        for (final (verify, throwOnError) in [(false, true), (true, false)]) {
+          expect(
+              () => decode(verify, throwOnError),
+              throwsA(allOf(isA<ArchiveException>(),
+                  isNot(isA<ArchiveChecksumException>()))));
+        }
+      }
+    });
+
+    test('strict decoding rejects missing entry padding', () {
+      final bytes = TarEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'data')));
+      for (final length in [516, 517, 1023, 1024]) {
+        final cut = Uint8List.sublistView(bytes, 0, length);
+        expect(TarDecoder().decodeBytes(cut).files.single.content,
+            utf8.encode('data'));
+        for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+          for (final storeData in [false, true]) {
+            final decode = () => TarDecoder().decodeBytes(cut,
+                verify: verify,
+                throwOnError: throwOnError,
+                storeData: storeData);
+            expect(
+                decode,
+                length == 1024
+                    ? returnsNormally
+                    : throwsA(isA<ArchiveException>()),
+                reason: 'length $length verify $verify storeData $storeData');
+          }
+        }
+      }
+    });
+
     test('file', () {
       final tar = TarEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.bytes('file.txt', [100])));

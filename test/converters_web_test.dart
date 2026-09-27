@@ -50,6 +50,28 @@ List<ArchiveFile> _entries() => [
 void main() {
   final data = _sample(300000, 7);
 
+  group('gzip verification on the web', () {
+    test('members verify with a write-only output that already has bytes', () {
+      final encoded = GZipEncoder().encodeBytes(data);
+      final collected = _Collect();
+      final output = SinkOutputStream(collected)..writeBytes([1, 2, 3]);
+      expect(
+          GZipDecoder().decodeStream(
+              InputMemoryStream([...encoded, ...encoded]), output,
+              verify: true),
+          isTrue);
+      expect(collected.bytes.takeBytes(), [1, 2, 3, ...data, ...data]);
+    });
+
+    test('the last member checksum is checked', () {
+      final encoded = GZipEncoder().encodeBytes(data);
+      final damaged = [...encoded, ...encoded];
+      damaged[damaged.length - 8] ^= 1;
+      expect(() => GZipDecoder().decodeBytes(damaged, verify: true),
+          throwsA(isA<ArchiveException>()));
+    });
+  });
+
   group('zstd converters on the web', () {
     test('codec round trips whole', () {
       expect(zstdCodec.decode(zstdCodec.encode(data)), data);

@@ -15,6 +15,33 @@ import 'package:test/test.dart';
 Uint8List _archive(String name) =>
     File(p.join('test/_data/xz', name)).readAsBytesSync();
 
+Future<void> _expectLazySubscription<S, T>(
+    StreamTransformer<S, T> transformer) async {
+  var listens = 0;
+  var cancelled = false;
+  final started = Completer<void>();
+  final source = StreamController<S>(
+    onListen: () {
+      listens++;
+      started.complete();
+    },
+    onCancel: () => cancelled = true,
+  );
+  final transformed = source.stream.transform(transformer);
+  StreamSubscription<T>? subscription;
+  addTearDown(() async {
+    subscription ??= transformed.listen((_) {});
+    await subscription!.cancel().timeout(const Duration(seconds: 5));
+    expect(cancelled, isTrue);
+    await source.close();
+  });
+  await Future<void>.delayed(Duration.zero);
+  expect(listens, 0);
+  subscription = transformed.listen((_) {});
+  await started.future.timeout(const Duration(seconds: 5));
+  expect(listens, 1);
+}
+
 Uint8List _sample(int size) {
   final data = Uint8List(size);
   for (var i = 0; i < size; i++) {
@@ -24,6 +51,22 @@ Uint8List _sample(int size) {
 }
 
 void main() {
+  group('transformers subscribe when listened to', () {
+    test('tar decoder', () => _expectLazySubscription(tarCodec.decoder));
+    test('tar encoder', () => _expectLazySubscription(tarCodec.encoder));
+    test('zip encoder', () => _expectLazySubscription(zipCodec.encoder));
+    test(
+        'threaded xz decoder',
+        () => _expectLazySubscription(const XzCodec(
+                multithread: XZMultithreadOptions.converter(workers: 2))
+            .decoder));
+    test(
+        'threaded zstd encoder',
+        () => _expectLazySubscription(const ZstdCodec(
+                multithread: ZstdMultithreadOptions.converter(workers: 2))
+            .encoder));
+  });
+
   final sinks = <String, ChunkedSink Function(Sink<List<int>>)>{
     'decoder': (sink) => XzChunkedDecoder(sink),
     'encoder': (sink) => XzChunkedEncoder(sink),

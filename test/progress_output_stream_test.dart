@@ -5,6 +5,9 @@ import 'package:test/test.dart';
 
 const _isWeb = bool.fromEnvironment('dart.library.js_interop');
 
+typedef _DecodeWithFlags = bool Function(InputStream, OutputStream,
+    {bool verify, bool throwOnError});
+
 Uint8List _data() {
   // Above the 1 MiB pieces the zstd window hands out, so it reports twice
   final out = Uint8List(5 << 19);
@@ -48,6 +51,143 @@ void main() {
   };
 
   group('ProgressOutputStream', () {
+    final callbackData = Uint8List.fromList(List.generate(64, (i) => i));
+    final callbackDecoders = <String, (List<int>, _DecodeWithFlags)>{
+      'gzip': (
+        GZipEncoder().encodeBytes(callbackData),
+        const GZipDecoder().decodeStream
+      ),
+      'gzip web': (
+        GZipEncoder().encodeBytes(callbackData),
+        const GZipDecoderWeb().decodeStream
+      ),
+      'zlib': (
+        ZLibEncoder().encodeBytes(callbackData),
+        const ZLibDecoder().decodeStream
+      ),
+      'zlib web': (
+        ZLibEncoder().encodeBytes(callbackData),
+        const ZLibDecoderWeb().decodeStream
+      ),
+      'bzip2': (
+        BZip2Encoder().encodeBytes(callbackData),
+        BZip2Decoder().decodeStream
+      ),
+      'xz': (XZEncoder().encodeBytes(callbackData), XZDecoder().decodeStream),
+      'zstd': (
+        const ZstdEncoder().encodeBytes(callbackData),
+        ZstdDecoder().decodeStream
+      ),
+    };
+    for (final MapEntry(key: name, value: (packed, decode))
+        in callbackDecoders.entries) {
+      for (final flags in ['default', 'throwOnError', 'verify']) {
+        test('$name preserves progress callback errors with $flags', () {
+          final failure = StateError('progress failed');
+          final out = ProgressOutputStream(
+              OutputMemoryStream(), (_) => throw failure,
+              interval: 1);
+          expect(
+              () => decode(InputMemoryStream(packed), out,
+                  verify: flags == 'verify',
+                  throwOnError: flags == 'throwOnError'),
+              throwsA(same(failure)));
+          final direct = ProgressOutputStream(
+              OutputMemoryStream(), (_) => throw failure,
+              interval: 1);
+          expect(() => direct.writeByte(1), throwsA(same(failure)));
+        });
+      }
+    }
+
+    for (final failure in <Object>[
+      const FormatException('progress failed'),
+      ArchiveException('progress failed'),
+      ArchiveChecksumException('progress failed'),
+    ]) {
+      for (final flags in ['default', 'throwOnError', 'verify']) {
+        test('preserves callback ${failure.runtimeType} with $flags', () {
+          final packed = const ZstdEncoder().encodeBytes(callbackData);
+          final out = ProgressOutputStream(
+              OutputMemoryStream(), (_) => throw failure,
+              interval: 1);
+          expect(
+              () => ZstdDecoder().decodeStream(InputMemoryStream(packed), out,
+                  verify: flags == 'verify',
+                  throwOnError: flags == 'throwOnError'),
+              throwsA(same(failure)));
+        });
+      }
+    }
+
+    test('a callback can catch another progress error during decoding', () {
+      final failure = StateError('locally caught progress failed');
+      final nested = ProgressOutputStream(
+          OutputMemoryStream(), (_) => throw failure,
+          interval: 1);
+      Object? caught;
+      final out = ProgressOutputStream(OutputMemoryStream(), (_) {
+        try {
+          nested.writeByte(1);
+        } catch (error) {
+          caught = error;
+        }
+      }, interval: 1);
+      final packed = const ZstdEncoder().encodeBytes(callbackData);
+      expect(
+          ZstdDecoder().decodeStream(InputMemoryStream(packed), out), isTrue);
+      expect(caught, same(failure));
+      expect(() => nested.writeByte(2), throwsA(same(failure)));
+    });
+
+    for (final close in [false, true]) {
+      test(
+          'progress futures keep callback identity during decoding, close $close',
+          () async {
+        final failure = StateError('asynchronous progress failed');
+        final output = _CloseTrackingOutput();
+        final nested = ProgressOutputStream(output, (_) => throw failure,
+            interval: close ? 100 : 1);
+        if (close) {
+          nested.writeByte(1);
+        }
+        late Future<void> pending;
+        final out = ProgressOutputStream(OutputMemoryStream(), (_) {
+          pending = close
+              ? nested.close()
+              : Future<void>.sync(() => nested.writeByte(1));
+        }, interval: 1);
+        final packed = const ZstdEncoder().encodeBytes(callbackData);
+        expect(
+            ZstdDecoder().decodeStream(InputMemoryStream(packed), out), isTrue);
+        await expectLater(pending, throwsA(same(failure)));
+        expect(output.closed, close);
+      });
+    }
+
+    test('nested decoder and archive callbacks preserve the original error',
+        () {
+      final failure = StateError('nested progress failed');
+      final packed = const ZstdEncoder().encodeBytes(callbackData);
+      final archive = Archive()
+        ..addFile(ArchiveFile('file', callbackData.length, callbackData));
+      final tar = TarEncoder().encodeBytes(archive);
+      final out = ProgressOutputStream(OutputMemoryStream(), (_) {
+        TarDecoder().decodeBytes(tar, callback: (_) {
+          final nested = ProgressOutputStream(
+              OutputMemoryStream(), (_) => throw failure,
+              interval: 1);
+          ZstdDecoder().decodeStream(InputMemoryStream(packed), nested);
+        });
+      }, interval: 1);
+      expect(() => ZstdDecoder().decodeStream(InputMemoryStream(packed), out),
+          throwsA(same(failure)));
+      final direct = ProgressOutputStream(
+          OutputMemoryStream(), (_) => throw failure,
+          interval: 1);
+      expect(() => direct.writeByte(1), throwsA(same(failure)));
+    });
+
     for (final synchronous in [false, true]) {
       test('closes output when final progress throws (sync: $synchronous)',
           () async {

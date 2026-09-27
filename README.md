@@ -8,9 +8,9 @@ Decoders now share one contract for errors. Without flags they never throw on da
 before the damage. `throwOnError: true` throws `ArchiveException` on damaged or cut data, and `verify: true` does the
 same and also checks checksums on top of that, throwing `ArchiveChecksumException` on a mismatch.
 
-`ArchiveCallback` for TAR and ZIP, `ArchivePasswordException` for zip passwords, `ArgumentError` for unrealistic params
-and other similar places remain untouched, they overrule new `throwOnError` and `verify` params and throw
-regardless of these values.
+`ArchiveCallback` for TAR and ZIP, `ArchivePasswordException` for zip passwords, `ArgumentError` for unrealistic params,
+`onProgress` for `ProgressOutputStream` and other similar places remain untouched, they overrule new `throwOnError` and
+`verify` params and throw regardless of these values.
 
 Converters (`xzCodec`, `zstdCodec`, `bzip2Codec` and `tarCodec`) work like `gzip` and `zlib` from 
 `dart:io`, as the format specifications expect: they verify checksums by default and report every error to the stream.

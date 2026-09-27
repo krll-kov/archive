@@ -494,6 +494,31 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
+    test('a nonzero range coder start fails without checksum verification', () {
+      final src = Uint8List.fromList(_archive('hello-hello-hello.xz'));
+      final chunk = 12 + (src[12] + 1) * 4;
+      expect(src[chunk], greaterThanOrEqualTo(0xe0));
+      src[chunk + 6] = 177;
+      expect(() => XZDecoder().decodeBytes(src, throwOnError: true),
+          throwsA(isA<ArchiveException>()));
+      expect(
+          () => XZDecoder().decodeStream(
+              InputMemoryStream(src), OutputMemoryStream(),
+              throwOnError: true),
+          throwsA(isA<ArchiveException>()));
+      expect(() => const XzCodec(verify: false).decode(src),
+          throwsA(isA<ArchiveException>()));
+      for (final piece in [1, 13, 4096]) {
+        expect(() => _decode(src, piece, verify: false),
+            throwsA(isA<ArchiveException>()),
+            reason: 'piece $piece');
+      }
+      expect(XZDecoder().decodeBytes(src), isEmpty);
+      final output = OutputMemoryStream();
+      expect(XZDecoder().decodeStream(InputMemoryStream(src), output), isFalse);
+      expect(output.getBytes(), isEmpty);
+    });
+
     test('a SHA-256 check that does not match is refused', () {
       final src = Uint8List.fromList(_archive('sha256.xz'));
       expect(src[7], 0x0a);

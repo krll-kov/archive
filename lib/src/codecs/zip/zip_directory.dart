@@ -61,7 +61,9 @@ class ZipDirectory {
 
     if (centralDirectoryOffset < 0 ||
         centralDirectorySize < 0 ||
-        centralDirectoryOffset > filePosition) {
+        centralDirectoryOffset > filePosition ||
+        (verify &&
+            centralDirectorySize > filePosition - centralDirectoryOffset)) {
       if (verify) {
         throw ArchiveException('zip: central directory is damaged');
       }
@@ -72,6 +74,9 @@ class ZipDirectory {
         position: centralDirectoryOffset,
         length: centralDirectorySize,
         bufferSize: min(centralDirectorySize, 1024));
+    final fileBytes = verify
+        ? input.subset(position: 0, length: centralDirectoryOffset)
+        : input;
 
     while (!dirContent.isEOS) {
       final fileSig = dirContent.length >= 46 ? dirContent.readUint32() : 0;
@@ -83,11 +88,17 @@ class ZipDirectory {
       }
       final header = ZipFileHeader()
         ..read(dirContent,
-            fileBytes: input,
+            fileBytes: fileBytes,
             password: password,
             verify: verify,
             prefix: prefix);
       fileHeaders.add(header);
+    }
+    if (verify &&
+        fileHeaders.length % 0x10000 !=
+            totalCentralDirectoryEntries % 0x10000) {
+      throw ArchiveException(
+          'zip: central directory entry count does not match');
     }
   }
 
