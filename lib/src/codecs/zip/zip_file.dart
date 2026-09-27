@@ -80,7 +80,8 @@ class ZipFile extends FileContent {
   bool get hasCrc32 => _aesHeader?.vendorVersion != 2;
 
   void read(InputStream input, {String? password, bool verify = false}) {
-    final sig = input.readUint32();
+    final sig =
+        input.position >= 0 && input.length >= 30 ? input.readUint32() : 0;
     if (sig != zipSignature) {
       if (verify) {
         throw ArchiveException(
@@ -153,7 +154,11 @@ class ZipFile extends FileContent {
     // local header are filled with zero, and the CRC-32 and size are
     // appended in a 12-byte structure (optionally preceded by a 4-byte
     // signature) immediately after the compressed data:
-    if (flags & 0x08 != 0) {
+    if (verify && flags & 0x08 != 0 && input.length < 24) {
+      throw ArchiveException(
+          'zip: data descriptor of ${header?.filename} is damaged');
+    }
+    if (flags & 0x08 != 0 && input.length >= 24) {
       final sigOrCrc = input.readUint32();
       if (sigOrCrc == 0x08074b50) {
         crc32 = input.readUint32();

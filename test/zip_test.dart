@@ -651,6 +651,83 @@ void main() async {
           isEmpty);
     });
 
+    test('verify refuses a local header offset past the end', () {
+      final bytes = ZipEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
+      final central = ByteData.sublistView(bytes)
+          .getUint32(bytes.length - 6, Endian.little);
+      final damaged = Uint8List.fromList(bytes);
+      ByteData.sublistView(damaged)
+          .setUint32(central + 42, bytes.length + 1000, Endian.little);
+      expect(() => ZipDecoder().decodeBytes(damaged, verify: true),
+          throwsA(isA<ArchiveException>()));
+    });
+
+    test('a zip behind a prefix its offsets leave out reads its entries', () {
+      final bytes = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.string('a.txt', 'hello'))
+        ..add(ArchiveFile.string('b.txt', 'world')));
+      final prefixed =
+          Uint8List.fromList([...List.filled(100, 0x4d), ...bytes]);
+      for (final verify in [false, true]) {
+        final archive = ZipDecoder().decodeBytes(prefixed, verify: verify);
+        expect(archive.files.map((f) => f.name), ['a.txt', 'b.txt'],
+            reason: 'verify $verify');
+        expect(archive.files.first.content, 'hello'.codeUnits,
+            reason: 'verify $verify');
+      }
+    });
+
+    test('a wrong central directory offset reads like unzip, verify refuses',
+        () {
+      final bytes = File('test/_data/test.zip').readAsBytesSync();
+      final want = ZipDecoder().decodeBytes(bytes).files;
+      final damaged = Uint8List.fromList(bytes);
+      damaged[damaged.length - 6] = 0;
+      final archive = ZipDecoder().decodeBytes(damaged);
+      expect(archive.files.map((f) => f.name), want.map((f) => f.name));
+      expect(archive.files.last.content, want.last.content);
+      expect(() => ZipDecoder().decodeBytes(damaged, verify: true),
+          throwsA(isA<ArchiveException>()));
+    });
+
+    test('verify refuses a data descriptor past the end of the file', () {
+      final bytes = File('test/_data/zip/dd.zip').readAsBytesSync();
+      final damaged = Uint8List.fromList(bytes);
+      damaged[28] = 113;
+      expect(() => ZipDecoder().decodeBytes(damaged, verify: true),
+          throwsA(isA<ArchiveException>()));
+    });
+
+    test('a zip64 behind a prefix its offsets leave out reads its entries', () {
+      final bytes = File('test/_data/zip/zip64_archive.zip').readAsBytesSync();
+      final want = ZipDecoder().decodeBytes(bytes, verify: true).files;
+      final prefixed =
+          Uint8List.fromList([...List.filled(100, 0x4d), ...bytes]);
+      final archive = ZipDecoder().decodeBytes(prefixed, verify: true);
+      expect(archive.files.map((f) => f.name), want.map((f) => f.name));
+      for (var i = 0; i < want.length; i++) {
+        expect(archive.files[i].content, want[i].content);
+      }
+    });
+
+    test('encoding a decoded archive into a file leaves its entries readable',
+        () {
+      final bytes = File('test/_data/test.zip').readAsBytesSync();
+      final want = [
+        for (final f in ZipDecoder().decodeBytes(bytes).files) f.content
+      ];
+      final archive = ZipDecoder().decodeBytes(bytes);
+      final path = p.join(testOutputPath, 'reencoded_into_file.zip');
+      final output = OutputFileStream(path);
+      ZipEncoder().encodeStream(archive, output);
+      output.closeSync();
+      expect([for (final f in archive.files) f.content], want);
+      final back =
+          ZipDecoder().decodeBytes(File(path).readAsBytesSync(), verify: true);
+      expect([for (final f in back.files) f.content], want);
+    });
+
     test('verify passes an AES zip without a stored CRC', () {
       for (final (name, password) in [
         ('aes256.zip', '12345'),

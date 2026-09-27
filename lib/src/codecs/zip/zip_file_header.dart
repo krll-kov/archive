@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
 import 'zip_file.dart';
@@ -26,7 +27,10 @@ class ZipFileHeader {
   ZipFile? file;
 
   void read(InputStream input,
-      {InputStream? fileBytes, String? password, bool verify = false}) {
+      {InputStream? fileBytes,
+      String? password,
+      bool verify = false,
+      int prefix = 0}) {
     versionMadeBy = input.readUint16();
     versionNeededToExtract = input.readUint16();
     generalPurposeBitFlag = input.readUint16();
@@ -106,11 +110,30 @@ class ZipFileHeader {
       fileComment = input.readString(size: commentLen);
     }
 
+    if (prefix != 0 &&
+        fileBytes != null &&
+        !_localHeaderAt(fileBytes, localHeaderOffset + prefix) &&
+        _localHeaderAt(fileBytes, localHeaderOffset)) {
+      if (verify) {
+        throw ArchiveException('zip: central directory is damaged');
+      }
+      prefix = 0;
+    }
+    localHeaderOffset += prefix;
+
     if (fileBytes != null) {
       fileBytes.setPosition(localHeaderOffset);
       file = ZipFile(this);
       file!.read(fileBytes, password: password, verify: verify);
     }
+  }
+
+  bool _localHeaderAt(InputStream input, int position) {
+    if (position < 0) {
+      return false;
+    }
+    input.setPosition(position);
+    return input.length >= 30 && input.readUint32() == ZipFile.zipSignature;
   }
 
   @override

@@ -70,7 +70,9 @@ Future<List<List<Object>>> _stream(Uint8List archive, int piece) async {
     await for (final part in entry.content) {
       bytes.addAll(part);
     }
-    held.add([entry.name, entry.size, bytes]);
+    held.add(entry.isDirectory
+        ? [entry.name, 0, <int>[]]
+        : [entry.name, entry.size, bytes]);
   }
   return held;
 }
@@ -339,6 +341,26 @@ void main() {
             reason: 'piece $piece');
         expect(read[1][2], _source(3000, 5), reason: 'piece $piece');
       }
+    });
+
+    test('a GNU incremental header keeps its name', () async {
+      final bytes =
+          File('test/_data/tar/gnu-incremental.tar').readAsBytesSync();
+      final read = await _stream(bytes, 512);
+      expect(read.map((e) => e[0]), ['test2/', 'test2/foo', 'test2/sparse']);
+    });
+
+    test('a GNU dumpdir entry is a directory', () async {
+      final bytes =
+          File('test/_data/tar/gnu-incremental.tar').readAsBytesSync();
+      final types = <String, TarEntryType>{};
+      await for (final entry
+          in _pieces(bytes, 512).transform(tarCodec.decoder)) {
+        types[entry.name] = entry.type;
+        await entry.content.drain<void>();
+      }
+      expect(types['test2/'], TarEntryType.directory);
+      expect(types['test2/foo'], TarEntryType.file);
     });
 
     test('content left unread is skipped', () async {

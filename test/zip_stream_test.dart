@@ -397,6 +397,23 @@ void main() {
       expect(archive.files.single.content, 'hello'.codeUnits);
       expect(await once(), first);
     });
+
+    test('the bytes of a stream entry survive the transformer', () async {
+      final want = _source(70000, 19);
+      final entry = ArchiveFile.stream('a.bin', InputMemoryStream(want));
+      await Stream.value(entry).transform(zipCodec.encoder).drain<void>();
+      expect(entry.content, want);
+    });
+
+    for (final streamed in [false, true]) {
+      test('encodeBytes leaves a stream entry readable, streamed $streamed',
+          () {
+        final want = _source(70000, 23);
+        final entry = ArchiveFile.stream('a.bin', InputMemoryStream(want));
+        ZipEncoder(streamed: streamed).encodeBytes(Archive()..add(entry));
+        expect(entry.content, want);
+      });
+    }
   });
 
   group('zip on disk', () {

@@ -351,16 +351,27 @@ class ZipEncoder {
         } else if (compressionType == CompressionType.deflate) {
           final content = file.rawContent;
           final output = OutputMemoryStream();
-          platformZLibEncoder.encodeStream(
-              content!.getStream(decompress: false), output,
-              level: chosen, raw: true);
+          final source = content!.getStream(decompress: false);
+          final at = source.position;
+          try {
+            platformZLibEncoder.encodeStream(source, output,
+                level: chosen, raw: true);
+          } finally {
+            source.setPosition(at);
+          }
           compressedData = InputMemoryStream(output.getBytes());
           ownsData = true;
         } else if (compressionType == CompressionType.bzip2) {
           final content = file.rawContent;
           final output = OutputMemoryStream();
           final bzip2 = BZip2Encoder();
-          bzip2.encodeStream(content!.getStream(decompress: false), output);
+          final source = content!.getStream(decompress: false);
+          final at = source.position;
+          try {
+            bzip2.encodeStream(source, output);
+          } finally {
+            source.setPosition(at);
+          }
           compressedData = InputMemoryStream(output.getBytes());
           ownsData = true;
         } else {
@@ -565,7 +576,12 @@ class ZipEncoder {
       return ZipEntryBody._(source, output, fileData, done);
     } else if (compressedData != null) {
       // local file data
-      output.writeStream(compressedData);
+      final at = compressedData.position;
+      try {
+        output.writeStream(compressedData);
+      } finally {
+        compressedData.setPosition(at);
+      }
     }
 
     if (password != null && salt != null && _mac != null) {
@@ -802,6 +818,7 @@ class ZipEntryBody {
     }
     _closed = true;
     _sink?.close();
+    _source.reset();
     _done();
   }
 
@@ -822,6 +839,7 @@ class ZipEntryBody {
       sink.close();
     }
     _closed = true;
+    _source.reset();
     _data.compressedSize = _output.length - _before;
     _output
       ..writeUint32(ZipEncoder._dataDescriptorSignature)

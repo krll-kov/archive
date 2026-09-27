@@ -203,6 +203,7 @@ enum TarEntryType {
         TarFile.charSpec => characterDevice,
         TarFile.blockSpec => blockDevice,
         TarFile.directory => directory,
+        'D' => directory,
         TarFile.fifo => fifo,
         TarFile.contFile => contiguousFile,
         _ => other,

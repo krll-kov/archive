@@ -252,8 +252,7 @@ class FileBuffer {
         count = _fileSize - position;
       }
       final bytes = Uint8List(count);
-      file.position = position;
-      file.readInto(bytes);
+      _readIntoFile(position, bytes, 0, count);
       return bytes;
     }
 
@@ -279,6 +278,10 @@ class FileBuffer {
     // later read within it is a hit
     final size = max(0, min(_fileSize - position, _bufferSize));
     _bufferLength = file.readInto(_buffer!, size);
+    if (_bufferLength < size) {
+      _bufferLength += _readIntoFile(position + _bufferLength, _buffer!,
+          _bufferLength, size - _bufferLength);
+    }
     _position = position;
   }
 }

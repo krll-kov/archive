@@ -154,6 +154,59 @@ var tarTests = [
       },
     ],
   },
+  {
+    'file': '_data/tar/ustar.tar',
+    'headers': [
+      {
+        'Name': '${'longname/' * 15}file.txt',
+        'Mode': int.parse('0644', radix: 8),
+        'Uid': int.parse('0765', radix: 8),
+        'Gid': int.parse('024', radix: 8),
+        'Size': 6,
+        'ModTime': 1360135598,
+        'Typeflag': TarFile.normalFile,
+        'Uname': 'shane',
+        'Gname': 'staff',
+      },
+    ],
+  },
+  {
+    'file': '_data/tar/gnu-incremental.tar',
+    'headers': [
+      {
+        'Name': 'test2/',
+        'Mode': 16877,
+        'Uid': 1000,
+        'Gid': 1000,
+        'Size': 14,
+        'ModTime': 1441973427,
+        'Typeflag': 'D',
+        'Uname': 'rawr',
+        'Gname': 'dsnet',
+      },
+      {
+        'Name': 'test2/foo',
+        'Mode': 33188,
+        'Uid': 1000,
+        'Gid': 1000,
+        'Size': 64,
+        'ModTime': 1441973363,
+        'Typeflag': TarFile.normalFile,
+        'Uname': 'rawr',
+        'Gname': 'dsnet',
+      },
+      {
+        'Name': 'test2/sparse',
+        'Mode': 33188,
+        'Uid': 1000,
+        'Gid': 1000,
+        'ModTime': 1441973427,
+        'Typeflag': 'S',
+        'Uname': 'rawr',
+        'Gname': 'dsnet',
+      },
+    ],
+  },
 ];
 
 void main() {
@@ -229,6 +282,14 @@ void main() {
       // The name comes from the record after the binary one, the time from
       // the record before it.
       expect(archive[0].lastModTime, equals(1788382072));
+    });
+
+    test('a GNU dumpdir entry is a directory', () {
+      final file = File('test/_data/tar/gnu-incremental.tar');
+      final archive = TarDecoder().decodeBytes(file.readAsBytesSync());
+      final dir = archive.findFile('test2/')!;
+      expect(dir.isFile, isFalse);
+      expect(archive.findFile('test2/foo')!.content.length, 64);
     });
 
     test('GNU long link name', () {

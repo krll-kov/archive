@@ -652,6 +652,7 @@ void main() {
       expect(zstdMtPoolSize(4, 16, 0), 4, reason: 'no cap, no change');
       expect(zstdMtPoolSize(4, 16, 1), 1, reason: 'the cap lowers it');
       expect(zstdMtPoolSize(4, 16, 9), 4, reason: 'a cap above it does not');
+      expect(zstdMtPoolSize(64, 8, 0), 8, reason: 'no more than the cores');
       expect(zstdMtPoolSize(0, 16, 0), 15,
           reason: 'a core left for the caller');
       expect(zstdMtPoolSize(0, 16, 2), 2);

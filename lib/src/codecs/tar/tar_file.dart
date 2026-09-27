@@ -101,6 +101,12 @@ class TarFile {
     typeFlag = _parseString(header, 1);
     nameOfLinkedFile = _parseString(header, 100, encoding, false);
 
+    final at = header.position;
+    header.setPosition(at + 5);
+    final gnu = header.readByte() == 0x20 &&
+        header.readByte() == 0x20 &&
+        header.readByte() == 0;
+    header.setPosition(at);
     ustarIndicator = _parseString(header, 6);
     if (ustarIndicator == 'ustar') {
       ustarVersion = _parseString(header, 2);
@@ -108,9 +114,11 @@ class TarFile {
       ownerGroupName = _parseString(header, 32);
       deviceMajorNumber = _parseInt(header, 8);
       deviceMinorNumber = _parseInt(header, 8);
-      filenamePrefix = _parseString(header, 155, null, false);
-      if (filenamePrefix.isNotEmpty) {
-        filename = '$filenamePrefix/$filename';
+      if (!gnu) {
+        filenamePrefix = _parseString(header, 155, null, false);
+        if (filenamePrefix.isNotEmpty) {
+          filename = '$filenamePrefix/$filename';
+        }
       }
     }
 

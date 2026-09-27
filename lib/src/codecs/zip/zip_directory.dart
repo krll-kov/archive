@@ -51,13 +51,30 @@ class ZipDirectory {
 
     _readZip64Data(input);
 
+    var prefix = 0;
+    final start = _prefixStart(input);
+    if (start > centralDirectoryOffset &&
+        !_signatureAt(input, centralDirectoryOffset, ZipFileHeader.signature)) {
+      prefix = start - centralDirectoryOffset;
+      centralDirectoryOffset = start;
+    }
+
+    if (centralDirectoryOffset < 0 ||
+        centralDirectorySize < 0 ||
+        centralDirectoryOffset > filePosition) {
+      if (verify) {
+        throw ArchiveException('zip: central directory is damaged');
+      }
+      return;
+    }
+
     final dirContent = input.subset(
         position: centralDirectoryOffset,
         length: centralDirectorySize,
         bufferSize: min(centralDirectorySize, 1024));
 
     while (!dirContent.isEOS) {
-      final fileSig = dirContent.readUint32();
+      final fileSig = dirContent.length >= 46 ? dirContent.readUint32() : 0;
       if (fileSig != ZipFileHeader.signature) {
         if (verify && !_hasPrefix(input)) {
           throw ArchiveException('zip: central directory is damaged');
@@ -66,13 +83,18 @@ class ZipDirectory {
       }
       final header = ZipFileHeader()
         ..read(dirContent,
-            fileBytes: input, password: password, verify: verify);
+            fileBytes: input,
+            password: password,
+            verify: verify,
+            prefix: prefix);
       fileHeaders.add(header);
     }
   }
 
   // do not accidentally recognize sfx as bad file
-  bool _hasPrefix(InputStream input) {
+  bool _hasPrefix(InputStream input) => _prefixStart(input) >= 0;
+
+  int _prefixStart(InputStream input) {
     var end = filePosition;
     final locator = end - zip64EocdLocatorSize;
     if (locator >= 0) {
@@ -83,10 +105,17 @@ class ZipDirectory {
     }
     final start = end - centralDirectorySize;
     if (start < 0 || start == centralDirectoryOffset) {
+      return -1;
+    }
+    return _signatureAt(input, start, ZipFileHeader.signature) ? start : -1;
+  }
+
+  bool _signatureAt(InputStream input, int position, int signature) {
+    if (position < 0) {
       return false;
     }
-    input.setPosition(start);
-    return input.readUint32() == ZipFileHeader.signature;
+    input.setPosition(position);
+    return input.length >= 4 && input.readUint32() == signature;
   }
 
   void _readZip64Data(InputStream input) {
@@ -116,8 +145,21 @@ class ZipDirectory {
     }
 
     /*final startZip64Disk =*/ zip64.readUint32();
-    final zip64DirOffset = zip64.readUint64();
+    var zip64DirOffset = zip64.readUint64();
     /*final numZip64Disks =*/ zip64.readUint32();
+
+    final before = locPos - zip64EocdSize;
+    if (zip64DirOffset >= 0 &&
+        zip64DirOffset < before &&
+        !_signatureAt(input, zip64DirOffset, zip64EocdSignature) &&
+        _signatureAt(input, before, zip64EocdSignature)) {
+      zip64DirOffset = before;
+    }
+    if (!_signatureAt(input, zip64DirOffset, zip64EocdSignature) ||
+        input.length < zip64EocdSize - 4) {
+      input.setPosition(ip);
+      return;
+    }
 
     input.setPosition(zip64DirOffset);
 

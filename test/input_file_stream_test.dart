@@ -44,6 +44,14 @@ void main() {
       });
     }
 
+    test('toUint8List and readBytes complete short file reads', () {
+      final input = InputFileStream.withFileBuffer(
+          FileBuffer(_ShortReadHandle(testPath), bufferSize: 8));
+      addTearDown(input.closeSync);
+      expect(input.toUint8List(), testData);
+      expect(input.readBytes(6).toUint8List(), testData.sublist(0, 6));
+    });
+
     test('readInto stays within a subset and stops at its end', () {
       final file = InputFileStream(testPath, bufferSize: 2);
       addTearDown(file.closeSync);

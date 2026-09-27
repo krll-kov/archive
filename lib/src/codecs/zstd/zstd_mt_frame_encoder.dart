@@ -513,10 +513,14 @@ List<int> _jobStarts(int size, int job) {
   return starts;
 }
 
-/// The pool a run gets: what was asked for, or one worker a core with one left
-/// for this isolate, lowered to what the budget affords and never below one
+/// The pool a run gets: what was asked for up to one worker a core, or one
+/// worker a core with one left for this isolate, lowered to what the budget
+/// affords and never below one
 int zstdMtPoolSize(int workers, int cores, int cap) {
   var pool = workers > 0 ? workers : cores - 1;
+  if (pool > cores) {
+    pool = cores;
+  }
   if (cap > 0 && pool > cap) {
     pool = cap;
   }

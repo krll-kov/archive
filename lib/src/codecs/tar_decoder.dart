@@ -100,7 +100,7 @@ class TarDecoder {
             tf.typeFlag == '' ||
             tf.typeFlag == '\u0000') &&
         filename.endsWith('/');
-    if (tf.isFile && !v7Directory) {
+    if (tf.isFile && !v7Directory && tf.typeFlag != 'D') {
       final file = storeData
           ? ArchiveFile.stream(filename, tf.rawContent!)
           : ArchiveFile.noData(filename);
