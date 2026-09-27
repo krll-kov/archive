@@ -13,8 +13,8 @@ import '../lzma/lzma_decoder.dart';
 // The XZ specification can be found at
 // https://tukaani.org/xz/xz-file-format.txt.
 
-/// Decodes the xz block at [input]'s current position, without verifying its check.
-/// Blocks are independent, so they can run in separate isolates.
+/// Decodes the xz block at [input]'s current position, without verifying its
+/// check. Blocks are independent, so they can run in separate isolates.
 ({bool ok, String? reason, int unpaddedLength}) decodeXZBlock(
     InputStream input, int streamFlags, OutputStream output,
     {required int maxPreallocateSize, bool verify = false}) {
@@ -759,7 +759,8 @@ class _XZBlockSize {
 }
 
 // Chunks worker output to prevent massive memory spikes, keeping overhead at
-// 4MB instead of holding entire decoded blocks in memory at the cost of a memcpy
+// 4MB instead of holding entire decoded blocks in memory at the cost of a
+// memcpy
 const xzStagingSize = 4 * 1024 * 1024;
 
 /// An [OutputStream] that hands what it is given to [_onPiece] in pieces.

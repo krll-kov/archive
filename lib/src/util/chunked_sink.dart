@@ -17,7 +17,7 @@ import 'output_stream.dart';
 /// as a field is short; the next arrival carries on where it stopped.
 ///
 /// What the base owns is everything that is not the format: holding what has
-/// arrived and not been read, handing the parse the caller's own buffer where
+/// arrived and not been read, handing the parse the incoming buffer where
 /// nothing is held, and what a failure means afterwards.
 abstract class ChunkedSink extends ByteConversionSink {
   /// Where the result goes, one piece at a time
@@ -29,7 +29,7 @@ abstract class ChunkedSink extends ByteConversionSink {
   /// unit of the format, never everything that has come past
   Uint8List _carry = Uint8List(0);
 
-  /// The buffer this sink owns. [_carry] is the caller's piece while a call is
+  /// The buffer this sink owns. [_carry] is the incoming piece while a call is
   /// running and this one between calls
   Uint8List _owned = Uint8List(0);
   int _at = 0;
@@ -54,7 +54,7 @@ abstract class ChunkedSink extends ByteConversionSink {
   int get available => _end - _at;
 
   /// The next [count] bytes without copying them. Only valid until the call
-  /// that reads them returns, since the buffer under it may be the caller's
+  /// that reads them returns, since it may be a view of the incoming piece
   Uint8List view(int count) => Uint8List.sublistView(_carry, _at, _at + count);
 
   /// Marks [count] bytes as read
@@ -66,7 +66,7 @@ abstract class ChunkedSink extends ByteConversionSink {
   @override
   void add(List<int> chunk) => addSlice(chunk, 0, chunk.length, false);
 
-  /// Takes part of a buffer without the caller having to cut a view of it,
+  /// Takes part of a buffer without cutting a view of it first,
   /// which is what a `ByteConversionSink` is for
   @override
   void addSlice(List<int> chunk, int start, int end, bool isLast) {
@@ -94,7 +94,7 @@ abstract class ChunkedSink extends ByteConversionSink {
     }
     if (_at == _end) {
       // Nothing is held, so the parse reads out of what arrived rather than
-      // out of a copy of it. The caller owns its buffer again the moment this
+      // out of a copy of it. The incoming buffer may be reused the moment this
       // returns. So we keep whatever the parse did not reach
       _carry = bytes;
       _at = 0;
@@ -125,7 +125,7 @@ abstract class ChunkedSink extends ByteConversionSink {
 
   /// Closes [output] only if the input ended cleanly. On a failed parse it
   /// stays open, the same as `gzip.decoder` and `zlib.decoder` in `dart:io`,
-  /// so the caller has to close its own file or socket. The first close after a
+  /// so you have to close your own file or socket. The first close after a
   /// failure reports it, and a close after that returns without doing anything,
   /// as `dart:io` does. `add` after a failure reports it every time
   @override
@@ -179,7 +179,7 @@ abstract class ChunkedSink extends ByteConversionSink {
   }
 
   /// Moves what the parse did not reach into this sink's own buffer, so that
-  /// no view of the caller's piece outlives the call
+  /// no view of the incoming piece outlives the call
   void _keepRest() {
     final rest = _end - _at;
     if (rest > _owned.length) {

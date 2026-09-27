@@ -1,4 +1,4 @@
-# 4.4.0
+# 5.0.0
 
 * BREAKING: Added `writeRange` and `reserve` to `OutputStream`, and `readInto` and `viewBytes` to `InputStream`. All four
   have a default body, so a class that extends them needs no change. A class that implements them

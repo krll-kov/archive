@@ -50,7 +50,7 @@ int zstdOptimalTableLog(int maxLog, int total, int maxSymbol) {
 ///
 /// A symbol too rare to earn a point gets -1, which the format reads as less
 /// than one and which costs a full state reset. Returns false when one symbol
-/// takes everything, which the caller should write as an RLE table instead
+/// takes everything, and such a table is written as RLE instead
 bool zstdNormalizeCount(Int16List into, Uint32List counts, int total,
     int maxSymbol, int accuracyLog,
     {bool useLowProbCount = true}) {
@@ -388,8 +388,8 @@ class ZstdFseCTable {
   }
 
   /// What [symbol] costs here in 256ths of a bit. A symbol the table gives no
-  /// probability at all reads as one bit past the accuracy. The caller compares
-  /// against that value to reject a table it cannot use
+  /// probability at all reads as one bit past the accuracy. We compare
+  /// against that value to reject a table we cannot use
   int bitCost(int symbol) {
     final delta = zstdUse64Bit
         ? (symbolTT as Int64List)[symbol] >> 32

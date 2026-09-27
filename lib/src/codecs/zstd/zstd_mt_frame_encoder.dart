@@ -514,7 +514,7 @@ List<int> _jobStarts(int size, int job) {
 }
 
 /// The pool a run gets: what was asked for, or one worker a core with one left
-/// for the caller, lowered to what the budget affords and never below one
+/// for this isolate, lowered to what the budget affords and never below one
 int zstdMtPoolSize(int workers, int cores, int cap) {
   var pool = workers > 0 ? workers : cores - 1;
   if (cap > 0 && pool > cap) {
@@ -570,8 +570,8 @@ void _writeChecksum(OutputStream out, int digest) {
 }
 
 /// The threaded frame, its jobs compressed wherever [zstdMtCompressJobs] puts
-/// them and pasted together in job order. The header and the checksum are the
-/// caller's, since a job writes neither
+/// them and pasted together in job order. The header and the checksum are not
+/// included, since a job writes neither
 Future<Uint8List> zstdMtCompress(Uint8List src, int level,
     {bool checksum = true,
     int jobSize = 0,

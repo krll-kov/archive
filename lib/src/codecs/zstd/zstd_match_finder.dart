@@ -54,7 +54,8 @@ const _searchTree = 2;
 const _deBruijn = (0x022fdd63 << 32) | 0xcc95386d;
 
 /// Where the one set bit of a value sits, indexed by `(v * _deBruijn) >>> 58`.
-/// Stays const: the same table as a lazy `Uint8List` static cost 12.3% at level 6
+/// Stays const: the same table as a lazy `Uint8List` static cost 12.3% at level
+/// 6
 const _slots = <int>[
   0,
   1,
@@ -122,8 +123,9 @@ const _slots = <int>[
   12,
 ];
 
-/// Older SDKs use this fallback; an int instance getter takes precedence, so the
-/// comparison below folds and neither arm costs a branch. The intrinsic is 4.18%
+/// Older SDKs use this fallback; an int instance getter takes precedence, so
+/// the comparison below folds and neither arm costs a branch. The intrinsic is
+/// 4.18%
 extension _ZstdTrailingZeroBitCount on int {
   @pragma('vm:prefer-inline')
   // ignore: unused_element
@@ -287,7 +289,8 @@ class ZstdMatchFinder {
   /// stops inserting every position, only the ones it searches
   bool _skipping = false;
 
-  /// The cast keeps the SDK 3.0 floor, where this conditional infers `List<int>`
+  /// The cast keeps the SDK 3.0 floor, where this conditional infers
+  /// `List<int>`
   ZstdMatchFinder(ZstdLevelParams params)
       : this._(
             params,
@@ -2335,8 +2338,8 @@ class ZstdMatchFinder {
     _insertRun(view, at, ip);
   }
 
-  /// The walk itself, kept out of line so its loop does not make every value the
-  /// search holds call clobbered
+  /// The walk itself, kept out of line so its loop does not make every value
+  /// the search holds call clobbered
   @pragma('vm:never-inline')
   void _insertRun(ByteData view, int from, int ip) {
     var at = from;
@@ -2385,7 +2388,7 @@ class ZstdMatchFinder {
   }
 
   /// The same walk, inlined into the row search where it is most of the
-  /// work and the caller has registers to spare. Only there: pointing every
+  /// work and the row search has registers to spare. Only there: pointing every
   /// caller here was -0.10% and doubled `_parseChained`
   @pragma('vm:prefer-inline')
   int _extendRow(Uint8List src, ByteData view, int a, int b, int end) {
@@ -2465,7 +2468,7 @@ class ZstdMatchFinder {
       ? (view.getUint64(at, Endian.little) * _keyMul) >>> shift
       : zstdWebKey(view, at, _keyMul, shift);
 
-  /// The same key from a multiplier and a shift the caller already holds, so a
+  /// The same key from a multiplier and a shift the parse already holds, so a
   /// parse that hashes three times a pass does not reload two fields each time
   @pragma('vm:prefer-inline')
   static int _keyWith(ByteData view, int at, int keyMul, int shift) =>

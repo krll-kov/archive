@@ -319,6 +319,8 @@ class ZipEncoder {
         }
       } else {
         // Otherwise we need to compress it now.
+        // Package has no compressing LZMA encoder, XZEncoder only stores LZMA2
+        // chunks, so we write lzma entry with deflate
         if (compressionType == CompressionType.lzma) {
           compressionType = CompressionType.deflate;
         }

@@ -55,7 +55,7 @@ abstract class InputStream {
 
   /// Returns [count] bytes at the read position as a view of the stream's own
   /// storage, moving the read position on. Null when this stream has no such
-  /// storage, which leaves the caller to read into a buffer of its own
+  /// storage, and then you read into a buffer of your own
   Uint8List? viewBytes(int count) => null;
 
   /// Read [count] bytes from an [offset] of the current read position, without

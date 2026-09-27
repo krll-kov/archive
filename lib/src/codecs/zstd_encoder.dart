@@ -33,8 +33,8 @@ class ZstdEncoder {
   /// single threaded encoder writes, and it arrives through `onDone` rather
   /// than as the return value. The return value is then empty.
   ///
-  /// A setting that cannot be honoured throws [ArgumentError] here, while the
-  /// caller is still on the stack; only a failure of the work itself reaches
+  /// A setting that cannot be honoured throws [ArgumentError] here, before
+  /// the call returns; only a failure of the work itself reaches
   /// `onError`, and without one it reaches `onDone` as empty output
   Uint8List encodeBytes(List<int> data,
       {int? level, ZstdMultithreadOptions<Uint8List>? multithread}) {

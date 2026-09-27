@@ -165,11 +165,12 @@ class ZstdLiteralsEncoder {
     return headerSize + coded;
   }
 
-  /// `ZSTD_buildBlockEntropyStats_literals` and `ZSTD_estimateBlockSize_literal`
-  /// together: what this run would take, tree and all, without writing any of
-  /// it. The block splitter weighs partitions with this, and its rules are not
-  /// [encode]'s: no probe, no minimum gain, and a floor of
-  /// `COMPRESS_LITERALS_SIZE_MIN`, which a valid tree lowers as [encode]'s is
+  /// `ZSTD_buildBlockEntropyStats_literals` and
+  /// `ZSTD_estimateBlockSize_literal` together: what this run would take, tree
+  /// and all, without writing any of it. The block splitter weighs partitions
+  /// with this, and its rules are not [encode]'s: no probe, no minimum gain,
+  /// and a floor of `COMPRESS_LITERALS_SIZE_MIN`, which a valid tree lowers as
+  /// [encode]'s is
   int estimate(Uint8List scratch, Uint8List src, int start, int end) {
     final size = end - start;
     if (size <= (_trusted ? 6 : 63)) {

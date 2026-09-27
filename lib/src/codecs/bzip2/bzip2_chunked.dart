@@ -73,8 +73,9 @@ class BZip2EncoderConverter extends ChunkedConverter {
 /// Writes a bzip2 archive over data that arrives in pieces.
 ///
 /// Buffers data until a block is full, then encodes it.
-/// This guarantees the exact same output as calling `encodeBytes` on [BZip2Encoder].
-/// It only keeps one block in memory at a time, regardless of the overall file size.
+/// This guarantees the exact same output as calling `encodeBytes` on
+/// [BZip2Encoder]. It only keeps one block in memory at a time, regardless of
+/// the overall file size.
 class BZip2ChunkedEncoder extends ChunkedSink {
   final int blockSize100k;
 
@@ -310,7 +311,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
         crc = _decodeInto();
       } on _NeedMore {
         // False alarm: the data accidentally looked like a marker.
-        // We skip it and slide the window forward by one bit to catch the real one
+        // We skip it and slide the window forward by one bit. Next decode waits
+        // until buffered input doubles or finish() retries
         _sink.divert = null;
         _retryAt = available * 2;
         continue;

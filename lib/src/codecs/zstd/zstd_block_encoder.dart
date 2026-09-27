@@ -253,8 +253,8 @@ class ZstdBlockEncoder {
     rep[2] = _decoded[2];
   }
 
-  /// Codes one block or one partition into the scratch buffer. Returns its size,
-  /// zero for a block not worth coding and one for a repeated byte
+  /// Codes one block or one partition into the scratch buffer. Returns its
+  /// size, zero for a block not worth coding and one for a repeated byte
   int _code(Uint8List src, int at, int bytes, int from, int to, int litFrom,
       int litTo, bool first) {
     final count = to - from;

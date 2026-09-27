@@ -182,8 +182,8 @@ class TarFile {
   @override
   String toString() => '[$filename, $mode, $fileSize]';
 
-  /// With [headerOnly] the content and its padding are left to the caller, who
-  /// can then stream them out a piece at a time rather than through one call
+  /// With [headerOnly] the content and its padding are not written, so they
+  /// can be streamed out a piece at a time rather than through one call
   void write(OutputStream output,
       {Encoding? filenameEncoder, bool headerOnly = false}) {
     fileSize = size;
@@ -441,8 +441,8 @@ class TarMetadata {
     return false;
   }
 
-  /// Applies the parsed metadata to the entry it describes and clears the state,
-  /// ensuring it only affects a single entry
+  /// Applies the parsed metadata to the entry it describes and clears the
+  /// state, ensuring it only affects a single entry
   void applyTo(TarFile file) {
     size = null;
     if (name != null) {

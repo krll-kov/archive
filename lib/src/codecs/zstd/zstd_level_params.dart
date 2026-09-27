@@ -1,6 +1,7 @@
 /// Fast is one table, double adds a second over eight bytes, greedy takes the
 /// longest of a row, lazy looks a position or two on, and the binary tree keeps
-/// every candidate of a hash ordered so the longest is found rather than sampled
+/// every candidate of a hash ordered so the longest is found rather than
+/// sampled
 const zstdStrategyFast = 0;
 const zstdStrategyDouble = 1;
 const zstdStrategyGreedy = 2;

@@ -20,7 +20,8 @@ class BZip2Decoder {
   bool decodeStream(InputStream input, OutputStream output,
       {bool verify = false}) {
     // Support concatenated streams (like pbzip2, which writes one stream per
-    // block). Any trailing data that doesn't start a new stream is safely ignored
+    // block). Any trailing data that doesn't start a new stream is safely
+    // ignored
     while (true) {
       if (!_decodeStream(input, output, verify: verify)) {
         return false;
@@ -90,7 +91,8 @@ class BZip2Decoder {
         combinedCrc ^= blockCrc;
       } else if (type == blockEos) {
         // Prevent false positives from zero-padding at EOF. We manually check
-        // the remaining bits to ensure the file wasn't truncated during the checksum
+        // the remaining bits to ensure the file wasn't truncated during the
+        // checksum
         if (br.bitsLeft + input.length * 8 < 32) {
           return false;
         }

@@ -373,9 +373,10 @@ class ZstdSequencesEncoder {
   }
 
   /// A block with no sequences describes no table, so committing it must leave
-  /// the ones the decoder holds exactly as they are. `ZSTD_entropyCompressSeqStore`
-  /// copies the whole of `prevEntropy->fse` over on `nbSeq == 0`, which carries
-  /// the repeat mode of each table and not only whether one is there
+  /// the ones the decoder holds exactly as they are.
+  /// `ZSTD_entropyCompressSeqStore` copies the whole of `prevEntropy->fse` over
+  /// on `nbSeq == 0`, which carries the repeat mode of each table and not only
+  /// whether one is there
   void _holdSlots() {
     for (final slot in [_llSlot, _ofSlot, _mlSlot]) {
       slot.swap = false;

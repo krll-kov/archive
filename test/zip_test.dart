@@ -612,6 +612,27 @@ void main() async {
       }
     });
 
+    test('verifyCrc32 answers false for a damaged entry decoded with verify',
+        () {
+      final bytes = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.noCompress('a.txt', 5, utf8.encode('hello'))));
+      bytes[latin1.decode(bytes).indexOf('hello')] ^= 0x20;
+      for (final verify in [false, true]) {
+        final file = ZipDecoder()
+            .decodeBytes(bytes, verify: verify)
+            .findFile('a.txt')!
+            .rawContent as ZipFile;
+        expect(file.verifyCrc32(), isFalse, reason: 'verify $verify');
+      }
+    });
+
+    test('an AES entry read without a password throws ArchiveException', () {
+      final bytes = ZipEncoder(password: 'secret')
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
+      final entry = ZipDecoder().decodeBytes(bytes).findFile('a.txt')!;
+      expect(entry.readBytes, throwsA(isA<ArchiveException>()));
+    });
+
     test('empty directory', () {
       final archive = Archive();
       archive.add(ArchiveFile.directory('empty'));

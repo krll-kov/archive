@@ -32,6 +32,9 @@ String? _realPath(String filePath) {
   final rest = <String>[];
   while (FileSystemEntity.typeSync(existing, followLinks: false) ==
       FileSystemEntityType.notFound) {
+    if (path.dirname(existing) == existing) {
+      return path.canonicalize(filePath);
+    }
     rest.insert(0, path.basename(existing));
     existing = path.dirname(existing);
   }
@@ -288,6 +291,8 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
       // tar has no magic bytes. The file under the gzip or zstd might not be a
       // tar at all. The header checksum rejects it. Without the check a
       // .sql.gz is extracted as tar entries
+      // Truncated tar entry is written partially without error. bsdtar and
+      // python tarfile also leave partial file on disk, but they report error
       archive =
           TarDecoder().decodeStream(input, verify: true, callback: callback);
     } else if (recognized == ArchiveFormat.zip) {
@@ -327,7 +332,8 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
         try {
           file.writeContent(output);
         } catch (_) {
-          // A partial file from a failed entry looked extracted, so we delete it
+          // A partial file from a failed entry looked extracted, so we delete
+          // it
           try {
             await output.close();
           } catch (_) {}

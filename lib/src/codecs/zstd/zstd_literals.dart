@@ -15,7 +15,7 @@ class ZstdLiteralsException implements Exception {
 /// Decodes the literals of one block, and holds the Huffman table that a later
 /// treeless section in the same frame reuses.
 ///
-/// The literals land in the caller's buffer, past the room reserved for the
+/// The literals land in the buffer passed in, past the room reserved for the
 /// block's own output, so the sequence loop reads them and writes the output
 /// through one and the same view
 class ZstdLiterals {

@@ -243,8 +243,8 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
         // Only the parts that ran ahead of their turn are held, the rest go
         // straight out, so a frame of any size costs the pool and not itself
         held[index] = part;
-        // The output belongs to the caller, and a write of theirs that throws
-        // is their failure to hear about. Uncaught here it would leave through
+        // A write to the output that throws is reported as this encode's
+        // failure. Uncaught here it would leave through
         // this port's zone instead, where the call has nothing listening
         try {
           while (failure == null && held.containsKey(written)) {
@@ -315,7 +315,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
 
 /// The compressed parts of [input], in job order, with the jobs cut out of the
 /// bytes as they arrive and handed to a pool of at most [workers]. The header
-/// and the checksum are the caller's, as everywhere else here
+/// and the checksum are not included, as everywhere else here
 Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
         {required int jobSize,
         required int overlapLog,

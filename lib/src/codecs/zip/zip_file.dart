@@ -204,7 +204,7 @@ class ZipFile extends FileContent {
   /// crc32 checksum for the decompressed data and verify it with the value
   /// stored in the zip.
   bool verifyCrc32() {
-    final contentStream = getStream();
+    final contentStream = _getStream();
     _computedCrc32 ??= getCrc32(contentStream.toUint8List());
     return !hasCrc32 || _computedCrc32 == crc32;
   }
@@ -498,7 +498,10 @@ class ZipFile extends FileContent {
 
     var failure = ArchiveException('password error');
     for (final password in _passwordBytes()) {
-      final derivedKey = _deriveKey(password!, salt, derivedKeyLength: keySize);
+      if (password == null) {
+        continue;
+      }
+      final derivedKey = _deriveKey(password, salt, derivedKeyLength: keySize);
       final keyData = Uint8List.fromList(derivedKey.sublist(0, keySize));
       final hmacKeyData =
           Uint8List.fromList(derivedKey.sublist(keySize, keySize * 2));

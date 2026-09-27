@@ -60,7 +60,7 @@ class ZstdHuffmanEncoder {
 
   /// Builds a tree over [counts], which cover [total] bytes, no code wider than
   /// what `HUF_optimalTableLog` allows. Returns false when fewer than two
-  /// symbols are used, which the caller should write as RLE literals instead
+  /// symbols are used, and such literals are written as RLE instead
   bool build(Uint32List counts, int total) {
     var used = 0;
     maxSymbol = 0;
@@ -447,7 +447,7 @@ class ZstdHuffmanEncoder {
   int bitsOf(int symbol) => symbol > maxSymbol ? 0 : widths[symbol];
 
   /// Writes the tree description at [at] and returns the bytes it took, or -1
-  /// when neither form fits, which leaves the caller to store the literals
+  /// when neither form fits, and then the literals are stored raw
   int writeTable(Uint8List out, int at) {
     final weights = Uint8List(maxSymbol);
     for (var s = 0; s < maxSymbol; s++) {

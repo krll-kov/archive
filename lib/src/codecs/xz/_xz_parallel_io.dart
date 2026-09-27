@@ -32,7 +32,8 @@ class XZFileRegion {
 }
 
 /// Enables isolates to read directly from disk, bypassing the calling isolate
-/// entirely. Streams without a physical file fall back to the standard memory path
+/// entirely. Streams without a physical file fall back to the standard memory
+/// path
 XZFileRegion? xzFileRegionOf(InputStream input) {
   if (input is! InputFileStream) {
     return null;
@@ -58,8 +59,9 @@ XZLayout? xzLayoutOfFile(XZFileRegion region, {int? maxUncompressedSize}) {
   }
 }
 
-/// A file-backed [XZByteSource] optimized for lazy extraction, keeping I/O under
-/// a few kilobytes by parsing only the structural metadata (header, index, and footer)
+/// A file-backed [XZByteSource] optimized for lazy extraction, keeping I/O
+/// under a few kilobytes by parsing only the structural metadata (header,
+/// index, and footer)
 class _XZFileSource extends XZByteSource {
   final RandomAccessFile _file;
   final int _offset;
@@ -94,7 +96,8 @@ const _msgDone = 2;
 /// Using a file [path] is significantly cheaper than raw [bytes] because
 /// workers read directly from disk, dodging IPC overhead entirely. Since
 /// workers run in isolates, chunks arrive mixed and must be validated against
-/// [onBlockDone]. A corrupt block can still push bytes before failing its checksum
+/// [onBlockDone]. A corrupt block can still push bytes before failing its
+/// checksum
 Future<bool> xzDecodeMultithreaded({
   Uint8List? bytes,
   String? path,
@@ -150,8 +153,9 @@ Future<bool> xzDecodeMultithreaded({
   }
 
   // Falls back to a single background isolate if the archive is tiny or the
-  // worker limit is 1, ensuring the main thread still stays unblocked. Per-block
-  // verdicts are skipped here since a single job processes the entire archive
+  // worker limit is 1, ensuring the main thread still stays unblocked.
+  // Per-block verdicts are skipped here since a single job processes the entire
+  // archive
   return _runJobs([
     _Job(
       kind: _kindStream,
@@ -240,8 +244,9 @@ int _pickWorkerCount({
     count = blocks.length;
   }
 
-  // Workers hold a dictionary, staging buffer, and full compressed block in RAM,
-  // while file sources stream via a small window. This global budget also limits worker count
+  // Workers hold a dictionary, staging buffer, and full compressed block in
+  // RAM, while file sources stream via a small window. This global budget also
+  // limits worker count
   var compressed = fileReadBufferSize;
   if (holdsCompressedBlock) {
     compressed = 0;
@@ -541,7 +546,8 @@ const _streamPieceSize = 1 << 16;
 const _idShift = 40;
 
 /// Decodes an xz stream using isolates. Known-size blocks are offloaded to
-/// background workers, while the rest are decoded locally to preserve output order.
+/// background workers, while the rest are decoded locally to preserve output
+/// order.
 Stream<Uint8List> xzDecodeStreamMultithreaded(Stream<List<int>> input,
         {required bool verify, int? workers, int? memoryBudget}) =>
     cancellableStream<List<int>, Uint8List>(

@@ -165,7 +165,8 @@ class ZipChunkedEncoder {
   }
 
   /// Writes [entry]'s local header and returns its body. Null if the entry is
-  /// already written whole. The entry is left open, the caller decides
+  /// already written whole. The entry is not closed: call
+  /// [ArchiveFile.closeSync] after its body is written
   ZipEntryBody? addHeader(ArchiveFile entry) {
     if (_closed) {
       throw StateError('Cannot add to a closed encoder');

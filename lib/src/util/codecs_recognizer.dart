@@ -48,8 +48,8 @@ abstract final class CodecsRecognizer {
 
   /// `1f 8b`, then the compression method, which the format fixes at eight
   ///
-  /// RFC 1952 reserves the top three bits of FLG. A decoder must refuse a member
-  /// that sets them
+  /// RFC 1952 reserves the top three bits of FLG. A decoder must refuse a
+  /// member that sets them
   static bool isGZip(List<int> data) =>
       data.length >= 3 &&
       data[0] == 0x1f &&
@@ -59,8 +59,8 @@ abstract final class CodecsRecognizer {
 
   /// zlib has no magic: the first byte identify the method and the window, and
   /// the two together are a multiple of 31. Be warned that this one
-  /// might give some rare false positives on non-zlib files, there's no real way
-  /// to verify zlib by header only.
+  /// might give some rare false positives on non-zlib files, there's no real
+  /// way to verify zlib by header only.
   static bool isZLib(List<int> data) {
     if (data.length < 2) {
       return false;
@@ -125,7 +125,8 @@ abstract final class CodecsRecognizer {
   /// Two bytes of stream flags follow the magic. Their CRC32 follows the flags.
   /// Every stream header has this CRC32. The check type of the blocks does not
   /// change that. The first flag byte must be zero. The top four bits of the
-  /// second flag byte must be zero. We check each field once the data reaches it
+  /// second flag byte must be zero. We check each field once the data reaches
+  /// it
   static bool isXZ(List<int> data) {
     if (data.length < 6 ||
         data[0] != 0xfd ||

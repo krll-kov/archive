@@ -159,6 +159,20 @@ void main() {
     expect(output.getBytes(), data);
     expect(bzip2Codec.decode(archive), data);
   });
+
+  test('endStream writes the block that addByte left open', () {
+    final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
+    final output = OutputMemoryStream(byteOrder: ByteOrder.bigEndian);
+    final encoder = BZip2Encoder()..beginStream(output);
+    for (final byte in data) {
+      if (encoder.addByte(byte)) {
+        encoder.endBlock();
+      }
+    }
+    encoder.endStream();
+    expect(output.getBytes(), BZip2Encoder().encodeBytes(data));
+    expect(BZip2Decoder().decodeBytes(output.getBytes(), verify: true), data);
+  });
 }
 
 Uint8List _withExtraSelectors(Uint8List stream, int extra) {

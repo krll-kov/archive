@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:archive/archive_io.dart';
@@ -68,6 +69,25 @@ Future<InputFileStream> _buildRamIfs(String path, [int? bufferSize]) async {
     return InputFileStream.withFileBuffer(
         FileBuffer(fileHandle, bufferSize: bufferSize));
   }
+}
+
+Future<void> _extractUnderMissingRoot(List<Object> message) {
+  final input = message[0] as String;
+  final output = message[1] as String;
+  final done = message[2] as SendPort;
+  final root = p.rootPrefix(output);
+  final missing = p.dirname(output);
+  return IOOverrides.runZoned(() async {
+    try {
+      await extractFileToDisk(input, output);
+    } catch (_) {}
+    done.send(true);
+  },
+      fseGetTypeSync: (path, followLinks) => p.equals(path, root) ||
+              p.isWithin(missing, path) ||
+              p.equals(path, missing)
+          ? FileSystemEntityType.notFound
+          : FileStat.statSync(path).type);
 }
 
 Future<OutputFileStream> _buildFileOFS(String path) async {
@@ -816,6 +836,26 @@ void main() {
           throwsA(isA<ArchiveException>()));
       expect(scratch.listSync(), isEmpty);
     }, getSystemTempDirectory: () => scratch);
+  });
+
+  test('extractFileToDisk returns when the drive of the output does not exist',
+      () async {
+    final directory = Directory.systemTemp.createTempSync('archive-extract-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final input = File('${directory.path}/input.zip')
+      ..writeAsBytesSync(ZipEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'a'))));
+    final output = p.join(
+        p.rootPrefix(directory.absolute.path), 'archive-missing-drive', 'out');
+    final done = ReceivePort();
+    final isolate = await Isolate.spawn(
+        _extractUnderMissingRoot, [input.path, output, done.sendPort]);
+    addTearDown(() {
+      isolate.kill(priority: Isolate.immediate);
+      done.close();
+    });
+    await expectLater(
+        done.first.timeout(const Duration(seconds: 10)), completes);
   });
 
   test('extractFileToDisk zip', () async {

@@ -121,7 +121,8 @@ class TarEncoderTransformer
       final entry = input.current;
       try {
         // We process the header but leave the content raw. Yielding here lets
-        // the reader start consuming the payload before the entire entry is buffered
+        // the reader start consuming the payload before the entire entry is
+        // buffered
         final file = encoder.addHeader(entry);
         encoder.flush();
         while (held.isNotEmpty) {
@@ -273,7 +274,7 @@ class TarEntry {
     return _detached(_pieces());
   }
 
-  /// Canceling [pieces] is synchronous so the caller can easily time out on a
+  /// Canceling [pieces] is synchronous so you can easily time out on a
   /// dead stream. Any active read is left to gracefully fail whenever its
   /// next piece arrives
   Stream<List<int>> _detached(Stream<List<int>> pieces) {

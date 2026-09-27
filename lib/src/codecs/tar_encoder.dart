@@ -52,7 +52,7 @@ class TarEncoder {
   }
 
   /// Writes the pre-content metadata (GNU long names and links) followed by
-  /// the entry's actual header. It returns the file so the caller can stream
+  /// the entry's actual header. It returns the file so you can stream
   /// its `contentStream` and `padding` chunk-by-chunk
   TarFile? addHeader(ArchiveFile entry) {
     if (_outputStream == null) {

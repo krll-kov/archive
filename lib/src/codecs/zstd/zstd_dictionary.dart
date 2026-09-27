@@ -46,7 +46,8 @@ class ZstdDictionary {
   final List<int> maxSymbols;
   final List<int> logs;
 
-  /// `ZSTD_compress_insertDictionary` drops one under eight bytes, the decoder keeps it
+  /// `ZSTD_compress_insertDictionary` drops one under eight bytes, the decoder
+  /// keeps it
   bool get usableForEncode => sourceSize >= 8 && content.isNotEmpty;
 
   ZstdDictionary._(

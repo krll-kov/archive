@@ -3,7 +3,8 @@ import 'dart:typed_data';
 import 'zstd_literals_encoder.dart';
 import 'zstd_sequences_encoder.dart';
 
-/// `MIN_SEQUENCES_BLOCK_SPLITTING`, `ZSTD_MAX_NB_BLOCK_SPLITS`, `ZSTD_blockHeaderSize`
+/// `MIN_SEQUENCES_BLOCK_SPLITTING`, `ZSTD_MAX_NB_BLOCK_SPLITS`,
+/// `ZSTD_blockHeaderSize`
 const _minSequences = 300;
 const _maxSplits = 196;
 const _blockHeader = 3;

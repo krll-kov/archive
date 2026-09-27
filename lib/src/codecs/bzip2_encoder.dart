@@ -118,8 +118,12 @@ class BZip2Encoder {
     return true;
   }
 
-  /// The EOF marker, the combined stream checksum, and padding to finish the byte
+  /// The EOF marker, the combined stream checksum, and padding to finish the
+  /// byte
   void endStream() {
+    if (!endBlock()) {
+      throw ArchiveException('bzip2: a block could not be coded');
+    }
     bw.writeBytes(BZip2.eosMagic);
     bw.writeUint32(_combinedCRC);
     bw.flush();

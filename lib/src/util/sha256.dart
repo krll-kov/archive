@@ -16,7 +16,8 @@ const _k1 = [
 
 // A mask here makes the VM convert each round input to uint32 again, 9%
 // slower on AOT, so bits above 32 stay until a sum is masked or stored
-// Should become better if accepted and fixed: https://github.com/dart-lang/sdk/issues/64389
+// Should become better if accepted and fixed:
+// https://github.com/dart-lang/sdk/issues/64389
 int _rotr(int x, int n) => (x >>> n) | (x << (32 - n));
 
 // TODO: right now speed is 200MB/s, however it can be improved up to ~380MB/s

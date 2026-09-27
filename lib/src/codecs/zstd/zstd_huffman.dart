@@ -102,7 +102,7 @@ int _readFseWeights(Uint8List data, int start, int length, Uint8List weights,
   // decoded once more and the process stops
   var count = 0;
   while (true) {
-    if (count + 1 >= zstdHuffmanSymbolCount) {
+    if (count + 2 >= zstdHuffmanSymbolCount) {
       _tooManyWeights();
     }
     var row = rows[state1];
@@ -113,6 +113,9 @@ int _readFseWeights(Uint8List data, int start, int length, Uint8List weights,
       row = rows[state2];
       weights[count++] = row & 0xff;
       break;
+    }
+    if (count + 2 >= zstdHuffmanSymbolCount) {
+      _tooManyWeights();
     }
     row = rows[state2];
     weights[count++] = row & 0xff;

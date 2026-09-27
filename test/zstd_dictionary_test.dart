@@ -140,5 +140,14 @@ void main() {
         }
       }
     });
+
+    test(
+        'a dictionary with too many Huffman weights throws what the package '
+        'exports', () {
+      final damaged = Uint8List.fromList(
+          File('${directory.path}/dict-trained.dict').readAsBytesSync());
+      damaged[8] = 37;
+      expect(() => ZstdDictionary(damaged), throwsA(isA<FormatException>()));
+    });
   });
 }

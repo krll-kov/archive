@@ -6,8 +6,8 @@
 /// import 'dart:io';
 /// import 'package:path/path.dart' as p;
 ///
-/// final request =
-///     await HttpClient().getUrl(Uri.parse('https://example.com/data.tar.zst'));
+/// final request = await HttpClient()
+///     .getUrl(Uri.parse('https://example.com/data.tar.zst'));
 /// final HttpClientResponse response = await request.close();
 ///
 /// await for (final TarEntry entry in response
@@ -55,7 +55,8 @@
 ///         yield ArchiveFile.stream(
 ///             p.relative(entity.path, from: dir.path), input);
 ///       } finally {
-///         // Runs once the encoder has written the entry, or when it is cancelled
+///         // Runs once the encoder has written the entry, or when it is
+///         // cancelled
 ///         await input.close();
 ///       }
 ///     }
@@ -67,7 +68,7 @@
 /// upload.headers.contentType = ContentType('application', 'zstd');
 /// await upload.addStream(filesOf(Directory('data'))
 ///      // also available for zip/tar
-///     .transform(zipCodec.encoder)      // Stream<ArchiveFile> -> Stream<List<int>>
+///     .transform(zipCodec.encoder) // Stream<ArchiveFile> -> Stream<List<int>>
 ///      // also available for zstd/xz/bzip2
 ///     .transform(zstdCodec.encoder));
 /// final response = await upload.close();
@@ -127,8 +128,8 @@
 
 /// {@template archive.codecs.auto_close}
 /// Closes each entry once it is written, the way `ZipEncoder.add` does. Off
-/// by default, as it is on `ZipEncoder.encodeStream`: the entries are the
-/// caller's, and whoever opened a file closes it
+/// by default, as it is on `ZipEncoder.encodeStream`: the entries are not
+/// ours, and whoever opened a file closes it
 /// {@endtemplate}
 
 /// ------------------------------------------------------------------------
@@ -146,8 +147,8 @@
 
 /// {@template archive.yield_codecs.one_at_time}
 /// It reads one entry at a time and holds one entry's header rather than the
-/// whole archive. Content has to be read before the loop moves on, the bytes are
-/// gone once it does. What left unread is skipped.
+/// whole archive. Content has to be read before the loop moves on, the bytes
+/// are gone once it does. What left unread is skipped.
 /// {@endtemplate}
 
 /// ------------------------------------------------------------------------
@@ -267,8 +268,8 @@
 /// ------------------------------------------------------------------------
 
 /// {@template archive.header_size_trust}
-/// A header can claim any size. We believe anything under this value and allocate up
-/// front, over it we grow the buffer as the bytes really arrive
+/// A header can claim any size. We believe anything under this value and
+/// allocate up front, over it we grow the buffer as the bytes really arrive
 /// {@endtemplate}
 
 /// ------------------------------------------------------------------------

@@ -48,7 +48,7 @@ class ZstdFseException extends ArchiveException {
   String toString() => 'ZstdFseException: $message';
 }
 
-/// [end] bounds what the caller has, not the description, whose length is only
+/// [end] bounds the input on hand, not the description, whose length is only
 /// known once it has been read. [counts] is written in place over
 /// `0..maxSymbolValue`
 ZstdFseDistribution readFseDistribution(

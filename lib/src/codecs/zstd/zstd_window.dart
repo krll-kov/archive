@@ -123,7 +123,8 @@ class ZstdWindow {
 
   void _grow(int need, bool bounded) {
     final wanted = position + need;
-    // Exact first, so a caller that knows the frame's size gets that and no more
+    // Exact first, so a caller that knows the frame's size gets that and no
+    // more
     var size = capacity == 0 ? wanted : capacity;
     // Slack above the window, so sliding the history down happens once per
     // slack bytes rather than once per block. Without it a wide window is moved

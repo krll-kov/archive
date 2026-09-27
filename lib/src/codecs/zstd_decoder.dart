@@ -293,9 +293,10 @@ class ZstdDecoder {
   }
 
   /// A declared content size is the writer's word and buys no memory on its
-  /// own. A block costs three bytes of header and yields at most [blockSizeMax],
-  /// so [remaining] bytes of input cannot produce more than this however the
-  /// header reads. Anything above it is left to the buffer's own growth
+  /// own. A block costs three bytes of header and yields at most
+  /// [blockSizeMax], so [remaining] bytes of input cannot produce more than
+  /// this however the header reads. Anything above it is left to the buffer's
+  /// own growth
   static int _affordable(int declared, int remaining, int blockSizeMax) {
     final ceiling = ((remaining + 2) ~/ 3) * blockSizeMax;
     return declared < ceiling ? declared : ceiling;
