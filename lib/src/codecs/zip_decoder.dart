@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../archive/archive.dart';
 import '../archive/archive_file.dart';
+import '../util/archive_exception.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import 'zip/zip_directory.dart';
@@ -19,6 +20,9 @@ class ZipDecoder {
       {bool verify = false, String? password, ArchiveCallback? callback}) {
     directory = ZipDirectory();
     directory.read(input, password: password);
+    if (verify && directory.filePosition < 0) {
+      throw ArchiveException('zip: end of central directory not found');
+    }
 
     final archive = Archive();
     for (final zfh in directory.fileHeaders) {

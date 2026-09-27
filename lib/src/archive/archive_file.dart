@@ -108,7 +108,9 @@ class ArchiveFile {
   /// A file that gets its content from the given [stream].
   ArchiveFile.stream(this.name, InputStream stream) : mode = 0x1a4 {
     size = stream.length;
-    _rawContent = FileContentStream(stream);
+    _rawContent = FileContentStream(stream.position == 0
+        ? stream
+        : stream.subset(position: stream.position, length: size));
   }
 
   /// A file that gets its content from the given [file].

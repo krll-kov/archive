@@ -8,6 +8,8 @@ import '../util/input_stream.dart';
 import 'tar/tar_file.dart';
 
 /// Decode a tar formatted buffer into an [Archive] object.
+/// A hard link is decoded as [ArchiveFile.symbolicLink] with target relative
+/// to archive root, so after extraction the link points to a missing file
 class TarDecoder {
   final Encoding filenameEncoding;
   List<TarFile> files = [];
@@ -32,6 +34,7 @@ class TarDecoder {
     files.clear();
 
     final metadata = TarMetadata();
+    void add(TarFile tf) => _add(archive, tf, storeData, callback);
 
     // TarFile paxHeader = null;
     while (!input.isEOS) {
@@ -66,55 +69,72 @@ class TarDecoder {
       // A header that carries the next entry's name or its PAX records is not
       // an entry of its own
       if (metadata.take(tf, filenameEncoding)) {
+        final orphan = metadata.takeOrphan();
+        if (orphan != null) {
+          add(orphan);
+        }
         continue;
       }
       metadata.applyTo(tf);
-      files.add(tf);
-
-      final filename = tf.filename;
-
-      final v7Directory = (tf.typeFlag == TarFile.normalFile ||
-              tf.typeFlag == '' ||
-              tf.typeFlag == '\u0000') &&
-          filename.endsWith('/');
-      if (tf.isFile && !v7Directory) {
-        final file = storeData
-            ? ArchiveFile.stream(filename, tf.rawContent!)
-            : ArchiveFile.noData(filename);
-
-        file.mode = tf.mode;
-        file.ownerId = tf.ownerId;
-        file.groupId = tf.groupId;
-        file.lastModTime = tf.lastModTime;
-        // Every header has the field; only a link has anything in it
-        if (tf.nameOfLinkedFile?.isNotEmpty ?? false) {
-          file.symbolicLink = tf.nameOfLinkedFile!;
-        }
-
-        archive.add(file);
-
-        if (callback != null) {
-          callback(file);
-        }
-      } else {
-        final file = ArchiveFile.directory(filename);
-        file.mode = tf.mode;
-        file.ownerId = tf.ownerId;
-        file.groupId = tf.groupId;
-        file.lastModTime = tf.lastModTime;
-        // Every header has the field; only a link has anything in it
-        if (tf.nameOfLinkedFile?.isNotEmpty ?? false) {
-          file.symbolicLink = tf.nameOfLinkedFile!;
-        }
-
-        archive.add(file);
-
-        if (callback != null) {
-          callback(file);
-        }
+      final orphan = metadata.takeOrphan();
+      if (orphan != null) {
+        add(orphan);
       }
+      add(tf);
+    }
+    final orphan = metadata.takeOrphan(true);
+    if (orphan != null) {
+      add(orphan);
     }
 
     return archive;
+  }
+
+  void _add(
+      Archive archive, TarFile tf, bool storeData, ArchiveCallback? callback) {
+    files.add(tf);
+
+    final filename = tf.filename;
+
+    final v7Directory = (tf.typeFlag == TarFile.normalFile ||
+            tf.typeFlag == '' ||
+            tf.typeFlag == '\u0000') &&
+        filename.endsWith('/');
+    if (tf.isFile && !v7Directory) {
+      final file = storeData
+          ? ArchiveFile.stream(filename, tf.rawContent!)
+          : ArchiveFile.noData(filename);
+
+      file.mode = tf.mode;
+      file.ownerId = tf.ownerId;
+      file.groupId = tf.groupId;
+      file.lastModTime = tf.lastModTime;
+      // Every header has the field; only a link has anything in it
+      if (tf.nameOfLinkedFile?.isNotEmpty ?? false) {
+        file.symbolicLink = tf.nameOfLinkedFile!;
+      }
+
+      archive.add(file);
+
+      if (callback != null) {
+        callback(file);
+      }
+    } else {
+      final file = ArchiveFile.directory(filename);
+      file.mode = tf.mode;
+      file.ownerId = tf.ownerId;
+      file.groupId = tf.groupId;
+      file.lastModTime = tf.lastModTime;
+      // Every header has the field; only a link has anything in it
+      if (tf.nameOfLinkedFile?.isNotEmpty ?? false) {
+        file.symbolicLink = tf.nameOfLinkedFile!;
+      }
+
+      archive.add(file);
+
+      if (callback != null) {
+        callback(file);
+      }
+    }
   }
 }

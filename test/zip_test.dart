@@ -596,6 +596,42 @@ void main() async {
           utf8.encode('Hello'));
     });
 
+    test('an entry from a stream read part way holds the rest of it', () {
+      for (final compression in [
+        CompressionType.deflate,
+        CompressionType.none
+      ]) {
+        final stream = InputMemoryStream(Uint8List.fromList([10, 20, 30, 40]))
+          ..skip(2);
+        final archive = Archive()
+          ..add(ArchiveFile.stream('a.bin', stream)..compression = compression);
+        for (var round = 0; round < 2; round++) {
+          final entry = ZipDecoder()
+              .decodeBytes(ZipEncoder().encodeBytes(archive), verify: true)
+              .first;
+          expect(entry.size, 2, reason: '$compression, round $round');
+          expect(entry.readBytes(), [30, 40],
+              reason: '$compression, round $round');
+        }
+      }
+    });
+
+    test('verify refuses a zip without its end of central directory', () {
+      final bytes = ZipEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
+      for (final cut in [1, 5, 22]) {
+        final short = Uint8List.sublistView(bytes, 0, bytes.length - cut);
+        expect(() => ZipDecoder().decodeBytes(short, verify: true),
+            throwsA(isA<ArchiveException>()),
+            reason: 'cut $cut');
+        expect(ZipDecoder().decodeBytes(short), isEmpty, reason: 'cut $cut');
+      }
+      expect(
+          ZipDecoder()
+              .decodeBytes(ZipEncoder().encodeBytes(Archive()), verify: true),
+          isEmpty);
+    });
+
     test('verify passes an AES zip without a stored CRC', () {
       for (final (name, password) in [
         ('aes256.zip', '12345'),

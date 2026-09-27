@@ -330,28 +330,33 @@ has to cancel the subscription in `onError`.
 ### Running a codec off the UI isolate
 
 The converters only look asynchronous. Each piece is processed synchronously to the end.
-The table shows the longest single call for 3 MB of input added in 16 KiB pieces, AOT on
-an Apple M-series:
+The table shows how long one call blocks the isolate on the 51 MB `mozilla` file of the
+Silesia corpus read with `File.openRead` in 64 KiB pieces, and on the zstd 1.5.7 source
+tree for tar, AOT on an Apple M-series. The call that completes a bzip2 block decodes or
+sorts the whole block. Memory is the peak RSS above what the process used before the run:
 
-| call | worst single call |
-| --- | --- |
-| `zstdCodec.decoder` | 0.5 ms |
-| `ZstdEncoderConverter(level: 3)` | 1.3 ms |
-| `xzCodec.decoder` | 2.2 ms |
-| `BZip2DecoderConverter()`, 100k blocks | 5 ms |
-| `bzip2Codec.decoder`, 900k blocks | 34 ms |
-| `bzip2Codec.encoder`, 900k blocks | 73 ms |
-| `ZstdEncoderConverter(level: 19)` | 98 ms |
-| `zipCodec.encoder` | one entry: 2.0 ms per 256 KiB, 4.2 ms per 4 MiB |
+| call | worst single call | 99th percentile | worst with `verify: false` | memory |
+| --- | --- | --- | --- | --- |
+| `tarCodec.decoder` | 0.2 ms | < 0.1 ms | | 7 MB |
+| `tarCodec.encoder` | 0.1 ms | < 0.1 ms | | 11 MB |
+| `zipCodec.encoder`, one 51 MB entry | 2.2 ms | 1.9 ms | | 6 MB |
+| `zstdCodec.decoder` | 0.6 ms | 0.6 ms | 0.5 ms | 11 MB |
+| `ZstdEncoderConverter(level: 3)` | 1.0 ms | 0.8 ms | | 36 MB |
+| `ZstdEncoderConverter(level: 19)` | 90 ms | 43 ms | | 147 MB |
+| `xzCodec.decoder` | 6.7 ms | 6.0 ms | 5.9 ms | 36 MB |
+| `xzCodec.encoder`, LZMA2 chunks stored uncompressed | 0.2 ms | 0.1 ms | | 6 MB |
+| `BZip2DecoderConverter()`, 100k blocks | 9.0 ms | 8.6 ms | 8.5 ms | 8 MB |
+| `bzip2Codec.decoder`, 900k blocks | 45 ms | 43 ms | 45 ms | 37 MB |
+| `BZip2EncoderConverter(blockSize100k: 1)` | 25 ms | 15 ms | | 37 MB |
+| `bzip2Codec.encoder`, 900k blocks | 216 ms | 74 ms | | 19 MB |
 
-The zip number is the checksum pass, which reads the entry before deflate runs. Deflate
-itself runs in 64 KiB steps, so an entry is not held in memory or compressed in one
-blocking call. On the web the entry is still deflated in one call, because `Deflate`
-there processes its whole input at once.
+The zip number is one deflate step. Deflate runs in 64 KiB steps, so an entry is not
+held in memory or compressed in one blocking call. On the web the entry is still
+deflated in one call, because `Deflate` there processes its whole input at once.
 
-tar is not in the table: reading 20000 entries takes 42 ms in total, so a `.tar.zst`
-costs about the same as the zstd row. A frame at 60 Hz is 16 ms, so use an isolate for
-the lower half of the table and for large inputs. Run the whole pipeline in the isolate,
+Reading 20000 small tar entries takes 44 ms in total, so a `.tar.zst` costs about the
+same as the zstd row. A frame at 60 Hz is 16 ms, so use an isolate for the rows above
+16 ms and for large inputs. Run the whole pipeline in the isolate,
 so only the file paths are sent to it:
 
 ```dart

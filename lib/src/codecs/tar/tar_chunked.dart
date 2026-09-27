@@ -356,10 +356,32 @@ Stream<TarEntry> _read(
           ..setRange(512, 512 + file.fileSize, body);
         file = TarFile.read(InputMemoryStream(whole),
             storeData: false, encoding: encoding, size: metadata.size);
-        metadata.take(file, encoding);
+        final taken = metadata.take(file, encoding);
+        final orphan = metadata.takeOrphan();
+        if (orphan != null) {
+          yield* _held(orphan, signal);
+        }
+        if (!taken) {
+          metadata.applyTo(file);
+          final orphan = metadata.takeOrphan();
+          if (orphan != null) {
+            yield* _held(orphan, signal);
+          }
+          yield* _held(file, signal);
+        }
+        if (signal.cancelled) {
+          return;
+        }
         continue;
       }
       metadata.applyTo(file);
+      final orphan = metadata.takeOrphan();
+      if (orphan != null) {
+        yield* _held(orphan, signal);
+        if (signal.cancelled) {
+          return;
+        }
+      }
 
       final entry = TarEntry._(file, reader);
       yield entry;
@@ -377,9 +399,25 @@ Stream<TarEntry> _read(
       await reader.skip(entry._left + _padding(entry.size));
       entry._left = 0;
     }
+    final orphan = metadata.takeOrphan(true);
+    if (orphan != null && !signal.cancelled) {
+      yield* _held(orphan, signal);
+    }
   } finally {
     await reader.cancel();
   }
+}
+
+Stream<TarEntry> _held(TarFile file, CancelSignal signal) async* {
+  final bytes = file.rawContent?.toUint8List() ?? Uint8List(0);
+  final entry =
+      TarEntry._(file, _Reader(StreamIterator(Stream<List<int>>.value(bytes))));
+  yield entry;
+  entry._done = true;
+  signal.onCancel = () => entry._finish?.call();
+  await entry._settled;
+  entry._gone = entry._left > 0;
+  entry._left = 0;
 }
 
 /// The full entry size, padded to the nearest block

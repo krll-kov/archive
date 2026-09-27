@@ -114,7 +114,7 @@ class TarFile {
       }
     }
 
-    final isMetadata = filename == '././@LongLink' ||
+    final isMetadata = (filename == '././@LongLink' && size == null) ||
         typeFlag == longName ||
         typeFlag == longLinkName ||
         typeFlag == exHeader ||
@@ -392,6 +392,51 @@ class TarMetadata {
   /// A PAX size record that overrides the size of the upcoming entry
   int? size;
 
+  TarFile? _legacy;
+  String? _legacyName;
+  Uint8List? _legacyNameStart;
+  Encoding _legacyEncoding = utf8;
+  TarFile? _orphan;
+
+  TarFile? takeOrphan([bool atEnd = false]) {
+    if (atEnd) {
+      _dropLegacy();
+    }
+    final orphan = _orphan;
+    _orphan = null;
+    return orphan;
+  }
+
+  void _dropLegacy() {
+    if (_legacy != null) {
+      _orphan = _legacy;
+    }
+    _legacy = null;
+    _legacyName = null;
+    _legacyNameStart = null;
+  }
+
+  bool _nameFieldIs(String filename, Uint8List bytes) {
+    bool same(List<int> codes) {
+      if (codes.length != bytes.length) {
+        return false;
+      }
+      for (var i = 0; i < codes.length; i++) {
+        if (codes[i] != bytes[i]) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    try {
+      if (same(_legacyEncoding.encode(filename))) {
+        return true;
+      }
+    } catch (_) {}
+    return same(filename.codeUnits);
+  }
+
   /// True where [file] is one of those headers rather than an entry
   static bool describesNext(TarFile file) =>
       file.filename == '././@LongLink' ||
@@ -421,20 +466,36 @@ class TarMetadata {
       } catch (_) {
         text = String.fromCharCodes(value);
       }
+      _dropLegacy();
       if (file.typeFlag == TarFile.longLinkName) {
         linkName = text;
-      } else {
+      } else if (file.typeFlag == TarFile.longName) {
         name = text;
+      } else if (value.length > 100 &&
+          name == null &&
+          linkName == null &&
+          modTime == null &&
+          ownerId == null &&
+          groupId == null &&
+          size == null) {
+        _legacy = file;
+        _legacyName = text;
+        _legacyNameStart = Uint8List.fromList(value.sublist(0, 100));
+        _legacyEncoding = encoding ?? utf8;
+      } else {
+        return false;
       }
       return true;
     }
     if (file.typeFlag == TarFile.gExHeader ||
         file.typeFlag == TarFile.gExHeader2) {
+      _dropLegacy();
       // TODO handle PAX global header.
       return true;
     }
     if (file.typeFlag == TarFile.exHeader ||
         file.typeFlag == TarFile.exHeader2) {
+      _dropLegacy();
       _readRecords(file.rawContent!.toUint8List());
       return true;
     }
@@ -445,6 +506,13 @@ class TarMetadata {
   /// state, ensuring it only affects a single entry
   void applyTo(TarFile file) {
     size = null;
+    final legacyNameStart = _legacyNameStart;
+    if (legacyNameStart != null &&
+        _nameFieldIs(file.filename, legacyNameStart)) {
+      file.filename = _legacyName!;
+      _legacy = null;
+    }
+    _dropLegacy();
     if (name != null) {
       file.filename = name!;
       name = null;
@@ -561,25 +629,45 @@ bool tarHeaderChecksumMatches(Uint8List header) {
   if (header.length < 512) {
     return false;
   }
-  var unsigned = 0;
-  var signed = 0;
-  for (var i = 0; i < 512; ++i) {
-    final b = (i >= 148 && i < 156) ? space : header[i];
-    unsigned += b;
-    // Implementations that predate unsigned char summed these signed
-    signed += b > 127 ? b - 256 : b;
+  final words = ByteData.sublistView(header, 0, 512);
+  var pairs = 0;
+  var high = 0;
+  for (var i = 0; i < 512; i += 4) {
+    if (i == 148 || i == 152) {
+      continue;
+    }
+    final w = words.getUint32(i, Endian.little);
+    pairs += (w & 0x00ff00ff) + ((w >>> 8) & 0x00ff00ff);
+    high += (w >>> 7) & 0x01010101;
   }
+  final unsigned = 8 * space + (pairs & 0xffff) + (pairs >>> 16);
+  // Implementations that predate unsigned char summed these signed
+  final signed = unsigned -
+      256 *
+          ((high & 0xff) +
+              ((high >>> 8) & 0xff) +
+              ((high >>> 16) & 0xff) +
+              (high >>> 24));
   // The stored value is octal, padded with spaces or nulls on either side of
   // the digits
   var p = 148;
   while (p < 156 && (header[p] == space || header[p] == 0)) {
     p++;
   }
-  var digits = '';
+  final start = p;
+  var stored = 0;
   while (p < 156 && header[p] != space && header[p] != 0) {
-    digits += String.fromCharCode(header[p]);
+    final digit = header[p] - 0x30;
+    if (digit < 0 || digit > 7) {
+      var digits = '';
+      for (var q = start; q < 156 && header[q] != space && header[q] != 0;) {
+        digits += String.fromCharCode(header[q++]);
+      }
+      final parsed = int.tryParse(digits, radix: 8);
+      return parsed == unsigned || parsed == signed;
+    }
+    stored = stored * 8 + digit;
     p++;
   }
-  final stored = int.tryParse(digits, radix: 8);
-  return stored == unsigned || stored == signed;
+  return p > start && (stored == unsigned || stored == signed);
 }

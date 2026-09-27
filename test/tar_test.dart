@@ -245,6 +245,115 @@ void main() {
       expect(link.symbolicLink, equals('${'n' * 160}.txt'));
     });
 
+    test('a regular file named ././@LongLink renames only its own long name',
+        () async {
+      List<int> entry(List<int> name, List<int> data,
+          {int mode = 420, String type = TarFile.normalFile, int? size}) {
+        final h = Uint8List(512);
+        void put(int off, String s) =>
+            h.setRange(off, off + s.length, ascii.encode(s));
+        h.setRange(0, name.length < 100 ? name.length : 100, name);
+        put(100, mode.toRadixString(8).padLeft(7, '0'));
+        put(108, '0000000');
+        put(116, '0000000');
+        put(124, (size ?? data.length).toRadixString(8).padLeft(11, '0'));
+        put(136, '00000000000');
+        put(148, '        ');
+        put(156, type);
+        var sum = 0;
+        for (final b in h) {
+          sum += b;
+        }
+        put(148, '${sum.toRadixString(8).padLeft(6, '0')}\x00 ');
+        return [...h, ...data, ...Uint8List((512 - data.length % 512) % 512)];
+      }
+
+      List<int> record(String keyword, String value) {
+        for (var length = keyword.length + value.length + 3;; length++) {
+          if ('$length'.length + keyword.length + value.length + 3 == length) {
+            return ascii.encode('$length $keyword=$value\n');
+          }
+        }
+      }
+
+      Future<List<String>> both(List<int> tar) async {
+        final bytes = Uint8List.fromList([...tar, ...Uint8List(1024)]);
+        final decoded = [
+          for (final f in TarDecoder().decodeBytes(bytes))
+            '${f.name}=${utf8.decode(f.readBytes()!)}'
+        ];
+        final streamed = await Stream<List<int>>.value(bytes)
+            .transform(tarCodec.decoder)
+            .asyncMap((e) async =>
+                '${e.name}=${utf8.decode(await e.content.expand((b) => b).toList())}')
+            .toList();
+        expect(streamed, decoded);
+        return decoded;
+      }
+
+      final link = ascii.encode('././@LongLink');
+      final victim = entry(ascii.encode('victim.txt'), ascii.encode('hello'));
+      for (final target in ['renamed.txt', 'x' * 120]) {
+        expect(
+            await both(
+                [...entry(link, ascii.encode(target), mode: 0), ...victim]),
+            ['././@LongLink=$target', 'victim.txt=hello']);
+      }
+      expect(await both(entry(link, ascii.encode('a' * 120), mode: 0)),
+          ['././@LongLink=${'a' * 120}']);
+
+      final long = 'a${'п' * 70}.txt';
+      final encoded = utf8.encode(long);
+      expect(
+          await both([
+            ...entry(link, encoded, mode: 0),
+            ...entry(encoded, ascii.encode('hello')),
+          ]),
+          ['$long=hello']);
+
+      final a = ascii.encode('a' * 120);
+      final b = ascii.encode('b' * 120);
+      expect(
+          await both([
+            ...entry(link, a, mode: 0),
+            ...entry(link, b, type: TarFile.longName),
+            ...entry(b, ascii.encode('hello')),
+          ]),
+          ['././@LongLink=${'a' * 120}', '${'b' * 120}=hello']);
+      expect(
+          await both([
+            ...entry(link, a, mode: 0),
+            ...entry(ascii.encode('PaxHeader/b'), record('path', 'b' * 120),
+                type: TarFile.exHeader),
+            ...entry(b, ascii.encode('hello')),
+          ]),
+          ['././@LongLink=${'a' * 120}', '${'b' * 120}=hello']);
+
+      final z = ascii.encode('z' * 120);
+      final named = [
+        ...entry(ascii.encode('PaxHeader/c'),
+            [...record('path', 'correct.txt'), ...record('uid', '77')],
+            type: TarFile.exHeader),
+        ...entry(link, z),
+        ...victim,
+      ];
+      expect(
+          await both(named), ['correct.txt=${'z' * 120}', 'victim.txt=hello']);
+      expect(
+          TarDecoder()
+              .decodeBytes(Uint8List.fromList([...named, ...Uint8List(1024)]))
+              .map((f) => f.ownerId),
+          [77, 0]);
+      expect(
+          await both([
+            ...entry(ascii.encode('PaxHeader/s'), record('size', '120'),
+                type: TarFile.exHeader),
+            ...entry(link, z, size: 0),
+            ...victim,
+          ]),
+          ['././@LongLink=${'z' * 120}', 'victim.txt=hello']);
+    });
+
     test('verify rejects what is not a tar', () {
       // Without a checksum check nothing tells a tar apart from an unrelated
       // file: every other header field reads as something.
