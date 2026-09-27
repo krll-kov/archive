@@ -616,6 +616,25 @@ void main() async {
       }
     });
 
+    test('verify refuses a damaged local header or central directory', () {
+      final bytes = ZipEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
+      final central = ByteData.sublistView(bytes)
+          .getUint32(bytes.length - 6, Endian.little);
+      for (final at in [0, central]) {
+        final damaged = Uint8List.fromList(bytes)..[at] ^= 1;
+        for (final decode in [
+          (bool verify) => ZipDecoder().decodeBytes(damaged, verify: verify),
+          (bool verify) => ZipDecoder()
+              .decodeStream(InputMemoryStream(damaged), verify: verify),
+        ]) {
+          expect(() => decode(true), throwsA(isA<ArchiveException>()),
+              reason: 'byte $at');
+          expect(() => decode(false), returnsNormally, reason: 'byte $at');
+        }
+      }
+    });
+
     test('verify refuses a zip without its end of central directory', () {
       final bytes = ZipEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));

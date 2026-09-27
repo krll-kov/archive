@@ -79,9 +79,13 @@ class ZipFile extends FileContent {
 
   bool get hasCrc32 => _aesHeader?.vendorVersion != 2;
 
-  void read(InputStream input, {String? password}) {
+  void read(InputStream input, {String? password, bool verify = false}) {
     final sig = input.readUint32();
     if (sig != zipSignature) {
+      if (verify) {
+        throw ArchiveException(
+            'zip: local header of ${header?.filename} is damaged');
+      }
       return;
     }
 

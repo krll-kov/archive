@@ -19,7 +19,7 @@ class ZipDecoder {
   Archive decodeStream(InputStream input,
       {bool verify = false, String? password, ArchiveCallback? callback}) {
     directory = ZipDirectory();
-    directory.read(input, password: password);
+    directory.read(input, password: password, verify: verify);
     if (verify && directory.filePosition < 0) {
       throw ArchiveException('zip: end of central directory not found');
     }

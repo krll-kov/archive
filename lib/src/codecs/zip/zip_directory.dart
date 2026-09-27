@@ -1,4 +1,5 @@
 import 'dart:math';
+import '../../util/archive_exception.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
 import 'zip_file_header.dart';
@@ -25,7 +26,7 @@ class ZipDirectory {
   String zipFileComment = '';
   final fileHeaders = <ZipFileHeader>[];
 
-  void read(InputStream input, {String? password}) {
+  void read(InputStream input, {String? password, bool verify = false}) {
     filePosition = _findSignature(input);
     if (filePosition < 0) {
       return;
@@ -58,12 +59,34 @@ class ZipDirectory {
     while (!dirContent.isEOS) {
       final fileSig = dirContent.readUint32();
       if (fileSig != ZipFileHeader.signature) {
+        if (verify && !_hasPrefix(input)) {
+          throw ArchiveException('zip: central directory is damaged');
+        }
         break;
       }
       final header = ZipFileHeader()
-        ..read(dirContent, fileBytes: input, password: password);
+        ..read(dirContent,
+            fileBytes: input, password: password, verify: verify);
       fileHeaders.add(header);
     }
+  }
+
+  // do not accidentally recognize sfx as bad file
+  bool _hasPrefix(InputStream input) {
+    var end = filePosition;
+    final locator = end - zip64EocdLocatorSize;
+    if (locator >= 0) {
+      input.setPosition(locator);
+      if (input.readUint32() == zip64EocdLocatorSignature) {
+        end = locator - zip64EocdSize;
+      }
+    }
+    final start = end - centralDirectorySize;
+    if (start < 0 || start == centralDirectoryOffset) {
+      return false;
+    }
+    input.setPosition(start);
+    return input.readUint32() == ZipFileHeader.signature;
   }
 
   void _readZip64Data(InputStream input) {
