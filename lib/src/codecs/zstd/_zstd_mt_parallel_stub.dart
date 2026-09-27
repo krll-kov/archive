@@ -84,8 +84,8 @@ Stream<Uint8List> _compressStream(
   final geometry = ZstdMtFrameEncoder.geometry(level, size,
       jobSize: jobSize, overlapLog: overlapLog);
   final ring = ZstdMtRing(geometry[0], geometry[1]);
-  final ldmPass = ZstdMtLdmPass.forParams(
-      zstdParamsForLevel(level, size), geometry[0]);
+  final ldmPass =
+      ZstdMtLdmPass.forParams(zstdParamsForLevel(level, size), geometry[0]);
   var index = 0;
   Uint8List run(Uint8List job, bool first, bool last) {
     final out = OutputMemoryStream();

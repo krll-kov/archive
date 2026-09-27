@@ -200,6 +200,16 @@ void main() {
       expect(entries.single.name, name);
     });
 
+    test('a name the filename encoding cannot hold reads back', () async {
+      const codec = TarCodec(filenameEncoding: latin1);
+      const name = 'price€.txt';
+      final entries = await Stream.value(ArchiveFile.string(name, 'x'))
+          .transform(codec.encoder)
+          .transform(codec.decoder)
+          .toList();
+      expect(entries.single.name, name);
+    });
+
     test('it emits before reading an entire entry', () async {
       final bytes = Uint8List(1024 * 1024);
       var read = 0;

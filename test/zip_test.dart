@@ -576,6 +576,42 @@ void main() async {
       expect(archive.length, equals(102));
     });
 
+    test('verify refuses content that does not match its CRC32', () {
+      final bytes = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.noCompress('a.txt', 5, utf8.encode('hello')))
+        ..add(ArchiveFile.string('b.txt', 'hello' * 100)));
+      bytes[latin1.decode(bytes).indexOf('hello')] ^= 0x20;
+      final checked = ZipDecoder().decodeBytes(bytes, verify: true);
+      expect(() => checked.findFile('a.txt')!.readBytes(),
+          throwsA(isA<ArchiveException>()));
+      expect(
+          () => ZipDecoder()
+              .decodeBytes(bytes, verify: true)
+              .findFile('a.txt')!
+              .writeContent(OutputMemoryStream()),
+          throwsA(isA<ArchiveException>()));
+      expect(
+          checked.findFile('b.txt')!.readBytes(), utf8.encode('hello' * 100));
+      expect(ZipDecoder().decodeBytes(bytes).findFile('a.txt')!.readBytes(),
+          utf8.encode('Hello'));
+    });
+
+    test('verify passes an AES zip without a stored CRC', () {
+      for (final (name, password) in [
+        ('aes256.zip', '12345'),
+        ('lzma_aes.zip', 'secret')
+      ]) {
+        final archive = ZipDecoder().decodeBytes(
+            File('test/_data/zip/$name').readAsBytesSync(),
+            password: password,
+            verify: true);
+        for (final f in archive.files.where((f) => f.isFile)) {
+          expect(() => f.writeContent(OutputMemoryStream()), returnsNormally,
+              reason: '$name ${f.name}');
+        }
+      }
+    });
+
     test('empty directory', () {
       final archive = Archive();
       archive.add(ArchiveFile.directory('empty'));
@@ -834,14 +870,16 @@ void main() async {
       expect(bytes, original);
       for (var i = 0; i < contents.length; i++) {
         expect(archiveUntouched.files[i].readBytes(), contents[i]);
-        expect(ZipDecoder().decodeBytes(bytes).files[i].readBytes(),
-            contents[i]);
+        expect(
+            ZipDecoder().decodeBytes(bytes).files[i].readBytes(), contents[i]);
       }
-      for (final f in ZipDecoder().decodeBytes(encrypted, password: 'pw').files) {
+      for (final f
+          in ZipDecoder().decodeBytes(encrypted, password: 'pw').files) {
         expect(f.crc32, getCrc32(f.readBytes()!), reason: f.name);
       }
 
-      final data = Uint8List.fromList(List<int>.generate(1000, (i) => i & 0xff));
+      final data =
+          Uint8List.fromList(List<int>.generate(1000, (i) => i & 0xff));
       final stored = Uint8List.fromList(data);
       ZipEncoder(password: 'pw').encodeBytes(Archive()
         ..add(ArchiveFile.bytes('a.bin', data)
@@ -945,7 +983,8 @@ void main() async {
               password: password);
           final encoded =
               ZipEncoder(password: newPassword).encodeBytes(decoded);
-          final again = ZipDecoder().decodeBytes(encoded, password: newPassword);
+          final again =
+              ZipDecoder().decodeBytes(encoded, password: newPassword);
           for (final f in again.files.where((f) => f.isFile)) {
             expect(f.crc32, getCrc32(f.readBytes()!),
                 reason: '$name ${f.name} $newPassword');
@@ -1020,10 +1059,8 @@ void main() async {
     for (final (name, password) in [('lzma', null), ('lzma_aes', 'secret')]) {
       test('decode zip $name', () {
         final path = 'test/_data/zip/$name.zip';
-        expectLzmaArchive(ZipDecoder().decodeBytes(
-            File(path).readAsBytesSync(),
-            verify: true,
-            password: password));
+        expectLzmaArchive(ZipDecoder().decodeBytes(File(path).readAsBytesSync(),
+            verify: true, password: password));
         final input = InputFileStream(path);
         expectLzmaArchive(
             ZipDecoder().decodeStream(input, verify: true, password: password));
@@ -1160,6 +1197,26 @@ void main() async {
       expect(archive[0].isSymbolicLink, equals(true));
     });
 
+    test('a symlink is written as a link and read back', () {
+      final archive = Archive()
+        ..add(ArchiveFile.string('a.txt', 'hello'))
+        ..add(ArchiveFile.symlink('link', 'a.txt'))
+        ..add(ArchiveFile.symlink('dir/up', '../a.txt'));
+      for (final encoder in [ZipEncoder(), ZipEncoder(streamed: true)]) {
+        final decoder = ZipDecoder();
+        final back = decoder.decodeBytes(encoder.encodeBytes(archive));
+        expect(back.findFile('a.txt')!.isSymbolicLink, isFalse);
+        expect(back.findFile('link')!.symbolicLink, 'a.txt');
+        expect(back.findFile('dir/up')!.symbolicLink, '../a.txt');
+        expect(back.findFile('link')!.mode & 0xf000, 0xa000);
+        final hosts = {
+          for (final h in decoder.directory.fileHeaders)
+            h.filename: h.versionMadeBy >> 8
+        };
+        expect(hosts, {'a.txt': 0, 'link': 3, 'dir/up': 3});
+      }
+    });
+
     test('decode many files (100k)', () async {
       final fp = InputFileStream(
         p.join('test/_data/test_100k_files.zip'),
@@ -1269,6 +1326,23 @@ void main() async {
       // Bit 11 claims the name is UTF-8, and with this encoding it is latin1
       expect((bytes[central + 8] | (bytes[central + 9] << 8)) & 0x800,
           (bytes[6] | (bytes[7] << 8)) & 0x800);
+    });
+
+    test('a non-ASCII UTF-8 name is not marked as an OEM name', () {
+      Map<String, int> madeBy(ZipEncoder encoder) {
+        final archive = Archive()
+          ..add(ArchiveFile.string('plain.txt', 'x'))
+          ..add(ArchiveFile.string('café.txt', 'x'));
+        final decoder = ZipDecoder()..decodeBytes(encoder.encodeBytes(archive));
+        return {
+          for (final h in decoder.directory.fileHeaders)
+            h.filename: h.versionMadeBy
+        };
+      }
+
+      expect(madeBy(ZipEncoder()), {'plain.txt': 20, 'café.txt': 40});
+      expect(madeBy(ZipEncoder(filenameEncoding: const Latin1Codec())),
+          {'plain.txt': 20, 'café.txt': 20});
     });
 
     test('an encrypted entry with no content has room for the AES fields', () {

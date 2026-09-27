@@ -465,7 +465,8 @@ void main() {
           XZEncoder().encodeBytes(Uint8List.fromList('hello'.codeUnits)),
         ]) {
           for (var length = 0; length < archive.length; length++) {
-            File(path).writeAsBytesSync(Uint8List.sublistView(archive, 0, length));
+            File(path)
+                .writeAsBytesSync(Uint8List.sublistView(archive, 0, length));
             final single = InputFileStream(path);
             expect(
                 () => XZDecoder().decodeStream(single, OutputMemoryStream(),
@@ -484,8 +485,7 @@ void main() {
                   onError: (e, _) => result.complete(e),
                   workers: 2,
                 ));
-            expect(
-                await result.future.timeout(const Duration(seconds: 10)),
+            expect(await result.future.timeout(const Duration(seconds: 10)),
                 isA<ArchiveException>(),
                 reason: 'length $length');
             threaded.closeSync();
@@ -1641,13 +1641,26 @@ void main() {
       // RSS is shared by all suites in runner process, so with `-j` above 1
       // other suites allocating in these 2 s fail this test: 645 MB was
       // measured at `-j 6`. Test passes alone and at `-j 1`
-      final held = ProcessInfo.currentRss;
+      // final held = ProcessInfo.currentRss;
+      // await Future<void>.delayed(const Duration(seconds: 2));
+      // final grew = ProcessInfo.currentRss - held;
+      // await subscription.cancel();
+      // expect(got, lessThan(1 << 20));
+      // expect(grew, lessThan(192 << 20),
+      //     reason: 'grew ${grew >> 20} MB while the consumer was paused');
+
+      // RSS check fails under `-j`, so we count bytes sent in one event loop
+      // turn after resume: 127 MiB with backpressure, 1471 MiB without it.
+      // Check misses memory outside `ready`, which async* must drain at once
       await Future<void>.delayed(const Duration(seconds: 2));
-      final grew = ProcessInfo.currentRss - held;
+      final paused = got;
+      subscription.resume();
+      await Future<void>.delayed(Duration.zero);
+      final burst = got - paused;
       await subscription.cancel();
-      expect(got, lessThan(1 << 20));
-      expect(grew, lessThan(192 << 20),
-          reason: 'grew ${grew >> 20} MB while the consumer was paused');
+      expect(paused, lessThan(1 << 20));
+      expect(burst, lessThan(256 << 20),
+          reason: 'decoded ${burst >> 20} MiB while the consumer was paused');
     });
 
     test('a silent input can be cancelled and is let go', () async {

@@ -212,7 +212,10 @@ class ZstdEncoderConverter extends ChunkedConverter {
         size: sized, header: (empty) {
       final header = OutputMemoryStream();
       if (size != null && !empty) {
-        writeZstdFrameHeader(header, size, checksum,
+        writeZstdFrameHeader(
+            header,
+            size,
+            checksum,
             zstdParamsForLevel(level, sized).windowLog,
             _encodeDictionary?.id ?? 0);
         return header.getBytes();
@@ -267,7 +270,8 @@ class ZstdChunkedEncoder extends ChunkedSink {
       this.contentSize})
       : level = zstdEffectiveLevel(level) {
     if (contentSize != null && contentSize! < 0) {
-      throw ArgumentError.value(contentSize, 'contentSize', 'Must not be negative');
+      throw ArgumentError.value(
+          contentSize, 'contentSize', 'Must not be negative');
     }
   }
 
@@ -464,8 +468,8 @@ class ZstdChunkedEncoder extends ChunkedSink {
     _started = true;
     final size = contentSize;
     if (size != null) {
-      writeZstdFrameHeader(_out, size, checksum, _params.windowLog,
-          _encodeDictionary?.id ?? 0);
+      writeZstdFrameHeader(
+          _out, size, checksum, _params.windowLog, _encodeDictionary?.id ?? 0);
       return;
     }
     writeZstdMtStreamHeader(_out, checksum, level, _encodeDictionary?.id ?? 0);

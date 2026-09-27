@@ -158,6 +158,8 @@ class BZip2ChunkedDecoder extends ChunkedSink {
 
   final _scan = Bz2MarkerScan();
 
+  var _retryAt = 0;
+
   var _combinedCrc = 0;
   var _storedBlockCrc = 0;
   var _streams = 0;
@@ -226,6 +228,11 @@ class BZip2ChunkedDecoder extends ChunkedSink {
 
   @override
   void finish() {
+    if (_stage == _Stage.blockBody && _retryAt > 0) {
+      _retryAt = 0;
+      _resetScan();
+      step();
+    }
     if (_stage != _Stage.trailing &&
         (_stage != _Stage.streamEnd || available != 0)) {
       throw ArchiveException('bzip2: unexpected end of archive');
@@ -293,6 +300,9 @@ class BZip2ChunkedDecoder extends ChunkedSink {
       if (!_scan.locate(view(available), available)) {
         return false;
       }
+      if (available < _retryAt) {
+        continue;
+      }
       final held = OutputMemoryStream();
       _sink.divert = held;
       var crc = 0;
@@ -302,6 +312,7 @@ class BZip2ChunkedDecoder extends ChunkedSink {
         // False alarm: the data accidentally looked like a marker.
         // We skip it and slide the window forward by one bit to catch the real one
         _sink.divert = null;
+        _retryAt = available * 2;
         continue;
       } finally {
         _sink.divert = null;
@@ -316,6 +327,7 @@ class BZip2ChunkedDecoder extends ChunkedSink {
       _combinedCrc ^= crc;
       _emit(held.getBytes());
       _drop();
+      _retryAt = 0;
       _stage = _Stage.blockMarker;
       return true;
     }

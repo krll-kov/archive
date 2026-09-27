@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../../archive/compression_type.dart';
 import '../../util/aes.dart';
 import '../../util/archive_exception.dart';
+import '../../util/chunked_sink.dart';
 import '../../util/crc32.dart';
 import '../../util/encryption.dart';
 import '../../util/file_content.dart';
@@ -58,6 +59,7 @@ class ZipFile extends FileContent {
   String filename = '';
   Uint8List? extraField;
   ZipFileHeader? header;
+  bool verify = false;
 
   // Content of the file. If compressionMethod is not STORE, then it is
   // still compressed.
@@ -142,7 +144,6 @@ class ZipFile extends FileContent {
       }
     }
 
-
     // If bit 3 (0x08) of the flags field is set, then the CRC-32 and file
     // sizes are not known when the header is written. The fields in the
     // local header are filled with zero, and the CRC-32 and size are
@@ -210,6 +211,18 @@ class ZipFile extends FileContent {
 
   @override
   void decompress(OutputStream output) {
+    if (!verify) {
+      _decompress(output);
+      return;
+    }
+    final crc = _Crc32Tee(output);
+    final tee = SinkOutputStream(crc);
+    _decompress(tee);
+    tee.flush();
+    _checkCrc32(crc.value);
+  }
+
+  void _decompress(OutputStream output) {
     if (_rawContent == null) {
       return;
     }
@@ -285,6 +298,14 @@ class ZipFile extends FileContent {
   /// until it is requested.
   @override
   InputStream getStream({bool decompress = true}) {
+    final stream = _getStream(decompress: decompress);
+    if (verify && decompress) {
+      _checkCrc32(getCrc32(stream.toUint8List()));
+    }
+    return stream;
+  }
+
+  InputStream _getStream({bool decompress = true}) {
     if (_rawContent == null) {
       return InputMemoryStream(Uint8List(0));
     }
@@ -477,8 +498,7 @@ class ZipFile extends FileContent {
 
     var failure = ArchiveException('password error');
     for (final password in _passwordBytes()) {
-      final derivedKey =
-          _deriveKey(password!, salt, derivedKeyLength: keySize);
+      final derivedKey = _deriveKey(password!, salt, derivedKeyLength: keySize);
       final keyData = Uint8List.fromList(derivedKey.sublist(0, keySize));
       final hmacKeyData =
           Uint8List.fromList(derivedKey.sublist(keySize, keySize * 2));
@@ -536,4 +556,26 @@ class ZipFile extends FileContent {
 
   @override
   void write(OutputStream output) => output.writeStream(getStream());
+
+  void _checkCrc32(int value) {
+    if (hasCrc32 && value != crc32) {
+      throw ArchiveException('zip: CRC32 of $filename does not match');
+    }
+  }
+}
+
+class _Crc32Tee implements Sink<List<int>> {
+  final OutputStream output;
+  var value = 0;
+
+  _Crc32Tee(this.output);
+
+  @override
+  void add(List<int> data) {
+    value = getCrc32(data, value);
+    output.writeBytes(data);
+  }
+
+  @override
+  void close() {}
 }

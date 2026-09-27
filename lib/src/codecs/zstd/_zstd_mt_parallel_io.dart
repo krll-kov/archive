@@ -350,8 +350,8 @@ Stream<Uint8List> _zstdMtCompressStream(
   // One long distance pass over the whole frame, run here in job order, with
   // its matches handed to each job. A job sees only its own prefix and cannot
   // find them itself
-  final ldmPass = ZstdMtLdmPass.forParams(
-      zstdParamsForLevel(level, size), geometry[0]);
+  final ldmPass =
+      ZstdMtLdmPass.forParams(zstdParamsForLevel(level, size), geometry[0]);
   final pool = zstdMtPoolSize(workers, Platform.numberOfProcessors, cap);
 
   // The workers are spawned once and fed job after job, as everywhere else
@@ -478,8 +478,7 @@ Stream<Uint8List> _zstdMtCompressStream(
         ..setRange(0, content.length, content)
         ..setRange(content.length, content.length + job.length, job);
       final out = OutputMemoryStream();
-      ZstdMtFrameEncoder.encodeJob(
-          held0, content.length, out, level, size,
+      ZstdMtFrameEncoder.encodeJob(held0, content.length, out, level, size,
           firstJob: true,
           lastJob: last,
           jobSize: jobSize,

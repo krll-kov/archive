@@ -120,9 +120,8 @@ void main() {
     });
 
     test('tarCodec round trips through streams', () async {
-      final bytes = await _collect(
-          Stream<ArchiveFile>.fromIterable(_entries())
-              .transform(tarCodec.encoder));
+      final bytes = await _collect(Stream<ArchiveFile>.fromIterable(_entries())
+          .transform(tarCodec.encoder));
       final got = <String, List<int>>{};
       await for (final entry
           in _pieces(bytes, 777).transform(tarCodec.decoder)) {
@@ -162,9 +161,8 @@ void main() {
     }
 
     test('zipCodec encoder writes what ZipDecoder reads', () async {
-      final bytes = await _collect(
-          Stream<ArchiveFile>.fromIterable(_entries())
-              .transform(zipCodec.encoder));
+      final bytes = await _collect(Stream<ArchiveFile>.fromIterable(_entries())
+          .transform(zipCodec.encoder));
       final archive = ZipDecoder().decodeBytes(bytes, verify: true);
       final want = _entries();
       expect(archive.files.map((f) => f.name), want.map((e) => e.name));
@@ -195,8 +193,8 @@ void main() {
     test('recognizes zlib only when asked', () {
       final zlib = ZLibEncoder().encodeBytes(small);
       expect(CodecsRecognizer.isZLib(zlib), isTrue);
-      expect(CodecsRecognizer.recognize(zlib, withZLib: true),
-          ArchiveFormat.zlib);
+      expect(
+          CodecsRecognizer.recognize(zlib, withZLib: true), ArchiveFormat.zlib);
     });
 
     test('plain text is unknown', () {

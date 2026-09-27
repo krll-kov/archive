@@ -62,8 +62,8 @@ class TarEncoder {
     // GNU tar files store extra long file names in a separate file. Long in
     // bytes as encoded, which is what the header field holds, and the size
     // of the separate file
-    final name = filenameEncoding.encode(entry.name);
     final paxName = entry.name.codeUnits.any((c) => c > 0x7f);
+    final name = paxName ? Uint8List(0) : filenameEncoding.encode(entry.name);
     final paxLink = entry.isSymbolicLink &&
         entry.symbolicLink!.codeUnits.any((c) => c > 0x7f);
     if (paxName || paxLink) {
@@ -142,9 +142,20 @@ class TarEncoder {
         }
       }
     }
+    final encodable = _encodes(entry.name) &&
+        (!entry.isSymbolicLink || _encodes(entry.symbolicLink!));
     ts.write(_outputStream!,
-        filenameEncoder: filenameEncoding, headerOnly: true);
+        filenameEncoder: encodable ? filenameEncoding : utf8, headerOnly: true);
     return ts;
+  }
+
+  bool _encodes(String value) {
+    try {
+      filenameEncoding.encode(value);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   void finish() {

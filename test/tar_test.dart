@@ -339,6 +339,48 @@ void main() {
       expect(archive[0].readBytes(), equals(content));
     });
 
+    test('a v7 directory with a trailing slash reads as a directory', () async {
+      Uint8List header(String name, int size) {
+        final h = Uint8List(512);
+        void put(int off, String s) =>
+            h.setRange(off, off + s.length, ascii.encode(s));
+        put(0, name);
+        put(100, '0000755');
+        put(108, '0000000');
+        put(116, '0000000');
+        put(124, size.toRadixString(8).padLeft(11, '0'));
+        put(136, '00000000000');
+        put(148, '        ');
+        var sum = 0;
+        for (final b in h) {
+          sum += b;
+        }
+        put(148, '${sum.toRadixString(8).padLeft(6, '0')}\x00 ');
+        return h;
+      }
+
+      final content = ascii.encode('inside');
+      final bytes = Uint8List.fromList([
+        ...header('dir/', 0),
+        ...header('dir/a.txt', content.length),
+        ...content,
+        ...Uint8List(512 - content.length),
+        ...Uint8List(1024),
+      ]);
+
+      final archive = TarDecoder().decodeBytes(bytes);
+      expect(archive.findFile('dir/')!.isFile, isFalse);
+      expect(archive.findFile('dir/a.txt')!.isFile, isTrue);
+
+      final entries = await Stream<List<int>>.value(bytes)
+          .transform(tarCodec.decoder)
+          .asyncMap((e) async {
+        await e.content.drain<void>();
+        return '${e.name} ${e.type.name}';
+      }).toList();
+      expect(entries, ['dir/ directory', 'dir/a.txt file']);
+    });
+
     test('pax header without storing data', () {
       // The pax header's own content has to be read even when file data is
       // being skipped, since it carries the next entry's name.

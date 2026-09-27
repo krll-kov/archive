@@ -27,13 +27,7 @@ class ZipDecoder {
       // The attributes are stored in base 8
       final mode = zfh.externalFileAttributes;
 
-      /*if (verify) {
-        final stream = zf.getStream();
-        final computedCrc = getCrc32(stream.toUint8List());
-        if (computedCrc != zf.crc32) {
-          throw ArchiveException('Invalid CRC for file in archive.');
-        }
-      }*/
+      zf.verify = verify;
 
       final entryMode = mode >> 16;
 

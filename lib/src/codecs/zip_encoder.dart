@@ -61,6 +61,7 @@ class _ZipFileData {
   int position = 0;
   int mode = 0;
   bool isFile = true;
+  bool unixHost = false;
 }
 
 int? _getTime(DateTime? dateTime) {
@@ -280,7 +281,17 @@ class ZipEncoder {
       compressionType = CompressionType.none;
     }
 
-    if (entry.isFile) {
+    var linkSize = -1;
+    if (entry.isSymbolicLink) {
+      final target = utf8.encode(entry.symbolicLink!);
+      compressionType = CompressionType.none;
+      compressedData = InputMemoryStream(target);
+      ownsData = true;
+      crc32 = getCrc32(target);
+      linkSize = target.length;
+      fileData.mode = 0xa000 | (entry.mode & 0xfff);
+      fileData.unixHost = true;
+    } else if (entry.isFile) {
       final file = entry;
       if (file.isCompressed) {
         if (file.compression == CompressionType.none) {
@@ -394,6 +405,9 @@ class ZipEncoder {
     fileData.compressedSize = deferred ? 0 : dataLen;
     fileData.compressedData = compressedData;
     fileData.uncompressedSize = entry.size;
+    if (linkSize >= 0) {
+      fileData.uncompressedSize = linkSize;
+    }
     fileData.compression = compressionType;
     fileData.comment = entry.comment;
     fileData.position = _output!.length;
@@ -589,7 +603,11 @@ class ZipEncoder {
           fileData.position > 0xFFFFFFFF;
       zipNeedsZip64 |= needsZip64;
 
-      final versionMadeBy = (os << 8) | version;
+      final madeBy = filenameEncoding.name == "utf-8" &&
+              fileData.name.codeUnits.any((c) => c > 0x7f)
+          ? _versionAnsiNames
+          : version;
+      final versionMadeBy = ((fileData.unixHost ? _osUnix : os) << 8) | madeBy;
       final lzma = fileData.compression == CompressionType.lzma;
       final versionNeededToExtract = lzma
           ? _versionLzma
@@ -719,9 +737,11 @@ class ZipEncoder {
 
   static const version = 20;
   static const _versionLzma = 63;
+  static const _versionAnsiNames = 40;
 
   // enum OS
   static const _osMSDos = 0;
+  static const _osUnix = 3;
 }
 
 /// Deflates one entry a piece at a time. Call [step] until it returns false,

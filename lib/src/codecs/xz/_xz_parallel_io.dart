@@ -76,7 +76,6 @@ class _XZFileSource extends XZByteSource {
   }
 }
 
-
 // The largest block header the format allows, (255 + 1) * 4.
 const _maxBlockHeaderSize = 1024;
 
@@ -621,8 +620,7 @@ Stream<Uint8List> _xzDecodeStream(
     while (idleWorkers.isNotEmpty &&
         dispatch.unsent.isNotEmpty &&
         ready.bytes < aheadMax &&
-        (inFlight == 0 ||
-            inFlight + dispatch.unsent.first.cost <= budget)) {
+        (inFlight == 0 || inFlight + dispatch.unsent.first.cost <= budget)) {
       final record = dispatch.unsent.removeFirst();
       inFlight += record.cost;
       final bytes = record.bytes!;
@@ -865,8 +863,7 @@ class _StreamDispatch implements XzBlockDispatch {
   /// Past 2^23 blocks `id << _idShift` overflows and converter hangs, so
   /// parser decodes later blocks itself
   @override
-  int get maxBlockBytes =>
-      _next < 1 << (63 - _idShift) ? _maxBlockBytes : -1;
+  int get maxBlockBytes => _next < 1 << (63 - _idShift) ? _maxBlockBytes : -1;
 
   /// Handed over and not yet written out, in stream order
   final records = ListQueue<_StreamBlock>();
@@ -900,7 +897,8 @@ class _StreamDispatch implements XzBlockDispatch {
       final dictionary = dictionarySize > 0 && dictionarySize < 0x40000000
           ? xzDictionaryCap(dictionarySize)
           : 0;
-      perWorker = bytes.length + dictionary + xzStagingSize + uncompressedLength;
+      perWorker =
+          bytes.length + dictionary + xzStagingSize + uncompressedLength;
     }
   }
 }
@@ -1072,9 +1070,8 @@ void _xzWorker(SendPort toMain) {
           : xzStagingSize;
   var sent = 0;
   void bounded(int at, Uint8List piece) {
-    final room = uncompressedLength == null
-        ? piece.length
-        : uncompressedLength - sent;
+    final room =
+        uncompressedLength == null ? piece.length : uncompressedLength - sent;
     final keep = piece.length < room ? piece.length : (room < 0 ? 0 : room);
     sent += keep;
     if (keep > 0) {

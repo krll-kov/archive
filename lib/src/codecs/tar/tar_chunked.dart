@@ -226,7 +226,10 @@ class TarEntry {
 
   TarEntry._(TarFile file, this._reader)
       : name = file.filename,
-        type = TarEntryType.of(file.typeFlag),
+        type = TarEntryType.of(file.typeFlag) == TarEntryType.file &&
+                file.filename.endsWith('/')
+            ? TarEntryType.directory
+            : TarEntryType.of(file.typeFlag),
         size = file.fileSize,
         mode = file.mode,
         ownerId = file.ownerId,

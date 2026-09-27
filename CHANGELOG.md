@@ -33,7 +33,11 @@
 * Fixed SHA-256 checks for XZDecoder with `verify: true`
 * Significantly reduced XZDecoder RAM usage for --x86, crc32, crc64, SHA-256 and default decoding with `decodeStream`
 * Increased SHA-256 speed for XZDecoder and XZEncoder
-* Made CRC32 faster on IO (non-js-web platforms)
+* Made CRC32 significantly faster on all platforms
+* `ZipDecoder` does not ignore `verify: true` param anymore and checks for archive validity if asked
+* Fixed symlinks encoding in `ZipEncoder` and decoding non-ASCII names with macos unzip from archives of this package
+* Fixed latin1 encoding for `TarEncoder` with non-ASCII file names
+* Increased Adler32 speed for zlib web and for io if used with public api
 * Slightly reduces amount of RAM used by zlib encoder
 * Added `ProgressOutputStream` to monitor progress during unpack
 * Fixed `ArchiveFile.directory` mode (0755 instead of 0644) so that it can be opened after unpacking

@@ -149,6 +149,48 @@ void main() {
       expect(() => _decode(broken, 16), throwsA(isA<ArchiveException>()));
       expect(() => _decode(broken, 16, verify: false), returnsNormally);
     });
+
+    test('a block full of false markers is not decoded again for each one', () {
+      final bits = <int>[];
+      void put(int value, int count) {
+        for (var i = count - 1; i >= 0; i--) {
+          bits.add((value >> i) & 1);
+        }
+      }
+
+      for (final c in 'BZh9'.codeUnits) {
+        put(c, 8);
+      }
+      put(0x314159265359, 48);
+      put(0, 32);
+      put(0, 1);
+      put(0, 24);
+      put(0x8000, 16);
+      put(0x0006, 16);
+      put(2, 3);
+      put(18002, 15);
+      put(0, 18002);
+      for (var table = 0; table < 2; table++) {
+        put(int.parse('0001001001111010100', radix: 2), 19);
+      }
+      for (var i = 0; i < 6000; i++) {
+        put(0x314159265359, 48);
+      }
+      final archive = Uint8List((bits.length + 7) >> 3);
+      for (var i = 0; i < bits.length; i++) {
+        archive[i >> 3] |= bits[i] << (7 - (i & 7));
+      }
+      expect(
+          BZip2Decoder()
+              .decodeStream(InputMemoryStream(archive), OutputMemoryStream()),
+          isFalse);
+      final watch = Stopwatch()..start();
+      for (final piece in [archive.length, 64]) {
+        expect(() => _decode(archive, piece), throwsA(isA<ArchiveException>()),
+            reason: 'piece $piece');
+      }
+      expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+    });
   });
 
   group('bzip2 chunked encoder', () {

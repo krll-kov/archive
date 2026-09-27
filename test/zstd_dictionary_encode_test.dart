@@ -95,7 +95,10 @@ void main() {
           level: 6, checksum: false, dictionary: ZstdDictionary(Uint8List(7)));
       final streamed = OutputMemoryStream();
       encoder.encodeStream(InputMemoryStream(content), streamed);
-      for (final encoded in [encoder.encodeBytes(content), streamed.getBytes()]) {
+      for (final encoded in [
+        encoder.encodeBytes(content),
+        streamed.getBytes()
+      ]) {
         expect(encoded.length, 236);
         expect(getCrc32(encoded), 2451839013);
       }
@@ -106,8 +109,8 @@ void main() {
           'N6Qw7DkwAAAMEPhsB/+7OP9CSClTIyAgICAgEAgEAoFAIBAIBAKBQCAQCAQCgUAgEPwD'
           'JECAAAECBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB'
           'AT+AyRAgAABAgQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBP4D+/8BAAQAAAAIAAAA');
-      final dictionary = ZstdDictionary(
-          Uint8List(header.length + 131072)..setAll(0, header));
+      final dictionary =
+          ZstdDictionary(Uint8List(header.length + 131072)..setAll(0, header));
       final content = _literalBlock();
       for (var level = 16; level <= 22; level++) {
         final encoder =

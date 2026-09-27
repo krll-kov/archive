@@ -36,7 +36,7 @@ enum ArchiveFormat {
 /// reached. So it can accept data that a whole header would not
 ///
 /// A tar written before ustar carries no magic and needs the whole 512 byte
-/// header. This package's own encoder still writes one
+/// header.
 ///
 /// So six bytes give an answer for every format but tar. Twelve bytes run every
 /// check but the tar checksum. [headerBytes] decides all of it.
