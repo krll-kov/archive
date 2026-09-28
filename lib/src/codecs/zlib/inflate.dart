@@ -233,7 +233,7 @@ class Inflate {
     // Not enough buffer
     while (_bitBufferLen < maxCodeLength) {
       if (_inputStream!.isEOS) {
-        return -1;
+        break;
       }
 
       final octet = _inputStream!.readByte();
@@ -247,7 +247,7 @@ class Inflate {
     final codeLength = codeWithLength >> 16;
     // An entry no code was assigned to: the code is incomplete, which is
     // damage. Consuming no bits, it would otherwise be read again forever
-    if (codeLength == 0) {
+    if (codeLength == 0 || codeLength > _bitBufferLen) {
       return -1;
     }
 

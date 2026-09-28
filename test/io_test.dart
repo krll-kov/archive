@@ -940,6 +940,30 @@ void main() {
       expect(sentinel.readAsStringSync(), 'keep');
     }, testOn: '!windows');
 
+    test('$method extraction replaces what an earlier entry left at a path',
+        () async {
+      final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final output = p.join(root.path, 'out');
+      final archive = Archive()
+        ..add(ArchiveFile.string('b.txt', 'b'))
+        ..add(ArchiveFile.string('a.txt', 'a'))
+        ..add(ArchiveFile.symlink('./a.txt', 'b.txt'))
+        ..add(ArchiveFile.symlink('c.txt', 'b.txt'))
+        ..add(ArchiveFile.string('./c.txt', 'c'))
+        ..add(ArchiveFile.symlink('d', 'z.txt'))
+        ..add(ArchiveFile.symlink('./d', 'b.txt'))
+        ..add(ArchiveFile.string('z.txt', 'z'));
+
+      await extract(archive, output, root.path);
+
+      expect(Link(p.join(output, 'd')).targetSync(), 'b.txt');
+      expect(Link(p.join(output, 'a.txt')).targetSync(), 'b.txt');
+      expect(FileSystemEntity.isLinkSync(p.join(output, 'c.txt')), isFalse);
+      expect(File(p.join(output, 'c.txt')).readAsStringSync(), 'c');
+      expect(File(p.join(output, 'b.txt')).readAsStringSync(), 'b');
+    }, testOn: '!windows');
+
     test('$method extraction checks links under the physical output directory',
         () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');

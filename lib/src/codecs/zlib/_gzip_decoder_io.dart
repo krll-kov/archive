@@ -130,12 +130,20 @@ class _GZipDecoder extends ZLibDecoderBase {
     final inSink = GZipCodec().decoder.startChunkedConversion(outSink);
     var left = seen - trailerLength;
     while (left > 0) {
-      final chunk = input.readBytes(min(8 * 1024, left)).toUint8List();
+      var chunk = input.readBytes(min(8 * 1024, left)).toUint8List();
       if (chunk.isEmpty) {
         break;
       }
-      inSink.add(chunk);
       left -= chunk.length;
+      final extra = left > 0 ? _toNextMember(input, left) : 0;
+      if (extra > 0) {
+        chunk = Uint8List(chunk.length + extra)
+          ..setRange(0, chunk.length, chunk)
+          ..setRange(chunk.length, chunk.length + extra,
+              input.readBytes(extra).toUint8List());
+        left -= extra;
+      }
+      inSink.add(chunk);
     }
     var trailer = input.readBytes(trailerLength).toUint8List();
     if (!isGZip && verify) {
@@ -252,6 +260,18 @@ class _GZipDecoder extends ZLibDecoderBase {
 //   @override
 //   void close() {}
 // }
+
+/// dart:io gzip decoder fails when read splits last 9 bytes of member that
+/// another member follows, so chunk is extended to next member header
+int _toNextMember(InputStream input, int left) {
+  final ahead = input.peekBytes(min(12, left)).toUint8List();
+  for (var k = 1; k <= 9 && k + 2 < ahead.length; k++) {
+    if (ahead[k] == 0x1f && ahead[k + 1] == 0x8b && ahead[k + 2] == 8) {
+      return k;
+    }
+  }
+  return 0;
+}
 
 final _nativeConcatenated = _supportsConcatenated();
 

@@ -27,6 +27,13 @@ bool _isWithinOutputPath(String? realOut, String filePath) {
   return realOut != null && file != null && path.isWithin(realOut, file);
 }
 
+bool _isEntryWithinOutputPath(String? realOut, String filePath) {
+  final dir = _realPath(path.dirname(filePath));
+  return realOut != null &&
+      dir != null &&
+      path.isWithin(realOut, path.join(dir, path.basename(filePath)));
+}
+
 /// canonicalize ignores symlinks out of outputPath, so we resolve them on disk
 String? _realPath(String filePath) {
   var existing = path.absolute(filePath);
@@ -64,6 +71,15 @@ bool _isValidSymLink(String outputPath, String? realOut, ArchiveFile file) {
   return true;
 }
 
+void _clearPath(String filePath) {
+  final type = FileSystemEntity.typeSync(filePath, followLinks: false);
+  if (type == FileSystemEntityType.link) {
+    Link(filePath).deleteSync();
+  } else if (type == FileSystemEntityType.file) {
+    File(filePath).deleteSync();
+  }
+}
+
 void _prepareOutDir(String outDirPath) {
   final outDir = Directory(outDirPath);
   if (!outDir.existsSync()) {
@@ -76,7 +92,7 @@ String? _prepareArchiveFilePath(
   final filePath = path.join(outputPath, path.normalize(archiveFile.name));
 
   if ((archiveFile.isDirectory && !archiveFile.isSymbolicLink) ||
-      !_isWithinOutputPath(realOut, filePath)) {
+      !_isEntryWithinOutputPath(realOut, filePath)) {
     return null;
   }
 
@@ -96,10 +112,12 @@ void _extractArchiveEntryToDiskSync(
   bool throwOnError = false,
 }) {
   if (entry.isSymbolicLink) {
+    _clearPath(filePath);
     final link = Link(filePath);
     link.createSync(path.normalize(entry.symbolicLink ?? ""), recursive: true);
   } else {
     if (entry.isFile) {
+      _clearPath(filePath);
       final output = OutputFileStream(filePath, bufferSize: bufferSize);
       try {
         entry.writeContent(output);
@@ -176,7 +194,7 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
     final filePath = path.join(outputPath, path.normalize(entry.name));
 
     if ((entry.isDirectory && !entry.isSymbolicLink) ||
-        !_isWithinOutputPath(realOut, filePath)) {
+        !_isEntryWithinOutputPath(realOut, filePath)) {
       continue;
     }
 
@@ -185,6 +203,7 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
         continue;
       }
 
+      _clearPath(filePath);
       final link = Link(filePath);
       await link.create(path.normalize(entry.symbolicLink ?? ""),
           recursive: true);
@@ -201,6 +220,7 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
     bufferSize ??= OutputFileStream.kDefaultBufferSize;
     final fileSize = file.size;
     final fileBufferSize = fileSize < bufferSize ? fileSize : bufferSize;
+    _clearPath(filePath);
     final output = OutputFileStream(filePath, bufferSize: fileBufferSize);
     try {
       file.writeContent(output);
@@ -416,7 +436,7 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
     final realOut = _realPath(outputPath);
     for (final file in archive) {
       final filePath = path.join(outputPath, path.normalize(file.name));
-      if (!_isWithinOutputPath(realOut, filePath)) {
+      if (!_isEntryWithinOutputPath(realOut, filePath)) {
         continue;
       }
 
@@ -432,10 +452,12 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
       }
 
       if (file.isSymbolicLink) {
+        _clearPath(filePath);
         final link = Link(filePath);
         final p = path.normalize(file.symbolicLink ?? "");
         link.createSync(p, recursive: true);
       } else if (file.isFile) {
+        _clearPath(filePath);
         final output = OutputFileStream(filePath, bufferSize: bufferSize);
         try {
           file.writeContent(output);

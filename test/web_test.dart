@@ -166,6 +166,56 @@ void main() {
       expect(ZipDecoder().decodeBytes(zip).files.single.readBytes(),
           'hello'.codeUnits);
     });
+
+    test('a deflated entry whose last code ends its data reads whole', () {
+      final data = [155, 48, 113, 210, 228, 41, 0];
+      final content = [0x90, 0x91, 0x92, 0x93, 0x94];
+      final crc = getCrc32(content);
+      final zip = OutputMemoryStream()
+        ..writeUint32(0x04034b50)
+        ..writeUint16(20)
+        ..writeUint16(0)
+        ..writeUint16(8)
+        ..writeUint32(0)
+        ..writeUint32(crc)
+        ..writeUint32(data.length)
+        ..writeUint32(content.length)
+        ..writeUint16(1)
+        ..writeUint16(0)
+        ..writeBytes('a'.codeUnits)
+        ..writeBytes(data);
+      final central = zip.length;
+      zip
+        ..writeUint32(0x02014b50)
+        ..writeUint16(20)
+        ..writeUint16(20)
+        ..writeUint16(0)
+        ..writeUint16(8)
+        ..writeUint32(0)
+        ..writeUint32(crc)
+        ..writeUint32(data.length)
+        ..writeUint32(content.length)
+        ..writeUint16(1)
+        ..writeUint16(0)
+        ..writeUint16(0)
+        ..writeUint16(0)
+        ..writeUint16(0)
+        ..writeUint32(0)
+        ..writeUint32(0)
+        ..writeBytes('a'.codeUnits);
+      final size = zip.length - central;
+      zip
+        ..writeUint32(0x06054b50)
+        ..writeUint16(0)
+        ..writeUint16(0)
+        ..writeUint16(1)
+        ..writeUint16(1)
+        ..writeUint32(size)
+        ..writeUint32(central)
+        ..writeUint16(0);
+      expect(ZipDecoder().decodeBytes(zip.getBytes()).files.single.readBytes(),
+          content);
+    });
   });
   group('zip web', () {
     test('ZipCrypto keys decrypt as on the VM', () {

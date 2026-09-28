@@ -651,6 +651,45 @@ void main() {
         expect(const ZLibDecoderWeb().decodeBytes(padded, verify: true), data);
       });
 
+      test('stream decode reads members whose trailer a read splits', () {
+        final second = GZipEncoder().encodeBytes(List.filled(3000, 7));
+        for (var k = 1; k <= 9; k++) {
+          final data = Uint8List.fromList(
+              List.generate(8192 + k - 23, (i) => i * 31 & 255));
+          final crc = getCrc32(data);
+          final first = OutputMemoryStream()
+            ..writeBytes([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3, 1])
+            ..writeUint16(data.length)
+            ..writeUint16(data.length ^ 0xffff)
+            ..writeBytes(data)
+            ..writeUint32(crc)
+            ..writeUint32(data.length);
+          expect(first.length, 8192 + k);
+          final both = Uint8List.fromList([...first.getBytes(), ...second]);
+          final want = [...data, ...List.filled(3000, 7)];
+          for (final (verify, throwOnError) in [
+            (false, false),
+            (true, false),
+            (false, true)
+          ]) {
+            final out = OutputMemoryStream();
+            const GZipDecoder().decodeStream(InputMemoryStream(both), out,
+                verify: verify, throwOnError: throwOnError);
+            expect(out.getBytes(), want, reason: 'k $k, verify $verify');
+          }
+        }
+      });
+
+      test('web raw inflate reads a last code that ends the data', () {
+        final raw = Uint8List.fromList([155, 48, 113, 210, 228, 41, 0]);
+        for (final throwOnError in [false, true]) {
+          expect(
+              const ZLibDecoderWeb()
+                  .decodeBytes(raw, raw: true, throwOnError: throwOnError),
+              [0x90, 0x91, 0x92, 0x93, 0x94]);
+        }
+      });
+
       test('zlib web keeps a whole stream that bytes follow', () {
         final padded = Uint8List.fromList([...zlib, 0, 0, 0, 0]);
         expect(const ZLibDecoderWeb().decodeBytes(padded), data);
