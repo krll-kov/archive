@@ -308,5 +308,10 @@
 /// frame to learn its size. Pass input length here to write that size
 /// {@endtemplate}
 
+/// {@template archive.extract.allow_absolute_symlinks}
+/// A symlink to an absolute path points outside [outputPath], so it is
+/// skipped unless [allowAbsoluteSymlinks] is set
+/// {@endtemplate}
+
 /// Must be after templates
 library;

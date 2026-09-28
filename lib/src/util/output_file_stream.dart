@@ -78,8 +78,11 @@ class OutputFileStream extends OutputStream {
     if (!isOpen) {
       return;
     }
-    flush();
-    await _fileHandle.close();
+    try {
+      flush();
+    } finally {
+      await _fileHandle.close();
+    }
   }
 
   @override
@@ -87,8 +90,11 @@ class OutputFileStream extends OutputStream {
     if (!isOpen) {
       return;
     }
-    flush();
-    _fileHandle.closeSync();
+    try {
+      flush();
+    } finally {
+      _fileHandle.closeSync();
+    }
   }
 
   /// Write a byte to the end of the buffer.

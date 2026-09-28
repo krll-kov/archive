@@ -128,7 +128,7 @@ class TarEncoder {
     } else {
       final file = entry;
       if (file.isSymbolicLink) {
-        ts.typeFlag = TarFile.symbolicLink;
+        ts.typeFlag = file.isHardLink ? TarFile.hardLink : TarFile.symbolicLink;
         ts.nameOfLinkedFile = file.symbolicLink;
       } else {
         ts.fileSize = file.size;

@@ -10,7 +10,8 @@ import 'tar/tar_file.dart';
 
 /// Decode a tar formatted buffer into an [Archive] object.
 /// A hard link is decoded as [ArchiveFile.symbolicLink] with target relative
-/// to archive root, so after extraction the link points to a missing file
+/// to archive root and [ArchiveFile.isHardLink] set, so after extraction the
+/// link points to its target
 class TarDecoder {
   final Encoding filenameEncoding;
   List<TarFile> files = [];
@@ -147,6 +148,7 @@ class TarDecoder {
       // Every header has the field; only a link has anything in it
       if (tf.nameOfLinkedFile?.isNotEmpty ?? false) {
         file.symbolicLink = tf.nameOfLinkedFile!;
+        file.isHardLink = tf.typeFlag == TarFile.hardLink;
       }
 
       archive.add(file);

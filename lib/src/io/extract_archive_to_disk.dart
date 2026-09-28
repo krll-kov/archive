@@ -23,7 +23,7 @@ import 'posix.dart' as posix;
 // Ensure filePath is contained in the outputDir folder, to make sure archives
 // aren't trying to write to some system path.
 bool _isWithinOutputPath(String? realOut, String filePath) {
-  final file = _realPath(filePath);
+  final file = _realPath(filePath, followDangling: true);
   return realOut != null && file != null && path.isWithin(realOut, file);
 }
 
@@ -35,7 +35,8 @@ bool _isEntryWithinOutputPath(String? realOut, String filePath) {
 }
 
 /// canonicalize ignores symlinks out of outputPath, so we resolve them on disk
-String? _realPath(String filePath) {
+String? _realPath(String filePath,
+    {bool followDangling = false, int depth = 0}) {
   var existing = path.absolute(filePath);
   final rest = <String>[];
   while (FileSystemEntity.typeSync(existing, followLinks: false) ==
@@ -49,18 +50,37 @@ String? _realPath(String filePath) {
   try {
     return path.joinAll([File(existing).resolveSymbolicLinksSync(), ...rest]);
   } on FileSystemException {
-    // A dangling or looping symlink throws, so the entry counts as outside
-    return null;
+    // A dangling symlink throws, so we follow its target ourselves. A loop
+    // stops after 40 links, as on Linux, and the entry counts as outside
+    if (!followDangling ||
+        depth >= 40 ||
+        FileSystemEntity.typeSync(existing, followLinks: false) !=
+            FileSystemEntityType.link) {
+      return null;
+    }
+    final target = Link(existing).targetSync();
+    return _realPath(
+        path.joinAll([
+          path.isAbsolute(target)
+              ? target
+              : path.join(path.dirname(existing), target),
+          ...rest
+        ]),
+        followDangling: true,
+        depth: depth + 1);
   }
 }
 
-bool _isValidSymLink(String outputPath, String? realOut, ArchiveFile file) {
-  final filePath =
-      path.dirname(path.join(outputPath, path.normalize(file.name)));
-  final linkPath = path.normalize(file.symbolicLink ?? "");
+String _entryPath(String outputPath, String name) => path.join(
+    outputPath, path.normalize(name.replaceFirst(RegExp(r'^[/\\]+'), '')));
+
+bool _isValidSymLink(
+    String outputPath, String? realOut, ArchiveFile file, bool allowAbsolute) {
+  final filePath = path.dirname(_entryPath(outputPath, file.name));
+  final linkPath = path.normalize(_linkTarget(file));
   if (path.isAbsolute(linkPath)) {
     // Don't allow decoding of files outside of the output path.
-    return false;
+    return allowAbsolute;
   }
   final realPath = _realPath(filePath);
   if (realPath == null ||
@@ -69,6 +89,27 @@ bool _isValidSymLink(String outputPath, String? realOut, ArchiveFile file) {
     return false;
   }
   return true;
+}
+
+/// A hard link names its target from the archive root and a symlink from its
+/// own folder. dart:io cannot make a hard link and a copy would double disk use,
+/// so it becomes a symlink with the target rewritten from its folder
+String _linkTarget(ArchiveFile file) {
+  final text = file.symbolicLink ?? '';
+  if (!file.isHardLink) {
+    return text;
+  }
+  String clean(String p) =>
+      path.posix.normalize(p.replaceFirst(RegExp('^/+'), ''));
+  return path.posix
+      .relative(clean(text), from: path.posix.dirname(clean(file.name)));
+}
+
+/// Windows needs \ in a relative link target, and normalizing the text would
+/// change where a link through another link points
+String _linkText(ArchiveFile file) {
+  final text = _linkTarget(file);
+  return Platform.isWindows ? text.replaceAll('/', r'\') : text;
 }
 
 void _clearPath(String filePath) {
@@ -87,9 +128,9 @@ void _prepareOutDir(String outDirPath) {
   }
 }
 
-String? _prepareArchiveFilePath(
-    ArchiveFile archiveFile, String outputPath, String? realOut) {
-  final filePath = path.join(outputPath, path.normalize(archiveFile.name));
+String? _prepareArchiveFilePath(ArchiveFile archiveFile, String outputPath,
+    String? realOut, bool allowAbsoluteSymlinks) {
+  final filePath = _entryPath(outputPath, archiveFile.name);
 
   if ((archiveFile.isDirectory && !archiveFile.isSymbolicLink) ||
       !_isEntryWithinOutputPath(realOut, filePath)) {
@@ -97,7 +138,8 @@ String? _prepareArchiveFilePath(
   }
 
   if (archiveFile.isSymbolicLink) {
-    if (!_isValidSymLink(outputPath, realOut, archiveFile)) {
+    if (!_isValidSymLink(
+        outputPath, realOut, archiveFile, allowAbsoluteSymlinks)) {
       return null;
     }
   }
@@ -114,7 +156,7 @@ void _extractArchiveEntryToDiskSync(
   if (entry.isSymbolicLink) {
     _clearPath(filePath);
     final link = Link(filePath);
-    link.createSync(path.normalize(entry.symbolicLink ?? ""), recursive: true);
+    link.createSync(_linkText(entry), recursive: true);
   } else {
     if (entry.isFile) {
       _clearPath(filePath);
@@ -161,16 +203,20 @@ void _extractArchiveEntryToDiskSync(
 ///
 /// With [throwOnError] a damaged entry throws `ArchiveException`, without it
 /// the entry is skipped and leaves no file
+///
+/// {@macro archive.extract.allow_absolute_symlinks}
 void extractArchiveToDiskSync(
   Archive archive,
   String outputPath, {
   int? bufferSize,
   bool throwOnError = false,
+  bool allowAbsoluteSymlinks = false,
 }) {
   _prepareOutDir(outputPath);
   final realOut = _realPath(outputPath);
   for (final entry in archive) {
-    final filePath = _prepareArchiveFilePath(entry, outputPath, realOut);
+    final filePath = _prepareArchiveFilePath(
+        entry, outputPath, realOut, allowAbsoluteSymlinks);
     if (filePath != null) {
       _extractArchiveEntryToDiskSync(entry, filePath,
           bufferSize: bufferSize, throwOnError: throwOnError);
@@ -182,8 +228,12 @@ void extractArchiveToDiskSync(
 ///
 /// With [throwOnError] a damaged entry throws `ArchiveException`, without it
 /// the entry is skipped and leaves no file
+///
+/// {@macro archive.extract.allow_absolute_symlinks}
 Future<void> extractArchiveToDisk(Archive archive, String outputPath,
-    {int? bufferSize, bool throwOnError = false}) async {
+    {int? bufferSize,
+    bool throwOnError = false,
+    bool allowAbsoluteSymlinks = false}) async {
   final outDir = Directory(outputPath);
   if (!outDir.existsSync()) {
     outDir.createSync(recursive: true);
@@ -191,7 +241,7 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
   final realOut = _realPath(outputPath);
 
   for (final entry in archive) {
-    final filePath = path.join(outputPath, path.normalize(entry.name));
+    final filePath = _entryPath(outputPath, entry.name);
 
     if ((entry.isDirectory && !entry.isSymbolicLink) ||
         !_isEntryWithinOutputPath(realOut, filePath)) {
@@ -199,14 +249,13 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
     }
 
     if (entry.isSymbolicLink) {
-      if (!_isValidSymLink(outputPath, realOut, entry)) {
+      if (!_isValidSymLink(outputPath, realOut, entry, allowAbsoluteSymlinks)) {
         continue;
       }
 
       _clearPath(filePath);
       final link = Link(filePath);
-      await link.create(path.normalize(entry.symbolicLink ?? ""),
-          recursive: true);
+      await link.create(_linkText(entry), recursive: true);
       continue;
     }
 
@@ -278,12 +327,15 @@ String getInputExtension(String inputPath) {
 ///
 /// If neither option is specified, damaged or incomplete entries are skipped,
 /// and only complete ones are extracted
+///
+/// {@macro archive.extract.allow_absolute_symlinks}
 Future<void> extractFileToDisk(String inputPath, String outputPath,
     {String? password,
     int? bufferSize,
     ArchiveCallback? callback,
     bool verify = false,
-    bool throwOnError = false}) async {
+    bool throwOnError = false,
+    bool allowAbsoluteSymlinks = false}) async {
   final strict = verify || throwOnError;
   Directory? tempDir;
   var archivePath = inputPath;
@@ -435,13 +487,14 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
 
     final realOut = _realPath(outputPath);
     for (final file in archive) {
-      final filePath = path.join(outputPath, path.normalize(file.name));
+      final filePath = _entryPath(outputPath, file.name);
       if (!_isEntryWithinOutputPath(realOut, filePath)) {
         continue;
       }
 
       if (file.isSymbolicLink) {
-        if (!_isValidSymLink(outputPath, realOut, file)) {
+        if (!_isValidSymLink(
+            outputPath, realOut, file, allowAbsoluteSymlinks)) {
           continue;
         }
       }
@@ -454,8 +507,7 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
       if (file.isSymbolicLink) {
         _clearPath(filePath);
         final link = Link(filePath);
-        final p = path.normalize(file.symbolicLink ?? "");
-        link.createSync(p, recursive: true);
+        link.createSync(_linkText(file), recursive: true);
       } else if (file.isFile) {
         _clearPath(filePath);
         final output = OutputFileStream(filePath, bufferSize: bufferSize);

@@ -211,6 +211,31 @@ var tarTests = [
 
 void main() {
   group('tar', () {
+    // bsdtar makes a real hard link, Python tarfile and 7-Zip 26 write a copy
+    test('a hard link keeps its target from the archive root', () {
+      final out = OutputMemoryStream();
+      final tar = TarEncoder()..start(out);
+      tar.add(ArchiveFile.string('usr/bin/gcc', 'compiler'));
+      (TarFile()
+            ..filename = 'usr/bin/gcc-13'
+            ..typeFlag = TarFile.hardLink
+            ..nameOfLinkedFile = 'usr/bin/gcc'
+            ..mode = 0x1ed)
+          .write(out);
+      tar.finish();
+      final link = TarDecoder()
+          .decodeBytes(out.getBytes())
+          .files
+          .singleWhere((f) => f.name == 'usr/bin/gcc-13');
+      expect(link.symbolicLink, 'usr/bin/gcc');
+      expect(link.isHardLink, isTrue);
+
+      final again = TarDecoder();
+      again.decodeBytes(TarEncoder().encodeBytes(Archive()..add(link)));
+      expect(again.files.single.typeFlag, TarFile.hardLink);
+      expect(again.files.single.nameOfLinkedFile, 'usr/bin/gcc');
+    });
+
     test('invalid archive', () {
       final bytes = Uint8List.fromList([1, 2, 3]);
       expect(TarDecoder().decodeBytes(bytes), isEmpty);

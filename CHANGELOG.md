@@ -37,6 +37,8 @@
   entries are extracted, and damaged ones leave no partial files on disk. If these flags are set, the function throws
   an exception upon encountering the first corrupted entry.
 * *BREAKING CHANGE*: `CompressionType` has a new value, `lzma`, so a switch over it needs a case for it.
+* *BREAKING CHANGE*: `TarEncoder` now writes a tar hard link read by `TarDecoder` back as a hard link. It used to
+  write it as a symlink, which pointed to a missing file.
 * Multithreaded `XZDecoder` requires `onError` with `verify`, as it already did with `throwOnError`
 * Added Dart async* `StreamTransformer`/`ByteConversionSink`/`Converter` support
   (`xzCodec`, `zstdCodec`, `bzip2Codec`, `tarCodec` and `zipCodec`) for decode and encode (decoders for
@@ -59,6 +61,9 @@
 * Reduced RAM usage used by `GZipDecoder.decodeBytes` and `ZLibDecoder.decodeBytes` on dart:io 
 * Slightly reduced amount of used RAM by `ZLibDecoder`.
 * Added `blockSize100k` to `BZip2Encoder.encodeBytes` and `encodeStream`
+* Added `ArchiveFile.isHardLink`, set by `TarDecoder` for tar hard links. `symbolicLink` is unchanged.
+* Fixed tar hard links extracted as broken symlinks by `extractFileToDisk`, `extractArchiveToDisk` and
+  `extractArchiveToDiskSync`. They now point to the right file.
 * Fixed symlinks scopes for `extractFileToDisk` that could overwrite existing file on disk outside of output dir
 * Fixed Unix mode reading for `ZipDecoder` for archives created on Windows.
 * Fixed CRC64 `XZEncoder` files created on dart-js failed to decode on native platforms.

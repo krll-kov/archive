@@ -895,20 +895,77 @@ void main() {
     expect(files.length, 2);
   });
 
+  // bsdtar makes a real hard link, Python tarfile and 7-Zip 26 write a copy
+  test('extractFileToDisk reads a hard link through its target', () async {
+    final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final out = OutputMemoryStream();
+    final tar = TarEncoder()..start(out);
+    tar.add(ArchiveFile.string('usr/bin/gcc', 'compiler'));
+    (TarFile()
+          ..filename = 'usr/bin/gcc-13'
+          ..typeFlag = TarFile.hardLink
+          ..nameOfLinkedFile = 'usr/bin/gcc'
+          ..mode = 0x1ed)
+        .write(out);
+    tar.finish();
+    final input = File(p.join(root.path, 'hard.tar'))
+      ..writeAsBytesSync(out.getBytes());
+    final output = p.join(root.path, 'out');
+    await extractFileToDisk(input.path, output);
+    expect(File(p.join(output, 'usr', 'bin', 'gcc-13')).readAsStringSync(),
+        'compiler');
+  }, testOn: '!windows');
+
   for (final method in ['sync', 'async', 'tar', 'zip']) {
-    Future<void> extract(Archive archive, String output, String root) async {
+    Future<void> extract(Archive archive, String output, String root,
+        {bool allowAbsoluteSymlinks = false}) async {
       if (method == 'sync') {
-        extractArchiveToDiskSync(archive, output);
+        extractArchiveToDiskSync(archive, output,
+            allowAbsoluteSymlinks: allowAbsoluteSymlinks);
       } else if (method == 'async') {
-        await extractArchiveToDisk(archive, output);
+        await extractArchiveToDisk(archive, output,
+            allowAbsoluteSymlinks: allowAbsoluteSymlinks);
       } else {
         final input = File(p.join(root, 'input.$method'))
           ..writeAsBytesSync(method == 'tar'
               ? TarEncoder().encodeBytes(archive)
               : ZipEncoder().encodeBytes(archive));
-        await extractFileToDisk(input.path, output);
+        await extractFileToDisk(input.path, output,
+            allowAbsoluteSymlinks: allowAbsoluteSymlinks);
       }
     }
+
+    // bsdtar, Python tarfile and 7-Zip 26 also strip leading slashes
+    test('$method extraction strips leading slashes from names', () async {
+      final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final output = p.join(root.path, 'out');
+      await extract(
+          Archive()..add(ArchiveFile.string('/etc/rc.d/abs.txt', 'abs')),
+          output,
+          root.path);
+      expect(File(p.join(output, 'etc', 'rc.d', 'abs.txt')).readAsStringSync(),
+          'abs');
+    });
+
+    // Python tarfile default filter and 7-Zip 26 also keep such link out,
+    // bsdtar and Python filter='tar' create it as allowAbsoluteSymlinks does
+    test('$method extraction creates absolute symlinks only when allowed',
+        () async {
+      final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final archive = Archive()
+        ..add(ArchiveFile.symlink('abs', '/usr/share/missing'));
+      final strict = p.join(root.path, 'strict');
+      await extract(archive, strict, root.path);
+      expect(
+          FileSystemEntity.typeSync(p.join(strict, 'abs'), followLinks: false),
+          FileSystemEntityType.notFound);
+      final allowed = p.join(root.path, 'allowed');
+      await extract(archive, allowed, root.path, allowAbsoluteSymlinks: true);
+      expect(Link(p.join(allowed, 'abs')).targetSync(), '/usr/share/missing');
+    }, testOn: '!windows');
 
     test('$method extraction resolves output symlinks before parent components',
         () async {
@@ -940,6 +997,42 @@ void main() {
       expect(sentinel.readAsStringSync(), 'keep');
     }, testOn: '!windows');
 
+    // bsdtar and Python tarfile also create a link whose target is a link
+    // not yet resolvable, 7-Zip 26 drops it
+    test('$method extraction keeps a link to a link still dangling', () async {
+      final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final output = p.join(root.path, 'out');
+      await extract(
+          Archive()
+            ..add(ArchiveFile.symlink('lib/liblber.so', 'liblber.so.2.0.200'))
+            ..add(ArchiveFile.symlink('lib/liblber.so.2', 'liblber.so'))
+            ..add(ArchiveFile.string('lib/liblber.so.2.0.200', 'library')),
+          output,
+          root.path);
+      expect(Link(p.join(output, 'lib', 'liblber.so.2')).targetSync(),
+          'liblber.so');
+      expect(File(p.join(output, 'lib', 'liblber.so.2')).readAsStringSync(),
+          'library');
+    }, testOn: '!windows');
+
+    // bsdtar and Python tarfile also keep link text as the archive has it
+    test('$method extraction keeps link text as the archive has it', () async {
+      final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final output = p.join(root.path, 'out');
+      await extract(
+          Archive()
+            ..add(ArchiveFile.string('t.txt', 't'))
+            ..add(ArchiveFile.symlink('d/e/rel', '.././../t.txt')),
+          output,
+          root.path);
+      expect(
+          Link(p.join(output, 'd', 'e', 'rel')).targetSync(), '.././../t.txt');
+      expect(File(p.join(output, 'd', 'e', 'rel')).readAsStringSync(), 't');
+    }, testOn: '!windows');
+
+    // bsdtar gives same tree: later entry replaces file or link at its path
     test('$method extraction replaces what an earlier entry left at a path',
         () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');

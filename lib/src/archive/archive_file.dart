@@ -41,6 +41,10 @@ class ArchiveFile {
   /// True if the entry is a symbolic link, otherwise false.
   bool get isSymbolicLink => symbolicLink?.isNotEmpty ?? false;
 
+  /// Set by TarDecoder for a tar hard link. Its [symbolicLink] names the
+  /// target from the archive root, not from the link's own folder
+  bool isHardLink = false;
+
   /// The crc32 checksum of the uncompressed content.
   int? crc32;
 

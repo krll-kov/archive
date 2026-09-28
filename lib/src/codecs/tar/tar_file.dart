@@ -168,6 +168,8 @@ class TarFile {
 
   bool get isSymLink => typeFlag == TarFile.symbolicLink;
 
+  bool get isHardLink => typeFlag == TarFile.hardLink;
+
   InputStream? get rawContent => _rawContent;
 
   FileContent? get content {
