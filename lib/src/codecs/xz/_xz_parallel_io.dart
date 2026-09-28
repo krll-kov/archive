@@ -10,6 +10,7 @@ import 'dart:typed_data';
 import '../../util/_file_handle_io.dart';
 import '../../util/archive_exception.dart';
 import '../../util/cancellable_stream.dart';
+import '../../util/decode_guard.dart';
 import '../../util/input_file_stream.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
@@ -87,7 +88,7 @@ const _maxBlockHeaderSize = 1024;
 const _dictionarySampleLimit = 16;
 
 const _kindStream = 0;
-const _kindBlock = 1;
+const xzKindBlock = 1;
 
 const _msgReady = 0;
 const _msgChunk = 1;
@@ -134,7 +135,7 @@ Future<bool> xzDecodeMultithreaded({
       return _runJobs([
         for (final block in blocks)
           _Job(
-            kind: _kindBlock,
+            kind: xzKindBlock,
             bytes: bytes,
             path: path,
             offset: base + block.compressedOffset,
@@ -508,6 +509,10 @@ Future<bool> _runJobs(
                 failureReason ??= reason as String;
               }
             }
+            final thrown = message[6];
+            if (thrown != null) {
+              failure ??= thrown;
+            }
             final error = message[3];
             if (error != null) {
               failure ??= StateError('XZ decode failed: $error');
@@ -652,7 +657,7 @@ Stream<Uint8List> _xzDecodeStream(
       final bytes = record.bytes!;
       record.bytes = null;
       idleWorkers.removeLast().send(_Job(
-            kind: _kindBlock,
+            kind: xzKindBlock,
             bytes: bytes,
             path: null,
             offset: 0,
@@ -686,6 +691,10 @@ Stream<Uint8List> _xzDecodeStream(
               ..done = true
               ..ok = message[2] as bool && message[3] == null
               ..reason = message[5] as String? ?? message[3] as String?;
+          }
+          final thrown = message[6];
+          if (thrown != null) {
+            failure ??= thrown;
           }
         }
         idleWorkers.add(message[1] as SendPort);
@@ -1010,7 +1019,7 @@ void _xzWorker(SendPort toMain) {
 
     // Failing to get hold of the compressed data is a failure of the decode
     // itself rather than a statement about the archive, so it is reported as
-    // an error. Anything that goes wrong afterwards is the archive's fault.
+    // an error. Afterwards only a data error is the archive's fault.
     Uint8List? data;
     InputFileStream? file;
     InputStream input;
@@ -1030,29 +1039,41 @@ void _xzWorker(SendPort toMain) {
             position: offset, length: length);
       }
     } catch (error) {
+      if (!isDecodeDataError(error)) {
+        _sendThrown(toMain, receive.sendPort, outputOffset, error);
+        return;
+      }
       toMain.send([
         _msgDone,
         receive.sendPort,
         false,
         error.toString(),
         outputOffset,
+        null,
         null
       ]);
       return;
     }
 
-    final result = _decodeJob(
-        kind: kind,
-        input: input,
-        data: data,
-        length: length,
-        streamFlags: streamFlags,
-        verify: verify,
-        maxPreallocateSize: maxPreallocateSize,
-        outputOffset: outputOffset,
-        uncompressedLength: uncompressedLength,
-        unpaddedLength: unpaddedLength,
-        onPiece: (at, piece) => toMain.send([_msgChunk, at, piece]));
+    final ({bool ok, String? reason}) result;
+    try {
+      result = xzDecodeJob(
+          kind: kind,
+          input: input,
+          data: data,
+          length: length,
+          streamFlags: streamFlags,
+          verify: verify,
+          maxPreallocateSize: maxPreallocateSize,
+          outputOffset: outputOffset,
+          uncompressedLength: uncompressedLength,
+          unpaddedLength: unpaddedLength,
+          onPiece: (at, piece) => toMain.send([_msgChunk, at, piece]));
+    } catch (error) {
+      file?.closeSync();
+      _sendThrown(toMain, receive.sendPort, outputOffset, error);
+      return;
+    }
     file?.closeSync();
     toMain.send([
       _msgDone,
@@ -1060,16 +1081,36 @@ void _xzWorker(SendPort toMain) {
       result.ok,
       null,
       outputOffset,
-      result.reason
+      result.reason,
+      null
     ]);
   });
 
   toMain.send([_msgReady, receive.sendPort, null, null, -1, null]);
 }
 
+void _sendThrown(
+    SendPort toMain, SendPort worker, int outputOffset, Object error) {
+  final message = [
+    _msgDone,
+    worker,
+    false,
+    error.toString(),
+    outputOffset,
+    null,
+    error
+  ];
+  try {
+    toMain.send(message);
+  } catch (_) {
+    message[6] = null;
+    toMain.send(message);
+  }
+}
+
 /// Decodes one job into pieces handed to [onPiece] and checks a block against
 /// the field it ends with. A corrupt archive is not a throw!
-({bool ok, String? reason}) _decodeJob({
+({bool ok, String? reason}) xzDecodeJob({
   required int kind,
   required InputStream input,
   required Uint8List? data,
@@ -1087,7 +1128,7 @@ void _xzWorker(SendPort toMain) {
   var decodedUnpadded = -1;
   final checkType = streamFlags & 0xf;
   // Verifying never holds the whole block
-  final verifyHere = verify && kind == _kindBlock;
+  final verifyHere = verify && kind == xzKindBlock;
   // Zeroing 4 MiB for every block cost ~720 µs per 1-byte block, so buffer
   // stops at block size
   final stagingSize =
@@ -1109,7 +1150,7 @@ void _xzWorker(SendPort toMain) {
   final sink = XzBlockSink(bounded, outputOffset, verifyHere ? checkType : 0,
       stagingSize: stagingSize);
   try {
-    if (kind == _kindBlock) {
+    if (kind == xzKindBlock) {
       final result = decodeXZBlock(input, streamFlags, sink,
           maxPreallocateSize: maxPreallocateSize, verify: verify);
       ok = result.ok;
@@ -1122,6 +1163,9 @@ void _xzWorker(SendPort toMain) {
       reason = decoder.failureReason;
     }
   } catch (error) {
+    if (!isDecodeDataError(error)) {
+      rethrow;
+    }
     ok = false;
     reason = '$error';
   } finally {
@@ -1151,6 +1195,9 @@ void _xzWorker(SendPort toMain) {
         reason = xzBlockCheckFailed;
       }
     } catch (error) {
+      if (!isDecodeDataError(error)) {
+        rethrow;
+      }
       ok = false;
       reason = '$error';
     }

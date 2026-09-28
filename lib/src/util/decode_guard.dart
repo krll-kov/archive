@@ -26,6 +26,9 @@ bool guardDecode(
     if (error is CallbackFailure) {
       Error.throwWithStackTrace(error.error, error.stackTrace);
     }
+    if (!isDecodeDataError(error)) {
+      rethrow;
+    }
     if (error is ArchivePasswordException) {
       rethrow;
     }
@@ -55,6 +58,20 @@ bool guardDecode(
 
 bool isDecodeCallbackError(Object error) =>
     _activeDecodeContext?.callbackErrors?.contains(error) ?? false;
+
+bool isDecodeDataError(Object error) =>
+    // Yes right now ArchiveException equals FormatException, but somebody
+    // may accidentally change this in future and break everything, and
+    // check is free
+    error is ArchiveException ||
+    // Just in case somebody cancels extending in future updates
+    error is ArchiveChecksumException ||
+    // Can not be here because this one is apart of above scope and should
+    // be thrown regardless of flags
+    // error is ArchivePasswordException ||
+    error is FormatException ||
+    error is RangeError ||
+    error is TypeError;
 
 void invokeDecodeCallback<T>(void Function(T) callback, T value) {
   try {

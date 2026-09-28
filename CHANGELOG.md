@@ -1,11 +1,13 @@
 # 5.0.0
 
 * *BREAKING CHANGE*: All decoders (`XZDecoder`, `TarDecoder`, `ZipDecoder`, `GZipDecoder`, `ZLibDecoder`,
-  `BZip2Decoder` and `ZstdDecoder`) now share the same contract: by default no *damaged data* errors are thrown anymore.
+  `BZip2Decoder` and `ZstdDecoder`) and their wrappers like `extractFileToDisk`, `extractArchiveToDisk`,
+  `extractArchiveToDiskSync` now share the same contract: by default no *damaged data* errors are thrown anymore.
   If error is needed, specify `throwOnError: true` to `decodeBytes` or `decodeStream`. If checksum verification 
   is required, specify `verify: true` (verify also does the same work on top as `throwOnError` along with checksum
   comparison) to `decodeBytes` or `decodeStream`. All `throwOnError` are reported as `ArchiveException` and `verify`
-  checksum exceptions with `ArchiveChecksumException` that extends `ArchiveException`.
+  checksum exceptions with `ArchiveChecksumException` that extends `ArchiveException`. Read README for migration tips
+  and exceptions that are still reported with original type (everything unrelated to damaged data and package code).
 * *BREAKING CHANGE*: Unlike decoders mentioned above, all new converters APIs mentioned beneath use both `verify` and
   `throwOnError` by default due to the specification of their format so that they completely coincide with dart 
   `zlib` and `gzip` transformers.
@@ -14,7 +16,8 @@
   with `throwOnError` for some damaged archives: a gzip whose damaged data decodes longer than its declared size
   passes as a concatenated gzip, a checksum error inside a concatenated gzip is reported as `ArchiveException`, and
   a truncated zlib stream is found only with `verify`, as `ArchiveChecksumException`. `GZipDecoderWeb` and
-  `ZLibDecoderWeb` report all of these.
+  `ZLibDecoderWeb` report all of these. Cut raw deflate stream (`raw: true`) is not found by any flags there,
+  it has no checksum.
 * *BREAKING CHANGE*: Added `writeRange` and `reserve` to `OutputStream`, and `readInto` and `viewBytes` to
   `InputStream`. All four have a default body, so a class that extends them needs no change. A class that implements
   them has to add these methods.
@@ -29,6 +32,11 @@
   bad password case.
 * *BREAKING CHANGE*: `listTarFiles` and `extractTarFiles` now throw an error for a damaged archive instead of
   silently using only its readable part.
+* *BREAKING CHANGE*: `extractFileToDisk` now accepts `verify` and `throwOnError`, `extractArchiveToDisk` and 
+  `extractArchiveToDiskSync` accept `throwOnError`. Without them a damaged or cut archive no longer throws: Complete 
+  entries are extracted, and damaged ones leave no partial files on disk. If these flags are set, the function throws
+  an exception upon encountering the first corrupted entry.
+* *BREAKING CHANGE*: `CompressionType` has a new value, `lzma`, so a switch over it needs a case for it.
 * Multithreaded `XZDecoder` requires `onError` with `verify`, as it already did with `throwOnError`
 * Added Dart async* `StreamTransformer`/`ByteConversionSink`/`Converter` support
   (`xzCodec`, `zstdCodec`, `bzip2Codec`, `tarCodec` and `zipCodec`) for decode and encode (decoders for
@@ -40,6 +48,7 @@
   unpack/decompress and does not leak temporary TAR files on fail.
 * Made CRC32, SHA-256, CRC64 and Adler32 significantly faster and less RAM-consumable on all
   platforms (for `verify: true`).
+* ZipCrypto decryption is 6.6-8.6x faster now: its keys are ints that stay exact on web instead of BigInt.
 * Added `ProgressOutputStream` to monitor progress during unpack.
 * Added usage examples of new apis is package readme file, shrinked amount of docs for `XZDecoder`.
 * Added `XZMultithreadOptions.converter` and `ZstdMultithreadOptions.converter`, the options a
@@ -47,6 +56,7 @@
 * CRC64 for XZDecoder now works both on io and web (dart2-js) (with new `Crc64` class). Old api `isCrc64Supported`
   remained unchanged and still returns false and throws with `getCrc64` on dart2-js.
 * Significantly reduced XZDecoder RAM usage for --x86, crc32, crc64, SHA-256 and default decoding with `decodeStream`.
+* Reduced RAM usage used by `GZipDecoder.decodeBytes` and `ZLibDecoder.decodeBytes` on dart:io 
 * Slightly reduced amount of used RAM by `ZLibDecoder`.
 * Added `blockSize100k` to `BZip2Encoder.encodeBytes` and `encodeStream`
 * Fixed symlinks scopes for `extractFileToDisk` that could overwrite existing file on disk outside of output dir
@@ -61,7 +71,8 @@
 * Fixed `ZipDecoder` decrypting AES and ZipCrypto entries inside the buffer, what corrupted it.
 * Fixed `ZipDecoder` throwing `RangeError` on AES zips whose AES extra field is not the first one.
 * Fixed `XZEncoder` (without compression) writing broken archives for inputs over 104 bytes.
-* Fixed(added) LZMA decoding for `ZipDecoder` and encoding for `ZipEncoder` with `CompressionType.lzma`.
+* Fixed(added) LZMA decoding for `ZipDecoder` and encoding for `ZipEncoder` with `CompressionType.lzma`. Encoder
+  still falls back to DEFLATE, but decoder properly reads lzma data.
 * Fixed `mode` 0 file rights for `ArchiveFile` from `ZipDecoder` created on Windows.
 * Fixed SHA-256 checks for XZDecoder with `verify: true`.
 * Fixed symlinks encoding in `ZipEncoder` and decoding non-ASCII names with macos unzip from archives of this package.
@@ -121,6 +132,10 @@
   method. With `throwOnError` or `verify` reading that entry throws `ArchiveException`, without them it is empty,
   and `extractFileToDisk` skips it and extracts the rest.
 * Fixed an empty zip password encrypting and decrypting entries with an empty key.
+* Fixed ZipDecoder allocating size of a deflate entry over 500 MB, which threw `OutOfMemoryError` for a zip64 entry
+  that claims terabytes.
+* Fixed `listTarFiles` listing a plain .tar as empty, and `listTarFiles` and `extractTarFiles` leaving open files 
+  and temporary folders uncleaned.
 
 # 4.3.0
 

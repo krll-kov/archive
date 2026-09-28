@@ -8,17 +8,17 @@ import 'input_stream.dart';
 import 'output_memory_stream.dart';
 import 'output_stream.dart';
 
-/// A codec that is handed bytes rather than asking for them.
+/// A codec that gets bytes as they arrive.
 ///
 /// The decoders in this package pull: they ask their input for the next field
 /// and the input blocks until it has it. A `Stream` cannot be read that way, so
 /// this turns the loop around. A subclass keeps its position in fields rather
 /// than on the stack, reads whatever has arrived in [step], and returns as soon
-/// as a field is short; the next arrival carries on where it stopped.
+/// as a field is short. The next arrival resumes the parse.
 ///
-/// What the base owns is everything that is not the format: holding what has
-/// arrived and not been read, handing the parse the incoming buffer where
-/// nothing is held, and what a failure means afterwards.
+/// The base handles everything not format-specific: it buffers bytes that
+/// arrived and were not read, passes the incoming buffer to the parse when
+/// nothing is buffered, and decides what a failure means afterwards.
 abstract class ChunkedSink extends ByteConversionSink {
   /// Where the result goes, one piece at a time
   final Sink<List<int>> output;
@@ -315,14 +315,13 @@ class SinkOutputStream extends OutputStream {
     _divert = held;
   }
 
-  /// Small writes are gathered here rather than handed over one at a time: a
-  /// bit writer hands over single bytes, and a sink that is a file or a socket
-  /// pays for every one of them
+  /// Small writes are gathered here before they are sent: a bit writer sends
+  /// single bytes, and a file or socket sink costs a call per write
   final Uint8List _buffer = Uint8List(_streamPiece);
   int _queued = 0;
 
-  /// Folded in as the bytes go past. A check is computed that way without
-  /// holding what it covers
+  /// Called with every piece as it is written, so a checksum is updated
+  /// incrementally without holding the data
   void Function(Uint8List piece)? watch;
 
   void reset() {

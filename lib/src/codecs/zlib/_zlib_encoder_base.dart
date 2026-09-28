@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'dart:typed_data';
+
 import '../../util/input_stream.dart';
+import '../../util/output_memory_stream.dart';
 import '../../util/output_stream.dart';
 
 abstract class ZLibEncoderBase {
@@ -44,4 +47,14 @@ class ZLibOutputSink implements Sink<List<int>> {
 
   @override
   void close() => _output.flush();
+}
+
+Uint8List convertKeepingPartial(Converter<List<int>, List<int>> decoder,
+    List<List<int>> pieces, OutputMemoryStream partial) {
+  final sink = decoder.startChunkedConversion(ZLibOutputSink(partial));
+  for (final piece in pieces) {
+    sink.add(piece);
+  }
+  sink.close();
+  return partial.getBytes();
 }

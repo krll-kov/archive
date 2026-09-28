@@ -23,6 +23,7 @@ class ZLibDecoder {
   ///
   /// On dart:io only `verify` finds a cut stream: `ArchiveChecksumException`.
   /// Over 4 KB of bytes after the stream also read as a wrong checksum there.
+  /// Neither flag finds a cut [raw] stream there: it has no checksum.
   Uint8List decodeBytes(List<int> bytes,
           {bool verify = false, bool raw = false, bool throwOnError = false}) =>
       platformZLibDecoder.decodeBytes(bytes,
@@ -38,6 +39,7 @@ class ZLibDecoder {
   ///
   /// On dart:io only `verify` finds a cut stream: `ArchiveChecksumException`.
   /// Over 4 KB of bytes after the stream also read as a wrong checksum there.
+  /// Neither flag finds a cut [raw] stream there: it has no checksum.
   bool decodeStream(InputStream input, OutputStream output,
           {bool verify = false, bool raw = false, bool throwOnError = false}) =>
       platformZLibDecoder.decodeStream(input, output,

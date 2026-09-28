@@ -13,6 +13,7 @@ import '../codecs/zip_decoder.dart';
 import '../codecs/zstd_decoder.dart';
 import '../util/archive_exception.dart';
 import '../util/codecs_recognizer.dart';
+import '../util/decode_guard.dart';
 import '../util/input_file_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_file_stream.dart';
@@ -92,6 +93,7 @@ void _extractArchiveEntryToDiskSync(
   ArchiveFile entry,
   String filePath, {
   int? bufferSize,
+  bool throwOnError = false,
 }) {
   if (entry.isSymbolicLink) {
     final link = Link(filePath);
@@ -109,7 +111,26 @@ void _extractArchiveEntryToDiskSync(
           } catch (_) {}
           rethrow;
         }
+        if (!isDecodeDataError(err)) {
+          output.closeSync();
+          try {
+            File(filePath).deleteSync();
+          } catch (_) {}
+          rethrow;
+        }
+        if (throwOnError) {
+          output.closeSync();
+          try {
+            File(filePath).deleteSync();
+          } catch (_) {}
+          rethrow;
+        }
         //
+        output.closeSync();
+        try {
+          File(filePath).deleteSync();
+        } catch (_) {}
+        return;
       }
       output.closeSync();
     } else {
@@ -118,23 +139,33 @@ void _extractArchiveEntryToDiskSync(
   }
 }
 
+/// Writes the entries of [archive] into [outputPath]
+///
+/// With [throwOnError] a damaged entry throws `ArchiveException`, without it
+/// the entry is skipped and leaves no file
 void extractArchiveToDiskSync(
   Archive archive,
   String outputPath, {
   int? bufferSize,
+  bool throwOnError = false,
 }) {
   _prepareOutDir(outputPath);
   final realOut = _realPath(outputPath);
   for (final entry in archive) {
     final filePath = _prepareArchiveFilePath(entry, outputPath, realOut);
     if (filePath != null) {
-      _extractArchiveEntryToDiskSync(entry, filePath, bufferSize: bufferSize);
+      _extractArchiveEntryToDiskSync(entry, filePath,
+          bufferSize: bufferSize, throwOnError: throwOnError);
     }
   }
 }
 
+/// Writes the entries of [archive] into [outputPath]
+///
+/// With [throwOnError] a damaged entry throws `ArchiveException`, without it
+/// the entry is skipped and leaves no file
 Future<void> extractArchiveToDisk(Archive archive, String outputPath,
-    {int? bufferSize}) async {
+    {int? bufferSize, bool throwOnError = false}) async {
   final outDir = Directory(outputPath);
   if (!outDir.existsSync()) {
     outDir.createSync(recursive: true);
@@ -181,7 +212,26 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
         } catch (_) {}
         rethrow;
       }
+      if (!isDecodeDataError(err)) {
+        await output.close();
+        try {
+          File(filePath).deleteSync();
+        } catch (_) {}
+        rethrow;
+      }
+      if (throwOnError) {
+        await output.close();
+        try {
+          File(filePath).deleteSync();
+        } catch (_) {}
+        rethrow;
+      }
       //
+      await output.close();
+      try {
+        File(filePath).deleteSync();
+      } catch (_) {}
+      continue;
     }
     await output.close();
   }
@@ -202,8 +252,19 @@ String getInputExtension(String inputPath) {
   return path.extension(lowerPath);
 }
 
+/// Extracts the archive at [inputPath] into [outputPath]
+///
+/// {@macro archive.verify_throw_on_error}
+///
+/// If neither option is specified, damaged or incomplete entries are skipped,
+/// and only complete ones are extracted
 Future<void> extractFileToDisk(String inputPath, String outputPath,
-    {String? password, int? bufferSize, ArchiveCallback? callback}) async {
+    {String? password,
+    int? bufferSize,
+    ArchiveCallback? callback,
+    bool verify = false,
+    bool throwOnError = false}) async {
+  final strict = verify || throwOnError;
   Directory? tempDir;
   var archivePath = inputPath;
 
@@ -257,8 +318,8 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
   }
 
   // Each of these throws where the archive ran out part way through.
-  // Dropping that leaves a truncated tar behind, and the entries that did
-  // arrive are then extracted as if the whole thing had been read
+  // If neither `verify` nor `throwOnError` is set, exceptions are suppressed,
+  // and only complete tar entries are extracted
   Future<void> unwrap(
       bool Function(InputStream input, OutputStream output) decode) async {
     final directory = Directory.systemTemp.createTempSync('dart_archive');
@@ -269,6 +330,10 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
     final output = OutputFileStream(target, bufferSize: bufferSize);
     try {
       decode(input, output);
+    } catch (error) {
+      if (strict || !isDecodeDataError(error)) {
+        rethrow;
+      }
     } finally {
       await input.close();
       await output.close();
@@ -279,17 +344,31 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
   InputStream? toClose;
   try {
     if (recognized == ArchiveFormat.gzip) {
-      await unwrap((input, output) =>
-          GZipDecoder().decodeStream(input, output, throwOnError: true));
+      await unwrap((input, output) => GZipDecoder()
+          .decodeStream(input, output, verify: verify, throwOnError: true));
     } else if (recognized == ArchiveFormat.bzip2) {
-      await unwrap((input, output) =>
-          BZip2Decoder().decodeStream(input, output, throwOnError: true));
+      await unwrap((input, output) => BZip2Decoder()
+          .decodeStream(input, output, verify: verify, throwOnError: true));
     } else if (recognized == ArchiveFormat.xz) {
-      await unwrap((input, output) =>
-          XZDecoder().decodeStream(input, output, throwOnError: true));
+      await unwrap((input, output) => XZDecoder()
+          .decodeStream(input, output, verify: verify, throwOnError: true));
     } else if (recognized == ArchiveFormat.zstd) {
-      await unwrap((input, output) =>
-          ZstdDecoder().decodeStream(input, output, throwOnError: true));
+      await unwrap((input, output) => ZstdDecoder()
+          .decodeStream(input, output, verify: verify, throwOnError: true));
+    }
+
+    final whole = Archive();
+    Object? callbackError;
+    void collect(ArchiveFile file) {
+      whole.add(file);
+      if (callback != null) {
+        try {
+          callback(file);
+        } catch (error) {
+          callbackError = error;
+          rethrow;
+        }
+      }
     }
 
     Archive archive;
@@ -301,13 +380,34 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
       // .sql.gz is extracted as tar entries
       // Truncated tar entry throws before it is written. bsdtar and python
       // tarfile leave partial file on disk, but they report error too
-      archive =
-          TarDecoder().decodeStream(input, verify: true, callback: callback);
+      try {
+        archive =
+            TarDecoder().decodeStream(input, verify: true, callback: collect);
+      } catch (error) {
+        if (strict ||
+            !isDecodeDataError(error) ||
+            identical(error, callbackError)) {
+          rethrow;
+        }
+        archive = whole;
+      }
     } else if (recognized == ArchiveFormat.zip) {
       final input = InputFileStream(archivePath);
       toClose = input;
-      archive = ZipDecoder().decodeStream(input,
-          throwOnError: true, password: password, callback: callback);
+      try {
+        archive = ZipDecoder().decodeStream(input,
+            verify: verify,
+            throwOnError: true,
+            password: password,
+            callback: collect);
+      } catch (error) {
+        if (strict ||
+            !isDecodeDataError(error) ||
+            identical(error, callbackError)) {
+          rethrow;
+        }
+        archive = whole;
+      }
     } else {
       throw ArgumentError.value(
           inputPath, 'inputPath', 'Must end $extensionMsg');
@@ -352,6 +452,12 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
           if (error is ArchivePasswordException) {
             rethrow;
           }
+          if (!isDecodeDataError(error)) {
+            rethrow;
+          }
+          if (strict) {
+            rethrow;
+          }
           continue;
         }
         if (posixSupported) {
@@ -364,9 +470,9 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
 
     await archive.clear();
   } finally {
-    // The temporary tar and the handle on it are this call's, so a failure part
-    // way through takes them with it rather than leaving them in the system
-    // temporary directory
+    // The temporary tar file and its handle are scoped to this call. If an
+    // error occurs midway, they are automatically cleaned up to avoid leaving
+    // orphaned files in the system temp directory
     await toClose?.close();
     final created = tempDir;
     if (created != null) {

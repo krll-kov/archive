@@ -13,7 +13,9 @@ Uint8List _data() {
   final out = Uint8List(5 << 19);
   var seed = 1;
   for (var i = 0; i < out.length; ++i) {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    seed ^= (seed << 13) & 0xffffffff;
+    seed ^= seed >> 17;
+    seed ^= (seed << 5) & 0xffffffff;
     out[i] = 0x61 + (seed >> 16) % 16;
   }
   return out;

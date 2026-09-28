@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../util/decode_guard.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
@@ -14,6 +15,9 @@ class Inflate {
   InputStream? _nextInput;
   OutputStream _output;
   OutputStream? _sink;
+  bool _finished = false;
+
+  bool get isFinished => _finished;
 
   /// Decompress the given [bytes].
   /// If [output] is provided, the decompressed data will be written to that,
@@ -93,6 +97,9 @@ class Inflate {
       // If it didn't finish reading the block, it will have thrown an exception
       _blockPos = 0;
     } catch (e) {
+      if (!isDecodeDataError(e)) {
+        rethrow;
+      }
       return false;
     }
 
@@ -180,6 +187,10 @@ class Inflate {
         break;
       default:
         return false;
+    }
+
+    if (finalBlock) {
+      _finished = true;
     }
 
     // Continue while not the final block

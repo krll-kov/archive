@@ -14,24 +14,36 @@ void listTarFiles(String path) {
   final dir = Directory.systemTemp.createTempSync('foo');
   final tempTarPath = '${dir.path}${Platform.pathSeparator}temp.tar';
   final output = OutputFileStream(tempTarPath);
+  InputFileStream? tarInput;
+  try {
+    var tarPath = path;
 
-  //List<int> data = file.readAsBytesSync();
-  if (path.endsWith('tar.gz') || path.endsWith('tgz')) {
-    GZipDecoder().decodeStream(input, output, throwOnError: true);
-  } else if (path.endsWith('tar.bz2') || path.endsWith('tbz')) {
-    BZip2Decoder().decodeStream(input, output, throwOnError: true);
-  }
+    //List<int> data = file.readAsBytesSync();
+    if (path.endsWith('tar.gz') || path.endsWith('tgz')) {
+      GZipDecoder().decodeStream(input, output, throwOnError: true);
+      tarPath = tempTarPath;
+    } else if (path.endsWith('tar.bz2') || path.endsWith('tbz')) {
+      BZip2Decoder().decodeStream(input, output, throwOnError: true);
+      tarPath = tempTarPath;
+    }
+    output.closeSync();
 
-  final tarInput = InputFileStream(tempTarPath);
+    tarInput = InputFileStream(tarPath);
 
-  final tarArchive = TarDecoder();
-  // Tell the decoder not to store the actual file data since we don't need
-  // it.
-  tarArchive.decodeStream(tarInput, throwOnError: true, storeData: false);
+    final tarArchive = TarDecoder();
+    // Tell the decoder not to store the actual file data since we don't need
+    // it.
+    tarArchive.decodeStream(tarInput, throwOnError: true, storeData: false);
 
-  print('${tarArchive.files.length} file(s)');
-  for (final f in tarArchive.files) {
-    print('  $f');
+    print('${tarArchive.files.length} file(s)');
+    for (final f in tarArchive.files) {
+      print('  $f');
+    }
+  } finally {
+    input.closeSync();
+    output.closeSync();
+    tarInput?.closeSync();
+    dir.deleteSync(recursive: true);
   }
 }
 
@@ -40,44 +52,54 @@ Directory extractTarFiles(String inputPath, String outputPath) {
   Directory? tempDir;
   var tarPath = inputPath;
 
-  if (inputPath.endsWith('tar.gz') || inputPath.endsWith('tgz')) {
-    tempDir = Directory.systemTemp.createTempSync('dart_archive');
-    tarPath = '${tempDir.path}${Platform.pathSeparator}temp.tar';
-    final input = InputFileStream(inputPath);
-    final tarOutput = OutputFileStream(tarPath);
-    GZipDecoder().decodeStream(input, tarOutput, throwOnError: true);
-    input.closeSync();
-    tarOutput.closeSync();
-  }
-
-  final outDir = Directory(outputPath);
-  if (!outDir.existsSync()) {
-    outDir.createSync(recursive: true);
-  }
-
-  final input = InputFileStream(tarPath);
-  final tarArchive = TarDecoder().decodeStream(input, throwOnError: true);
-
-  for (final entry in tarArchive) {
-    final path = '$outputPath${Platform.pathSeparator}${entry.name}';
-    if (entry.isDirectory) {
-      Directory(path).createSync(recursive: true);
-    } else {
-      final output = OutputFileStream(path);
-      entry.writeContent(output);
-      print('  extracted ${path}');
-      output.closeSync();
+  try {
+    if (inputPath.endsWith('tar.gz') || inputPath.endsWith('tgz')) {
+      tempDir = Directory.systemTemp.createTempSync('dart_archive');
+      tarPath = '${tempDir.path}${Platform.pathSeparator}temp.tar';
+      final input = InputFileStream(inputPath);
+      final tarOutput = OutputFileStream(tarPath);
+      try {
+        GZipDecoder().decodeStream(input, tarOutput, throwOnError: true);
+      } finally {
+        input.closeSync();
+        tarOutput.closeSync();
+      }
     }
+
+    final outDir = Directory(outputPath);
+    if (!outDir.existsSync()) {
+      outDir.createSync(recursive: true);
+    }
+
+    final input = InputFileStream(tarPath);
+    try {
+      final tarArchive = TarDecoder().decodeStream(input, throwOnError: true);
+
+      for (final entry in tarArchive) {
+        final path = '$outputPath${Platform.pathSeparator}${entry.name}';
+        if (entry.isDirectory) {
+          Directory(path).createSync(recursive: true);
+        } else {
+          final output = OutputFileStream(path);
+          try {
+            entry.writeContent(output);
+            print('  extracted ${path}');
+          } finally {
+            output.closeSync();
+          }
+        }
+      }
+
+      input.closeSync();
+      tarArchive.clearSync();
+    } finally {
+      input.closeSync();
+    }
+
+    return outDir;
+  } finally {
+    tempDir?.deleteSync(recursive: true);
   }
-
-  input.closeSync();
-  tarArchive.clearSync();
-
-  /*if (tempDir != null) {
-    tempDir.delete(recursive: true);
-  }*/
-
-  return outDir;
 }
 
 Future<void> createTarFile(String dirPath) async {

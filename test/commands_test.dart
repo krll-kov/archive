@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
@@ -13,6 +14,54 @@ void main() {
   test('bin/tar.dart list test2.tar.gz2', () {
     // Test that 'tar --list' does not throw.
     listTarFiles('test/_data/test2.tar.bz2');
+  });
+
+  List<String> printed(void Function() body) {
+    final lines = <String>[];
+    runZoned(body,
+        zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => lines.add(line)));
+    return lines;
+  }
+
+  test('list reads a plain tar as well', () {
+    expect(printed(() => listTarFiles('test/_data/test2.tar')),
+        printed(() => listTarFiles('test/_data/test2.tar.gz')));
+  });
+
+  test('list and extract leave no temporary folder', () {
+    final temp = Directory.systemTemp.createTempSync('commands_temp');
+    final out = Directory.systemTemp.createTempSync('commands_out');
+    addTearDown(() {
+      temp.deleteSync(recursive: true);
+      out.deleteSync(recursive: true);
+    });
+    IOOverrides.runZoned(() {
+      printed(() {
+        listTarFiles('test/_data/test2.tar.gz');
+        listTarFiles('test/_data/test2.tar.bz2');
+        extractTarFiles('test/_data/test2.tar.gz', out.path);
+      });
+    }, getSystemTempDirectory: () => temp);
+    expect(temp.listSync(), isEmpty);
+  });
+
+  test('extract of a damaged tar.gz throws and leaves no temporary folder', () {
+    final temp = Directory.systemTemp.createTempSync('commands_temp');
+    final out = Directory.systemTemp.createTempSync('commands_out');
+    addTearDown(() {
+      temp.deleteSync(recursive: true);
+      out.deleteSync(recursive: true);
+    });
+    final whole = File('test/_data/test2.tar.gz').readAsBytesSync();
+    final damaged = File(p.join(temp.path, 'damaged.tar.gz'))
+      ..writeAsBytesSync(whole.sublist(0, whole.length ~/ 2));
+    IOOverrides.runZoned(() {
+      expect(() => printed(() => extractTarFiles(damaged.path, out.path)),
+          throwsA(isA<ArchiveException>()));
+    }, getSystemTempDirectory: () => temp);
+    damaged.deleteSync();
+    expect(temp.listSync(), isEmpty);
   });
 
   test('tar extract', () {

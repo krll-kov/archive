@@ -1,13 +1,13 @@
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
 import 'zstd_constants.dart';
 import 'zstd_dictionary.dart';
 import 'zstd_huffman.dart';
 import 'zstd_huffman_loop.dart';
 
-class ZstdLiteralsException implements Exception {
-  final String message;
-  ZstdLiteralsException(this.message);
+class ZstdLiteralsException extends ArchiveException {
+  ZstdLiteralsException(super.message);
   @override
   String toString() => 'ZstdLiteralsException: $message';
 }

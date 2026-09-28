@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
 import 'zstd_constants.dart';
 import 'zstd_dictionary.dart';
 import 'zstd_fse.dart';
@@ -7,9 +8,8 @@ import 'zstd_fse_predefined.dart';
 import 'zstd_literals.dart';
 import 'zstd_window.dart';
 
-class ZstdSequencesException implements Exception {
-  final String message;
-  ZstdSequencesException(this.message);
+class ZstdSequencesException extends ArchiveException {
+  ZstdSequencesException(super.message);
   @override
   String toString() => 'ZstdSequencesException: $message';
 }

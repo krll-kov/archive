@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -431,6 +432,87 @@ void main() {
         final padded = Uint8List.fromList([...zlib, 0, 0, 0, 0]);
         expect(const ZLibDecoderWeb().decodeBytes(padded), data);
         expect(const ZLibDecoder().decodeBytes(padded), data);
+      });
+
+      test('web decoders refuse a cut stream read from a file', () {
+        for (final (decoder, whole) in [
+          (const GZipDecoderWeb(), gzip),
+          (const ZLibDecoderWeb(), zlib),
+        ]) {
+          for (final cut in [whole.length ~/ 2, whole.length - 1]) {
+            final path = '$testOutputPath/cut_${decoder.runtimeType}_$cut.bin';
+            File(path).writeAsBytesSync(Uint8List.sublistView(whole, 0, cut));
+            final input = InputFileStream(path);
+            try {
+              expect(
+                  () => decoder.decodeStream(input, OutputMemoryStream(),
+                      throwOnError: true),
+                  throwsA(allOf(isA<ArchiveException>(),
+                      isNot(isA<ArchiveChecksumException>()))),
+                  reason: '$decoder cut at $cut');
+            } finally {
+              input.closeSync();
+            }
+          }
+        }
+      });
+
+      test('zlib web refuses a cut raw stream with either flag', () {
+        final raw = Deflate(data).getBytes();
+        expect(const ZLibDecoderWeb().decodeBytes(raw, raw: true, verify: true),
+            data);
+        for (final cut in [0, raw.length ~/ 2]) {
+          final bad = Uint8List.sublistView(raw, 0, cut);
+          for (final (v, t) in [(true, false), (false, true)]) {
+            expect(
+                () => const ZLibDecoderWeb()
+                    .decodeBytes(bad, raw: true, verify: v, throwOnError: t),
+                throwsA(isA<ArchiveException>()),
+                reason: 'cut at $cut, verify $v, throwOnError $t');
+          }
+        }
+      });
+
+      test('without flags decodeBytes returns what decodeStream writes', () {
+        final padded = Uint8List.fromList([...gzip, ...Uint8List(600)]);
+        final output = OutputMemoryStream();
+        expect(
+            const GZipDecoder().decodeStream(InputMemoryStream(padded), output),
+            isFalse);
+        expect(output.getBytes(), data);
+        expect(const GZipDecoder().decodeBytes(padded), output.getBytes());
+      });
+
+      test('verify finds a wrong gzip checksum through decodeBytes', () {
+        final damaged = Uint8List.fromList(gzip)..[gzip.length - 8] ^= 0xff;
+        expect(() => const GZipDecoder().decodeBytes(damaged, verify: true),
+            throwsA(isA<ArchiveChecksumException>()));
+      });
+
+      test('without flags zlib decodeBytes keeps what decoded before damage',
+          () {
+        final random = Random(3);
+        final text = Uint8List.fromList(
+            List.generate(300000, (_) => random.nextInt(16) + 97));
+        final packed = Uint8List.fromList(ZLibEncoder().encodeBytes(text));
+        for (var at = packed.length ~/ 2; at < packed.length - 4; at += 997) {
+          final damaged = Uint8List.fromList(packed)..[at] ^= 0xff;
+          final output = OutputMemoryStream();
+          if (const ZLibDecoder()
+                  .decodeStream(InputMemoryStream(damaged), output) ||
+              output.length == 0) {
+            continue;
+          }
+          final bytes = const ZLibDecoder().decodeBytes(damaged);
+          final streamed = output.getBytes();
+          final common = min(bytes.length, streamed.length);
+          expect(bytes, isNotEmpty, reason: 'damage at $at');
+          expect(Uint8List.sublistView(bytes, 0, common),
+              Uint8List.sublistView(streamed, 0, common),
+              reason: 'damage at $at');
+          return;
+        }
+        fail('no damage made the stream fail after some output');
       });
 
       test('zlib web ignores bytes after a whole stream with either flag', () {

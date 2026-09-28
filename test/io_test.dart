@@ -754,12 +754,20 @@ void main() {
     final input = File('${directory.path}/dump.sql.gz')
       ..writeAsBytesSync(GZipEncoder().encodeBytes(text));
     final output = '${directory.path}/out';
-    await expectLater(extractFileToDisk(input.path, output),
+    await expectLater(extractFileToDisk(input.path, output, throwOnError: true),
         throwsA(isA<ArchiveException>()));
     final left = Directory(output).existsSync()
         ? Directory(output).listSync()
         : <FileSystemEntity>[];
     expect(left, isEmpty);
+
+    final lenient = '${directory.path}/lenient';
+    await extractFileToDisk(input.path, lenient);
+    expect(
+        Directory(lenient).existsSync()
+            ? Directory(lenient).listSync()
+            : <FileSystemEntity>[],
+        isEmpty);
   });
 
   test('extractFileToDisk rejects a truncated tar.zst frame', () async {
@@ -786,8 +794,14 @@ void main() {
     expect(TarDecoder().decodeBytes(partial.getBytes()).length, 1);
     input.writeAsBytesSync(truncated);
     await expectLater(
-        extractFileToDisk(input.path, '${directory.path}/truncated'),
+        extractFileToDisk(input.path, '${directory.path}/truncated',
+            throwOnError: true),
         throwsA(isA<ArchiveException>()));
+
+    final lenient = '${directory.path}/lenient';
+    await extractFileToDisk(input.path, lenient);
+    expect(File('$lenient/first.bin').readAsBytesSync(), [1, 2, 3]);
+    expect(File('$lenient/second.bin').existsSync(), isFalse);
   });
 
   // pbzip2 writes one bzip2 stream per block and bzip2 -d reads them all
@@ -816,8 +830,14 @@ void main() {
         isFalse);
     input.writeAsBytesSync(truncated);
     await expectLater(
-        extractFileToDisk(input.path, '${directory.path}/truncated'),
+        extractFileToDisk(input.path, '${directory.path}/truncated',
+            throwOnError: true),
         throwsA(isA<ArchiveException>()));
+
+    final lenient = '${directory.path}/lenient';
+    await extractFileToDisk(input.path, lenient);
+    expect(File('$lenient/first.bin').readAsBytesSync(), [1, 2, 3]);
+    expect(File('$lenient/second.bin').readAsBytesSync(), [4, 5, 6]);
   });
 
   test('extractFileToDisk removes temporary tar files after rejection',
@@ -832,8 +852,12 @@ void main() {
 
     await IOOverrides.runZoned(() async {
       await expectLater(
-          extractFileToDisk(input.path, '${directory.path}/output'),
+          extractFileToDisk(input.path, '${directory.path}/output',
+              throwOnError: true),
           throwsA(isA<ArchiveException>()));
+      expect(scratch.listSync(), isEmpty);
+
+      await extractFileToDisk(input.path, '${directory.path}/lenient');
       expect(scratch.listSync(), isEmpty);
     }, getSystemTempDirectory: () => scratch);
   });
@@ -1144,6 +1168,238 @@ void main() {
       final out = p.join(directory.path, 'out');
       await extractFileToDisk(input.path, out);
       expect(File(p.join(out, 'b.bin')).existsSync(), isFalse);
+
+      final strict = p.join(directory.path, 'strict');
+      await expectLater(
+          extractFileToDisk(input.path, strict, throwOnError: true),
+          throwsA(isA<ArchiveException>()));
+      expect(File(p.join(strict, 'b.bin')).existsSync(), isFalse);
+
+      final archive = ZipDecoder().decodeBytes(zip, throwOnError: true);
+      for (final sync in [false, true]) {
+        final lenient = p.join(directory.path, 'lenient_$sync');
+        final thrown = p.join(directory.path, 'thrown_$sync');
+        if (sync) {
+          extractArchiveToDiskSync(archive, lenient);
+          expect(
+              () =>
+                  extractArchiveToDiskSync(archive, thrown, throwOnError: true),
+              throwsA(isA<ArchiveException>()));
+        } else {
+          await extractArchiveToDisk(archive, lenient);
+          await expectLater(
+              extractArchiveToDisk(archive, thrown, throwOnError: true),
+              throwsA(isA<ArchiveException>()));
+        }
+        expect(File(p.join(thrown, 'b.bin')).existsSync(), isFalse,
+            reason: 'sync $sync');
+        expect(File(p.join(lenient, 'b.bin')).existsSync(), isFalse,
+            reason: 'sync $sync');
+      }
+    });
+
+    test('verify finds a wrong CRC that extraction otherwise accepts',
+        () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final zip = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('s.bin', content())
+          ..compression = CompressionType.none));
+      const localHeader = 30;
+      zip[localHeader + 's.bin'.length + 100] ^= 0x55;
+      final input = File(p.join(directory.path, 'crc.zip'))
+        ..writeAsBytesSync(zip);
+
+      final out = p.join(directory.path, 'out');
+      await extractFileToDisk(input.path, out);
+      expect(File(p.join(out, 's.bin')).lengthSync(), content().length);
+
+      final checked = p.join(directory.path, 'checked');
+      await expectLater(extractFileToDisk(input.path, checked, verify: true),
+          throwsA(isA<ArchiveChecksumException>()));
+      expect(File(p.join(checked, 's.bin')).existsSync(), isFalse);
+    });
+
+    test('verify checks the checksum of the tar container', () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final packed = GZipEncoder().encodeBytes(TarEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.bytes('t.bin', content()))));
+      packed[packed.length - 8] ^= 0xff;
+      final input = File(p.join(directory.path, 'crc.tar.gz'))
+        ..writeAsBytesSync(packed);
+
+      final out = p.join(directory.path, 'out');
+      await extractFileToDisk(input.path, out);
+      expect(File(p.join(out, 't.bin')).readAsBytesSync(), content());
+
+      await expectLater(
+          extractFileToDisk(input.path, p.join(directory.path, 'checked'),
+              verify: true),
+          throwsA(isA<ArchiveChecksumException>()));
+    });
+
+    test('a callback error is never taken for damage', () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final input = File(p.join(directory.path, 'a.tar'))
+        ..writeAsBytesSync(TarEncoder()
+            .encodeBytes(Archive()..add(ArchiveFile.bytes('a', content()))));
+      const failure = FormatException('from the callback');
+      await expectLater(
+          extractFileToDisk(input.path, p.join(directory.path, 'out'),
+              callback: (_) => throw failure),
+          throwsA(same(failure)));
+    });
+
+    test('a damaged central directory extracts nothing without flags',
+        () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final zip = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('one.bin', content()))
+        ..add(ArchiveFile.bytes('two.bin', content())));
+      final bytes = ByteData.sublistView(zip);
+      var second = -1;
+      for (var at = zip.length - 4, seen = 0; at >= 0; at--) {
+        if (bytes.getUint32(at, Endian.little) == 0x02014b50 && ++seen == 1) {
+          second = at;
+          break;
+        }
+      }
+      expect(second, greaterThan(0));
+      zip[second] ^= 0xff;
+      final input = File(p.join(directory.path, 'dir.zip'))
+        ..writeAsBytesSync(zip);
+
+      await expectLater(
+          extractFileToDisk(input.path, p.join(directory.path, 'strict'),
+              throwOnError: true),
+          throwsA(isA<ArchiveException>()));
+      final out = p.join(directory.path, 'out');
+      await extractFileToDisk(input.path, out);
+      expect(
+          Directory(out).existsSync()
+              ? Directory(out).listSync()
+              : <FileSystemEntity>[],
+          isEmpty);
     });
   });
+
+  group('extraction and a write that fails', () {
+    for (final method in ['sync', 'async']) {
+      test('$method passes the error through and leaves no file', () async {
+        final directory =
+            Directory.systemTemp.createTempSync('archive-extract-');
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final archive = Archive()
+          ..add(ArchiveFile.file('a.bin', 10, _DiskFullContent()));
+        final out = p.join(directory.path, 'out');
+        Future<void> run() async => method == 'sync'
+            ? extractArchiveToDiskSync(archive, out)
+            : await extractArchiveToDisk(archive, out);
+        await expectLater(run(), throwsA(isA<FileSystemException>()));
+        expect(File(p.join(out, 'a.bin')).existsSync(), isFalse);
+      });
+    }
+
+    test('extractFileToDisk passes the error through and leaves no file',
+        () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final input = File(p.join(directory.path, 'a.zip'))
+        ..writeAsBytesSync(ZipEncoder().encodeBytes(
+            Archive()..add(ArchiveFile.bytes('a.bin', Uint8List(100000)))));
+      final out = p.join(directory.path, 'out');
+      final target = p.join(out, 'a.bin');
+      await IOOverrides.runWithIOOverrides(() async {
+        await expectLater(extractFileToDisk(input.path, out),
+            throwsA(isA<FileSystemException>()));
+      }, _FullDiskIO(target));
+      expect(File(target).existsSync(), isFalse);
+    });
+  });
+}
+
+class _DiskFullContent extends FileContent {
+  static const _failure = FileSystemException('No space left on device');
+
+  @override
+  int get length => 10;
+
+  @override
+  InputStream getStream({bool decompress = true}) => throw _failure;
+
+  @override
+  void write(OutputStream output) => throw _failure;
+
+  @override
+  Future<void> close() async {}
+
+  @override
+  void closeSync() {}
+}
+
+final class _FullDiskIO extends IOOverrides {
+  final String target;
+
+  _FullDiskIO(this.target);
+
+  @override
+  File createFile(String path) {
+    final real = super.createFile(path);
+    return p.equals(path, target) ? _FullDiskFile(real) : real;
+  }
+}
+
+class _FullDiskFile implements File {
+  final File _real;
+
+  _FullDiskFile(this._real);
+
+  @override
+  String get path => _real.path;
+
+  @override
+  void createSync({bool recursive = false, bool exclusive = false}) =>
+      _real.createSync(recursive: recursive, exclusive: exclusive);
+
+  @override
+  RandomAccessFile openSync({FileMode mode = FileMode.read}) =>
+      _FullDiskAccess(_real.openSync(mode: mode));
+
+  @override
+  void deleteSync({bool recursive = false}) =>
+      _real.deleteSync(recursive: recursive);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FullDiskAccess implements RandomAccessFile {
+  final RandomAccessFile _real;
+
+  _FullDiskAccess(this._real);
+
+  @override
+  String get path => _real.path;
+
+  @override
+  int lengthSync() => _real.lengthSync();
+
+  @override
+  void setPositionSync(int position) => _real.setPositionSync(position);
+
+  @override
+  void writeFromSync(List<int> buffer, [int start = 0, int? end]) =>
+      throw FileSystemException('No space left on device', path);
+
+  @override
+  void closeSync() => _real.closeSync();
+
+  @override
+  Future<void> close() => _real.close();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

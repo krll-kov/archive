@@ -8,9 +8,8 @@ import 'zstd_constants.dart';
 import 'zstd_dictionary.dart';
 import 'zstd_window.dart';
 
-class ZstdFrameException implements Exception {
-  final String message;
-  ZstdFrameException(this.message);
+class ZstdFrameException extends ArchiveException {
+  ZstdFrameException(super.message);
   @override
   String toString() => 'ZstdFrameException: $message';
 }

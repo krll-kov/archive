@@ -7,7 +7,7 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:archive/src/codecs/bcj_x86.dart';
 import 'package:archive/src/codecs/xz/_xz_parallel_io.dart'
-    show xzDecodeMultithreaded;
+    show xzDecodeJob, xzDecodeMultithreaded, xzKindBlock;
 import 'package:archive/src/codecs/xz/xz_index.dart';
 import 'package:archive/src/codecs/xz/xz_stream_decoder.dart'
     show xzStagingSize;
@@ -528,6 +528,60 @@ void main() {
             threaded.closeSync();
           }
         }
+      });
+
+      test('a file gone before the workers open it keeps its error', () async {
+        final dir = Directory.systemTemp.createTempSync('xz_gone');
+        addTearDown(() => dir.deleteSync(recursive: true));
+        final path = '${dir.path}/a.xz';
+        File(path).writeAsBytesSync(pristine);
+        final input = InputFileStream(path);
+        addTearDown(input.closeSync);
+        final result = Completer<Object?>();
+        XZDecoder().decodeStream(input, OutputMemoryStream(),
+            multithread: XZMultithreadOptions<bool>(
+              onDone: (r) => result.complete(r),
+              onError: (e, _) => result.complete(e),
+              workers: 2,
+            ));
+        File(path).deleteSync();
+        expect(await result.future.timeout(const Duration(seconds: 10)),
+            isA<FileSystemException>());
+      }, testOn: '!windows');
+
+      group('an error of the input in a worker job', () {
+        final archive = XZEncoder().encodeBytes(Uint8List(1000));
+        final block = parseXZLayout(XZMemorySource(archive))!.blocks.single;
+        final bytes = Uint8List.sublistView(archive, block.compressedOffset,
+            block.compressedOffset + block.compressedLength);
+
+        ({bool ok, String? reason}) decode(
+                InputStream input, void Function() onPiece) =>
+            xzDecodeJob(
+                kind: xzKindBlock,
+                input: input,
+                data: null,
+                length: bytes.length,
+                streamFlags: block.streamFlags,
+                verify: true,
+                maxPreallocateSize: 1 << 20,
+                outputOffset: 0,
+                uncompressedLength: block.uncompressedLength,
+                unpaddedLength: null,
+                onPiece: (_, __) => onPiece());
+
+        test('keeps its type while the block decodes', () {
+          final failure = _ReadFailure();
+          final input = _FailingInput(bytes, failure)..armed = true;
+          expect(() => decode(input, () {}), throwsA(same(failure)));
+        });
+
+        test('keeps its type while the check field is read', () {
+          final failure = _ReadFailure();
+          final input = _FailingInput(bytes, failure,
+              seekTo: bytes.length - xzCheckSize(block.streamFlags & 0xf));
+          expect(() => decode(input, () {}), throwsA(same(failure)));
+        });
       });
 
       test('a range coder that does not start at zero is refused on workers',
@@ -1920,4 +1974,54 @@ class BytesBuilderSink implements Sink<List<int>> {
 
   @override
   void close() {}
+}
+
+class _ReadFailure implements Exception {}
+
+class _FailingInput extends InputMemoryStream {
+  final Object failure;
+  final int? seekTo;
+  var armed = false;
+
+  _FailingInput(super.bytes, this.failure, {this.seekTo});
+
+  void _fail() {
+    if (armed) {
+      throw failure;
+    }
+  }
+
+  void _failRead() {
+    if (seekTo == null) {
+      _fail();
+    }
+  }
+
+  @override
+  InputStream peekBytes(int count, {int offset = 0}) {
+    _failRead();
+    return super.peekBytes(count, offset: offset);
+  }
+
+  @override
+  int readByte() {
+    _failRead();
+    return super.readByte();
+  }
+
+  @override
+  InputStream readBytes(int count) {
+    _failRead();
+    return super.readBytes(count);
+  }
+
+  @override
+  void setPosition(int v) {
+    if (seekTo == null) {
+      _fail();
+    } else if (v == seekTo) {
+      throw failure;
+    }
+    super.setPosition(v);
+  }
 }

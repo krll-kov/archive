@@ -426,6 +426,22 @@ void main() {
         isFalse);
     expect(output.getBytes(), _source);
   });
+
+  test('damaged literals count as damaged data', () {
+    final source = Uint8List.fromList(List.generate(
+        5000,
+        (i) =>
+            'zstd literals need a varied alphabet '.codeUnitAt(i % 37) ^
+            i ~/ 331));
+    final damaged = Uint8List.fromList(const ZstdEncoder().encodeBytes(source))
+      ..[8] = 0;
+    expect(() => ZstdDecoder().decodeBytes(damaged), returnsNormally);
+    expect(
+        () => ZstdDecoder().decodeBytes(damaged, throwOnError: true),
+        throwsA(predicate((error) =>
+            error is ArchiveException &&
+            '$error'.startsWith('ZstdLiteralsException'))));
+  });
 }
 
 /// The fixture frame rewritten to declare [size] bytes of content, which is a

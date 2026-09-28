@@ -45,7 +45,7 @@ class _ZLibDecoder extends ZLibDecoderBase {
   bool _decode(InputStream input, OutputStream output, bool verify, bool raw) {
     Uint8List? buffer;
 
-    if (!raw && input.isEOS) {
+    if (input.isEOS) {
       return false;
     }
 
@@ -105,10 +105,18 @@ class _ZLibDecoder extends ZLibDecoderBase {
       }
 
       // Inflate
-      buffer = Inflate.stream(input).getBytes();
+      final inflate = Inflate.stream(input);
+      buffer = inflate.getBytes();
+      if (raw && !inflate.isFinished) {
+        output.writeBytes(buffer);
+        return false;
+      }
 
       // verify adler-32
       if (!raw) {
+        if (input.length < 4) {
+          return false;
+        }
         final adler32 = input.readUint32();
         if (verify) {
           final a = getAdler32(buffer);

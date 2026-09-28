@@ -1,6 +1,12 @@
-import 'package:archive/src/util/archive_exception.dart';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:archive/archive.dart';
 import 'package:archive/src/util/decode_guard.dart';
 import 'package:test/test.dart';
+
+typedef _Decode = bool Function(InputStream, OutputStream,
+    {bool verify, bool throwOnError});
 
 void main() {
   bool fails() => false;
@@ -32,6 +38,13 @@ void main() {
     }
   });
 
+  test('a failed null check counts as damaged data', () {
+    bool nullCheck() => throw TypeError();
+    expect(guardDecode('x', false, false, nullCheck), isFalse);
+    expect(() => guardDecode('x', false, true, nullCheck), throwsA(plain));
+    expect(() => guardDecode('x', true, false, nullCheck), throwsA(plain));
+  });
+
   test('throwIfStrict follows the rules of guardDecode', () {
     String outcome(void Function() f) {
       try {
@@ -61,4 +74,109 @@ void main() {
       }
     }
   });
+
+  group('an error of the output stream', () {
+    final data = Uint8List.fromList(List.generate(5000, (i) => i * 7 % 251));
+    final decoders = <String, (List<int>, _Decode)>{
+      'gzip': (
+        GZipEncoder().encodeBytes(data),
+        const GZipDecoder().decodeStream
+      ),
+      'gzip web': (
+        GZipEncoder().encodeBytes(data),
+        const GZipDecoderWeb().decodeStream
+      ),
+      'zlib': (
+        ZLibEncoder().encodeBytes(data),
+        const ZLibDecoder().decodeStream
+      ),
+      'zlib web': (
+        ZLibEncoder().encodeBytes(data),
+        const ZLibDecoderWeb().decodeStream
+      ),
+      'bzip2': (BZip2Encoder().encodeBytes(data), BZip2Decoder().decodeStream),
+      'xz': (XZEncoder().encodeBytes(data), XZDecoder().decodeStream),
+      'zstd': (
+        const ZstdEncoder().encodeBytes(data),
+        ZstdDecoder().decodeStream
+      ),
+    };
+    final zip = ZipEncoder()
+        .encodeBytes(Archive()..add(ArchiveFile.bytes('a.bin', data)));
+
+    for (final (verify, throwOnError) in [
+      (false, false),
+      (false, true),
+      (true, false)
+    ]) {
+      final flags = 'verify $verify, throwOnError $throwOnError';
+      for (final MapEntry(key: name, value: (packed, decode))
+          in decoders.entries) {
+        test('$name reaches the caller unchanged with $flags', () {
+          final failure = _DiskFull();
+          expect(
+              () => decode(InputMemoryStream(packed), _FullOutput(failure),
+                  verify: verify, throwOnError: throwOnError),
+              throwsA(same(failure)));
+        });
+      }
+
+      test('a zip entry reaches the caller unchanged with $flags', () {
+        final failure = _DiskFull();
+        final entry = ZipDecoder()
+            .decodeBytes(zip, verify: verify, throwOnError: throwOnError)
+            .files
+            .single;
+        expect(() => entry.writeContent(_FullOutput(failure)),
+            throwsA(same(failure)));
+      });
+
+      test('a zip LZMA entry reaches the caller unchanged with $flags', () {
+        final failure = _DiskFull();
+        final entry = ZipDecoder()
+            .decodeBytes(File('test/_data/zip/lzma_near.zip').readAsBytesSync(),
+                verify: verify, throwOnError: throwOnError)
+            .files
+            .firstWhere((file) => file.isFile);
+        expect(() => entry.writeContent(_FullOutput(failure)),
+            throwsA(same(failure)));
+      });
+    }
+
+    test('Inflate.addBytes lets it through', () {
+      final failure = _DiskFull();
+      final inflate = Inflate.stream(null, output: _FullOutput(failure));
+      expect(() => inflate.addBytes(Deflate(data).getBytes()),
+          throwsA(same(failure)));
+    });
+  });
+}
+
+class _DiskFull implements Exception {}
+
+class _FullOutput extends OutputStream {
+  final Object failure;
+
+  _FullOutput(this.failure) : super(byteOrder: ByteOrder.littleEndian);
+
+  @override
+  int get length => 0;
+
+  @override
+  void clear() {}
+
+  @override
+  void flush() {}
+
+  @override
+  void writeByte(int value) => throw failure;
+
+  @override
+  void writeBytes(List<int> bytes, {int? length}) => throw failure;
+
+  @override
+  void writeStream(InputStream stream) => throw failure;
+
+  @override
+  Uint8List subset(int start, [int? end]) => Uint8List(0);
 }

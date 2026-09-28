@@ -6,6 +6,7 @@ import '../../util/adler32.dart';
 import '../../util/archive_exception.dart';
 import '../../util/decode_guard.dart';
 import '../../util/input_stream.dart';
+import '../../util/output_memory_stream.dart';
 import '../../util/output_stream.dart';
 import '_zlib_decoder_base.dart';
 import '_zlib_encoder_base.dart';
@@ -20,15 +21,17 @@ class _ZLibDecoder extends ZLibDecoderBase {
   Uint8List decodeBytes(List<int> data,
       {bool verify = false, bool raw = false, bool throwOnError = false}) {
     var out = Uint8List(0);
+    final partial = OutputMemoryStream();
     guardDecode('zlib', verify, throwOnError, () {
       final bytes = data is Uint8List ? data : Uint8List.fromList(data);
       final trailerLength = raw ? 0 : 4;
       if (!raw && bytes.length < trailerLength + 2) {
         return false;
       }
-      out = ZLibCodec(raw: raw).decode(
-              Uint8List.sublistView(bytes, 0, bytes.length - trailerLength))
-          as Uint8List;
+      out = convertKeepingPartial(
+          ZLibCodec(raw: raw).decoder,
+          [Uint8List.sublistView(bytes, 0, bytes.length - trailerLength)],
+          partial);
       if (verify && !raw) {
         checkZlibAdler(
             Uint8List.sublistView(
@@ -37,6 +40,9 @@ class _ZLibDecoder extends ZLibDecoderBase {
       }
       return true;
     });
+    if (partial.length > 0) {
+      out = partial.getBytes();
+    }
     return out;
   }
 

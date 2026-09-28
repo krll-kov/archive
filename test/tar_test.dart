@@ -409,7 +409,7 @@ void main() {
       expect(await both(entry(link, ascii.encode('a' * 120), mode: 0)),
           ['././@LongLink=${'a' * 120}']);
 
-      final long = 'a${'п' * 70}.txt';
+      final long = 'a${'ä' * 70}.txt';
       final encoded = utf8.encode(long);
       expect(
           await both([

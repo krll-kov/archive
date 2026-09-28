@@ -1,14 +1,14 @@
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
 import 'zstd_constants.dart';
 import 'zstd_dictionary.dart';
 import 'zstd_literals.dart';
 import 'zstd_sequences.dart';
 import 'zstd_window.dart';
 
-class ZstdBlockException implements Exception {
-  final String message;
-  ZstdBlockException(this.message);
+class ZstdBlockException extends ArchiveException {
+  ZstdBlockException(super.message);
   @override
   String toString() => 'ZstdBlockException: $message';
 }

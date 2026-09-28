@@ -4,13 +4,15 @@
 
 ## 5.0 Update
 
-Decoders now share one contract for errors. Without flags they never throw on damaged data and return what decoded 
-before the damage. `throwOnError: true` throws `ArchiveException` on damaged or cut data, and `verify: true` does the
-same and also checks checksums on top of that, throwing `ArchiveChecksumException` on a mismatch.
+Decoders, and their wrappers like `extractFileToDisk`, `extractArchiveToDisk`, `extractArchiveToDiskSync` now share one
+contract for errors. Without flags they never throw on *damaged* data and return what decoded before the damage. 
+`throwOnError: true` throws `ArchiveException` on damaged or cut data, and `verify: true` does the same and also checks
+checksums on top of that, throwing `ArchiveChecksumException` on a mismatch.
 
-`ArchiveCallback` for TAR and ZIP, `ArchivePasswordException` for zip passwords, `ArgumentError` for unrealistic params,
-`onProgress` for `ProgressOutputStream` and other similar places remain untouched, they overrule new `throwOnError` and
-`verify` params and throw regardless of these values.
+UNCHANGED: `ArchiveCallback` for TAR and ZIP, `ArchivePasswordException` for zip passwords, `ArgumentError` for 
+unrealistic params, `onProgress` for `ProgressOutputStream`, `OutOfMemoryError`, `FileSystemException`,
+any device-specific exceptions and other similar places remain untouched, they overrule new `throwOnError` and `verify`
+params and throw regardless of these values because those are not damaged data or package-code related exceptions.
 
 Converters (`xzCodec`, `zstdCodec`, `bzip2Codec` and `tarCodec`) work like `gzip` and `zlib` from 
 `dart:io`, as the format specifications expect: they verify checksums by default and report every error to the stream.
@@ -28,8 +30,14 @@ try {
   print('the data decoded but does not match its checksum');
 } on ArchiveException {
   print('the archive is damaged or cut short');
+} catch (error) {
+  // Disk full, closed socket, OOM and other exceptions from `UNCHANGED` block are not damage
+  // related and keep their type and are still reported as before
+  print('could not write the output: $error');
 } // `ZipDecoder` may also throw `ArchivePasswordException` (regardless of `throwOnError`), a subclass of
   // `ArchiveException`: catch it above `ArchiveException` to tell them apart.
+  //
+  // Same example can be used for `decodeStream` and wrappers like `extractFileToDisk`
 ```
 
 ### Migration quick tips:

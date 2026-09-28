@@ -8,6 +8,7 @@ import '../../util/crc32.dart';
 import '../../util/decode_guard.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
+import '../../util/output_memory_stream.dart';
 import '../../util/output_stream.dart';
 import '_gzip_decoder_web.dart' as web;
 import '_zlib_decoder_base.dart';
@@ -24,6 +25,7 @@ class _GZipDecoder extends ZLibDecoderBase {
   Uint8List decodeBytes(List<int> data,
       {bool verify = false, bool raw = false, bool throwOnError = false}) {
     var out = Uint8List(0);
+    final partial = OutputMemoryStream();
     guardDecode('gzip', verify, throwOnError, () {
       if (!_nativeConcatenated &&
           (verify ||
@@ -43,13 +45,20 @@ class _GZipDecoder extends ZLibDecoderBase {
       FormatException? trailerError;
       final body = Uint8List.sublistView(bytes, 0, seen - trailerLength);
       try {
-        out = GZipCodec().decode(verify && isGZip ? bytes : body) as Uint8List;
+        out = convertKeepingPartial(
+            GZipCodec().decoder,
+            [
+              body,
+              if (verify && isGZip)
+                Uint8List.sublistView(bytes, seen - trailerLength)
+            ],
+            partial);
       } on FormatException catch (error) {
         if (!verify || !isGZip) {
           rethrow;
         }
         trailerError = error;
-        out = GZipCodec().decode(body) as Uint8List;
+        out = partial.getBytes();
       }
       final sum = !verify
           ? 0
@@ -66,6 +75,9 @@ class _GZipDecoder extends ZLibDecoderBase {
       }
       return valid;
     });
+    if (partial.length > 0) {
+      out = partial.getBytes();
+    }
     return out;
   }
 

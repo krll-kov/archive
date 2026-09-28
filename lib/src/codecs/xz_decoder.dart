@@ -148,6 +148,9 @@ class XZDecoder {
         if (isDecodeCallbackError(error)) {
           rethrow;
         }
+        if (!isDecodeDataError(error)) {
+          rethrow;
+        }
         throw ArchiveException('Invalid XZ archive: $error');
       }
       // The decoder records why it gave up, so the exception can say more than
