@@ -917,6 +917,29 @@ void main() {
         'compiler');
   }, testOn: '!windows');
 
+  test('a tar hard link encoded into a zip reads through its target', () async {
+    final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final out = OutputMemoryStream();
+    final tar = TarEncoder()..start(out);
+    tar.add(ArchiveFile.string('usr/bin/gcc', 'compiler'));
+    (TarFile()
+          ..filename = 'usr/bin/gcc-13'
+          ..typeFlag = TarFile.hardLink
+          ..nameOfLinkedFile = 'usr/bin/gcc'
+          ..mode = 0x1ed)
+        .write(out);
+    tar.finish();
+    final zip = ZipEncoder()
+        .encodeBytes(TarDecoder().decodeBytes(out.getBytes(), verify: true));
+    final input = File(p.join(root.path, 'hard.zip'))..writeAsBytesSync(zip);
+    final output = p.join(root.path, 'out');
+    await extractFileToDisk(input.path, output);
+    final link = File(p.join(output, 'usr', 'bin', 'gcc-13'));
+    expect(link.existsSync(), isTrue);
+    expect(link.readAsStringSync(), 'compiler');
+  }, testOn: '!windows');
+
   for (final method in ['sync', 'async', 'tar', 'zip']) {
     Future<void> extract(Archive archive, String output, String root,
         {bool allowAbsoluteSymlinks = false}) async {
@@ -1385,6 +1408,39 @@ void main() {
       }
     });
 
+    test('extractArchiveToDisk flags apply to an archive decoded without them',
+        () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final zip = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('b.bin', content())
+          ..compression = CompressionType.bzip2));
+      const localHeader = 30;
+      const bzipSignature = 4;
+      zip[localHeader + 'b.bin'.length + bzipSignature] ^= 0x55;
+      for (final sync in [false, true]) {
+        final lenient = p.join(directory.path, 'lenient_$sync');
+        final thrown = p.join(directory.path, 'thrown_$sync');
+        final archive = ZipDecoder().decodeBytes(zip);
+        if (sync) {
+          extractArchiveToDiskSync(archive, lenient);
+          expect(
+              () =>
+                  extractArchiveToDiskSync(archive, thrown, throwOnError: true),
+              throwsA(isA<ArchiveException>()));
+        } else {
+          await extractArchiveToDisk(archive, lenient);
+          await expectLater(
+              extractArchiveToDisk(archive, thrown, throwOnError: true),
+              throwsA(isA<ArchiveException>()));
+        }
+        expect(File(p.join(thrown, 'b.bin')).existsSync(), isFalse,
+            reason: 'sync $sync');
+        expect(File(p.join(lenient, 'b.bin')).existsSync(), isFalse,
+            reason: 'sync $sync');
+      }
+    });
+
     test('verify finds a wrong CRC that extraction otherwise accepts',
         () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
@@ -1405,6 +1461,34 @@ void main() {
       await expectLater(extractFileToDisk(input.path, checked, verify: true),
           throwsA(isA<ArchiveChecksumException>()));
       expect(File(p.join(checked, 's.bin')).existsSync(), isFalse);
+    });
+
+    test('whole entries of a zip with a wrong end record are extracted',
+        () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final zip = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('a.bin', content()))
+        ..add(ArchiveFile.bytes('b.bin', content())));
+      final eocd = zip.length - 22;
+      for (final (name, at) in [
+        ('count', eocd + 10),
+        ('comment', eocd + 20),
+      ]) {
+        final damaged = Uint8List.fromList(zip)..[at] = 5;
+        expect(ZipDecoder().decodeBytes(damaged).files.map((f) => f.name),
+            ['a.bin', 'b.bin'],
+            reason: name);
+        final input = File(p.join(directory.path, '$name.zip'))
+          ..writeAsBytesSync(damaged);
+        final out = p.join(directory.path, name);
+        await extractFileToDisk(input.path, out);
+        for (final file in ['a.bin', 'b.bin']) {
+          final extracted = File(p.join(out, file));
+          expect(extracted.existsSync(), isTrue, reason: '$name $file');
+          expect(extracted.readAsBytesSync(), content(), reason: '$name $file');
+        }
+      }
     });
 
     test('verify checks the checksum of the tar container', () async {
@@ -1439,7 +1523,7 @@ void main() {
           throwsA(same(failure)));
     });
 
-    test('a damaged central directory extracts nothing without flags',
+    test('a damaged central directory extracts entries before the damage',
         () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
@@ -1465,11 +1549,9 @@ void main() {
           throwsA(isA<ArchiveException>()));
       final out = p.join(directory.path, 'out');
       await extractFileToDisk(input.path, out);
-      expect(
-          Directory(out).existsSync()
-              ? Directory(out).listSync()
-              : <FileSystemEntity>[],
-          isEmpty);
+      expect(Directory(out).listSync().map((e) => p.basename(e.path)),
+          ['one.bin']);
+      expect(File(p.join(out, 'one.bin')).readAsBytesSync(), content());
     });
   });
 

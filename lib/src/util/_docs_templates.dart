@@ -313,5 +313,11 @@
 /// skipped unless [allowAbsoluteSymlinks] is set
 /// {@endtemplate}
 
+/// {@template archive.extract.cut_tar}
+/// A truncated tar entry is detected only if [archive] was decoded with
+/// `throwOnError` or `verify`. Without them TarDecoder returns the bytes it
+/// read as a complete file, and that file is extracted without an error.
+/// {@endtemplate}
+
 /// Must be after templates
 library;

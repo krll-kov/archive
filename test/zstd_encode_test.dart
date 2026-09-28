@@ -75,6 +75,16 @@ class _Piped extends InputStream {
   Uint8List toUint8List() => _held.toUint8List();
 }
 
+class _Reserving extends OutputMemoryStream {
+  final reserved = <int>[];
+
+  @override
+  void reserve(int total) {
+    reserved.add(total);
+    super.reserve(total);
+  }
+}
+
 /// Words drawn at random from a small vocabulary, which is the shape a deeper
 /// search pays off on where a plain repeat does not
 Uint8List _words(int length) {
@@ -314,6 +324,19 @@ void main() {
       const ZstdEncoder().encodeStream(held, out);
       expect(out.getBytes(),
           const ZstdEncoder().encodeBytes(Uint8List.sublistView(source, 1024)));
+    });
+
+    test('a frame appended to a filled stream reserves its room once', () {
+      final source = _words(3 << 20);
+      final prefix = _words(4 << 20);
+      final out = _Reserving()..writeBytes(prefix);
+      const ZstdEncoder().encodeStream(_Piped(source), out);
+      final frame = const ZstdEncoder().encodeBytes(source);
+      expect(out.getBytes().sublist(prefix.length), frame);
+      expect(out.reserved, hasLength(1));
+      expect(out.reserved.single, greaterThanOrEqualTo(out.length));
+      expect(out.reserved.single - prefix.length,
+          lessThanOrEqualTo(source.length + (source.length >> 7) + 64));
     });
   });
 }

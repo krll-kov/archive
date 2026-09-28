@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import '../archive/archive.dart';
 import '../archive/archive_file.dart';
 import '../util/archive_exception.dart';
@@ -99,7 +97,8 @@ class ZipDecoder {
           f.compression = zf.compressionMethod;
           final bytes = f.readBytes();
           if (bytes != null) {
-            entry.symbolicLink = utf8.decode(bytes);
+            entry.symbolicLink =
+                InputMemoryStream(bytes).readString(size: bytes.length);
           }
         }
       }

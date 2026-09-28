@@ -5,7 +5,9 @@ import 'dart:typed_data';
 import '../archive/archive.dart';
 import '../archive/archive_file.dart';
 import '../archive/compression_type.dart';
+import '../util/_link_target.dart';
 import '../util/aes.dart';
+import '../util/archive_exception.dart';
 import '../util/chunked_sink.dart';
 import '../util/crc32.dart';
 import '../util/input_memory_stream.dart';
@@ -56,6 +58,8 @@ class _ZipFileData {
   bool zip64 = false;
 
   CompressionType compression = CompressionType.deflate;
+  int? method;
+  int aesVersion = 1;
   bool lzmaEndMarker = false;
   String? comment = '';
   int position = 0;
@@ -283,7 +287,7 @@ class ZipEncoder {
 
     var linkSize = -1;
     if (entry.isSymbolicLink) {
-      final target = utf8.encode(entry.symbolicLink!);
+      final target = utf8.encode(linkTarget(entry));
       compressionType = CompressionType.none;
       compressedData = InputMemoryStream(target);
       ownsData = true;
@@ -291,6 +295,21 @@ class ZipEncoder {
       linkSize = target.length;
       fileData.mode = 0xa000 | (entry.mode & 0xfff);
       fileData.unixHost = true;
+    } else if (entry.isFile &&
+        entry.rawContent is ZipFile &&
+        (entry.rawContent as ZipFile).unsupportedMethod != null) {
+      final zipFile = entry.rawContent as ZipFile;
+      if (!zipFile.hasCrc32) {
+        if (password == null) {
+          throw ArchiveException(
+              'zip: CRC32 of ${entry.name} is unknown without AES');
+        }
+        fileData.aesVersion = 2;
+      }
+      compressionType = CompressionType.none;
+      compressedData = zipFile.getStream(decompress: false);
+      crc32 = zipFile.crc32;
+      fileData.method = zipFile.unsupportedMethod;
     } else if (entry.isFile) {
       final file = entry;
       if (file.isCompressed) {
@@ -464,13 +483,14 @@ class ZipEncoder {
   }
 
   int _compressionMethod(_ZipFileData fileData) =>
-      fileData.compression == CompressionType.deflate
+      fileData.method ??
+      (fileData.compression == CompressionType.deflate
           ? ZipFile.zipCompressionDeflate
           : fileData.compression == CompressionType.bzip2
               ? ZipFile.zipCompressionBZip2
               : fileData.compression == CompressionType.lzma
                   ? ZipFile.zipCompressionLzma
-                  : ZipFile.zipCompressionStore;
+                  : ZipFile.zipCompressionStore);
 
   List<int> _getAexExtraData(_ZipFileData fileData) {
     // https://www.winzip.com/en/support/aes-encryption/#zip-format
@@ -480,7 +500,7 @@ class ZipEncoder {
 
     out.writeUint16(_aesEncryptionExtraHeaderId); // AE-x encryption ID
     out.writeUint16(0x0007); // field length
-    out.writeUint16(0x0001); // AE-1 encryption version
+    out.writeUint16(fileData.aesVersion); // AE-1 or AE-2 encryption version
     out.writeBytes(ascii.encode("AE")); // "vendor ID"
     out.writeByte(0x0003); // encryption strength (256-bit)
     out.writeUint16(compressionMethod); // actual compression method

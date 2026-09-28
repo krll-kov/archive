@@ -9,8 +9,10 @@ import '../codecs/bzip2_decoder.dart';
 import '../codecs/gzip_decoder.dart';
 import '../codecs/tar_decoder.dart';
 import '../codecs/xz_decoder.dart';
+import '../codecs/zip/zip_file.dart';
 import '../codecs/zip_decoder.dart';
 import '../codecs/zstd_decoder.dart';
+import '../util/_link_target.dart';
 import '../util/archive_exception.dart';
 import '../util/codecs_recognizer.dart';
 import '../util/decode_guard.dart';
@@ -124,7 +126,7 @@ String _entryPath(String outputPath, String name) => path.join(
 bool _isValidSymLink(
     String outputPath, String? realOut, ArchiveFile file, bool allowAbsolute) {
   final filePath = path.dirname(_entryPath(outputPath, file.name));
-  final linkPath = _linkTarget(file);
+  final linkPath = linkTarget(file);
   if (path.isAbsolute(linkPath)) {
     // Don't allow decoding of files outside of the output path.
     return allowAbsolute;
@@ -141,7 +143,7 @@ bool _isValidSymLink(
 Future<bool> _isValidSymLinkAsync(String outputPath, String? realOut,
     ArchiveFile file, bool allowAbsolute) async {
   final filePath = path.dirname(_entryPath(outputPath, file.name));
-  final linkPath = _linkTarget(file);
+  final linkPath = linkTarget(file);
   if (path.isAbsolute(linkPath)) {
     return allowAbsolute;
   }
@@ -150,24 +152,10 @@ Future<bool> _isValidSymLinkAsync(String outputPath, String? realOut,
       await _isWithinOutputPathAsync(realOut, path.join(realPath, linkPath));
 }
 
-/// A hard link names its target from the archive root and a symlink from its
-/// own folder. dart:io cannot make a hard link and a copy would double disk use,
-/// so it becomes a symlink with the target rewritten from its folder
-String _linkTarget(ArchiveFile file) {
-  final text = file.symbolicLink ?? '';
-  if (!file.isHardLink) {
-    return text;
-  }
-  String clean(String p) =>
-      path.posix.normalize(p.replaceFirst(RegExp('^/+'), ''));
-  return path.posix
-      .relative(clean(text), from: path.posix.dirname(clean(file.name)));
-}
-
 /// Windows needs \ in a relative link target, and normalizing the text would
 /// change where a link through another link points
 String _linkText(ArchiveFile file) {
-  final text = _linkTarget(file);
+  final text = linkTarget(file);
   return Platform.isWindows ? text.replaceAll('/', r'\') : text;
 }
 
@@ -175,7 +163,7 @@ String _linkText(ArchiveFile file) {
 /// Like GNU tar, we defer creating and validating these links until the
 /// entire tree is extracted
 bool _delaysLink(ArchiveFile file) {
-  final target = _linkTarget(file);
+  final target = linkTarget(file);
   return path.isAbsolute(target) || path.split(target).contains('..');
 }
 
@@ -274,6 +262,21 @@ String? _prepareArchiveFilePath(ArchiveFile archiveFile, String outputPath,
   return filePath;
 }
 
+void _writeStrict(ArchiveFile entry, OutputStream output) {
+  final content = entry.rawContent;
+  if (content is! ZipFile) {
+    entry.writeContent(output);
+    return;
+  }
+  final throwOnError = content.throwOnError;
+  content.throwOnError = true;
+  try {
+    entry.writeContent(output);
+  } finally {
+    content.throwOnError = throwOnError;
+  }
+}
+
 void _extractArchiveEntryToDiskSync(
   ArchiveFile entry,
   String filePath, {
@@ -289,7 +292,7 @@ void _extractArchiveEntryToDiskSync(
       _clearPath(filePath);
       final output = OutputFileStream(filePath, bufferSize: bufferSize);
       try {
-        entry.writeContent(output);
+        _writeStrict(entry, output);
       } catch (err) {
         if (err is ArchivePasswordException) {
           output.closeSync();
@@ -331,6 +334,8 @@ void _extractArchiveEntryToDiskSync(
 /// With [throwOnError] a damaged entry throws `ArchiveException`, without it
 /// the entry is skipped and leaves no file
 ///
+/// {@macro archive.extract.cut_tar}
+///
 /// {@macro archive.extract.allow_absolute_symlinks}
 void extractArchiveToDiskSync(
   Archive archive,
@@ -361,6 +366,8 @@ void extractArchiveToDiskSync(
 ///
 /// With [throwOnError] a damaged entry throws `ArchiveException`, without it
 /// the entry is skipped and leaves no file
+///
+/// {@macro archive.extract.cut_tar}
 ///
 /// {@macro archive.extract.allow_absolute_symlinks}
 Future<void> extractArchiveToDisk(Archive archive, String outputPath,
@@ -411,7 +418,7 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
     await _clearPathAsync(filePath);
     final output = OutputFileStream(filePath, bufferSize: fileBufferSize);
     try {
-      file.writeContent(output);
+      _writeStrict(file, output);
     } catch (err) {
       if (err is ArchivePasswordException) {
         await output.close();
@@ -619,7 +626,10 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
             identical(error, callbackError)) {
           rethrow;
         }
-        archive = whole;
+        await input.close();
+        final again = InputFileStream(archivePath);
+        toClose = again;
+        archive = ZipDecoder().decodeStream(again, password: password);
       }
     } else {
       throw ArgumentError.value(
@@ -658,7 +668,7 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
         await _clearPathAsync(filePath);
         final output = OutputFileStream(filePath, bufferSize: bufferSize);
         try {
-          file.writeContent(output);
+          _writeStrict(file, output);
         } catch (error) {
           // A partial file from a failed entry looked extracted, so we delete
           // it

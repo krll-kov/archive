@@ -982,6 +982,76 @@ void main() async {
         expect(File(p.join(dir.path, 'out', 'odd')).existsSync(), isFalse);
       });
 
+      test('an unsupported method entry encoded again stays unreadable', () {
+        final two = ZipEncoder().encodeBytes(Archive()
+          ..add(ArchiveFile.bytes('good', data))
+          ..add(ArchiveFile.bytes('odd', data)));
+        final view = ByteData.sublistView(two);
+        for (var at = 0; at + 46 < two.length; at++) {
+          final signature = view.getUint32(at, Endian.little);
+          final central = signature == 0x02014b50;
+          if (!central && signature != 0x04034b50) {
+            continue;
+          }
+          final nameAt = at + (central ? 46 : 30);
+          if (String.fromCharCodes(two, nameAt, nameAt + 3) == 'odd') {
+            view.setUint16(at + (central ? 10 : 8), 9, Endian.little);
+          }
+        }
+        final before = ZipDecoder()..decodeBytes(two);
+        final again = ZipEncoder().encodeBytes(ZipDecoder().decodeBytes(two));
+        final after = ZipDecoder();
+        final files = after.decodeBytes(again).files;
+        expect(files.map((f) => f.name), ['good', 'odd']);
+        expect(files.first.content, data);
+        expect(files.last.content, isEmpty);
+        final odd = after.directory.fileHeaders.last;
+        expect(odd.compressionMethod, 9);
+        expect(odd.file!.getRawContent(),
+            before.directory.fileHeaders.last.file!.getRawContent());
+      });
+
+      test('an unsupported method under AE-2 is encoded again as AE-2', () {
+        final one = ZipEncoder(password: 'pw')
+            .encodeBytes(Archive()..add(ArchiveFile.bytes('odd', data)));
+        final view = ByteData.sublistView(one);
+        final centralAt = view.getUint32(one.length - 6, Endian.little);
+        for (final at in [0, centralAt]) {
+          final central = at != 0;
+          var extraAt = at +
+              (central ? 46 : 30) +
+              view.getUint16(at + (central ? 28 : 26), Endian.little);
+          final extraEnd =
+              extraAt + view.getUint16(at + (central ? 30 : 28), Endian.little);
+          view.setUint32(at + (central ? 16 : 14), 0, Endian.little);
+          while (extraAt < extraEnd) {
+            if (view.getUint16(extraAt, Endian.little) == 0x9901) {
+              view.setUint16(extraAt + 4, 2, Endian.little);
+              view.setUint16(extraAt + 9, 9, Endian.little);
+            }
+            extraAt += 4 + view.getUint16(extraAt + 2, Endian.little);
+          }
+        }
+        final before = ZipDecoder()..decodeBytes(one, password: 'pw');
+        expect(before.directory.fileHeaders.single.file!.hasCrc32, isFalse);
+        expect(
+            () => ZipEncoder()
+                .encodeBytes(ZipDecoder().decodeBytes(one, password: 'pw')),
+            throwsA(isA<ArchiveException>()));
+        final again = ZipEncoder(password: 'pw')
+            .encodeBytes(ZipDecoder().decodeBytes(one, password: 'pw'));
+        final after = ZipDecoder()..decodeBytes(again, password: 'pw');
+        final odd = after.directory.fileHeaders.single;
+        expect(odd.crc32, 0);
+        expect(odd.file!.hasCrc32, isFalse);
+        expect(odd.file!.unsupportedMethod, 9);
+        expect(
+            odd.file!.getStream(decompress: false).toUint8List(),
+            before.directory.fileHeaders.single.file!
+                .getStream(decompress: false)
+                .toUint8List());
+      });
+
       test('strict decoding keeps local records before the central directory',
           () {
         final stored = ZipEncoder().encodeBytes(Archive()
@@ -1619,6 +1689,34 @@ void main() async {
       }
     });
 
+    test('a missing ZipCrypto password throws when the check byte matches', () {
+      final bytes = base64.decode(
+          'UEsDBBQAAQAAAAAAIQAgMDo2EgAAAAYAAAAFAAAAYS50eHSrT4I8+1ClWK6R6UBEMvz9'
+          'Gu9QSwECFAAUAAEAAAAAACEAIDA6NhIAAAAGAAAABQAAAAAAAAAAAAAAAAAAAAAAYS50'
+          'eHRQSwUGAAAAAAEAAQAzAAAANQAAAAAA');
+      expect(
+          ZipDecoder()
+              .decodeBytes(bytes, password: 'secret')
+              .files
+              .single
+              .readBytes(),
+          'hello\n'.codeUnits);
+      for (final (verify, throwOnError) in [
+        (false, false),
+        (true, false),
+        (false, true)
+      ]) {
+        expect(
+            () => ZipDecoder()
+                .decodeBytes(bytes, verify: verify, throwOnError: throwOnError)
+                .files
+                .single
+                .readBytes(),
+            throwsA(isA<ArchivePasswordException>()),
+            reason: 'verify $verify, throwOnError $throwOnError');
+      }
+    });
+
     test('an AES zip without a stored CRC passes verifyCrc32', () {
       for (final (name, password) in [
         ('aes256.zip', '12345'),
@@ -2025,6 +2123,22 @@ void main() async {
             h.filename: h.versionMadeBy >> 8
         };
         expect(hosts, {'a.txt': 0, 'link': 3, 'dir/up': 3});
+      }
+    });
+
+    test('a symlink target in a legacy code page keeps later entries', () {
+      final zip = ZipEncoder(filenameEncoding: latin1).encodeBytes(Archive()
+        ..add(ArchiveFile.string('a.txt', 'a'))
+        ..add(ArchiveFile.symlink('link', 'target'))
+        ..add(ArchiveFile.string('b.txt', 'b')));
+      zip[String.fromCharCodes(zip).indexOf('target')] = 0xe9;
+      for (final throwOnError in [false, true]) {
+        final archive =
+            ZipDecoder().decodeBytes(zip, throwOnError: throwOnError);
+        expect(archive.files.map((f) => f.name), ['a.txt', 'link', 'b.txt'],
+            reason: 'throwOnError $throwOnError');
+        expect(archive.findFile('link')!.isSymbolicLink, isTrue,
+            reason: 'throwOnError $throwOnError');
       }
     });
 

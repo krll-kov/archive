@@ -65,6 +65,7 @@ class ZstdFrameEncoder {
     // its content does not shrink: with a dictionary the two differ
     final matchWindow = 1 << params.windowLog;
 
+    final origin = out.length;
     _writeHeader(
         out, size, singleSegment, checksum, params.windowLog, dict?.id ?? 0);
 
@@ -176,9 +177,10 @@ class ZstdFrameEncoder {
       // A frame never exceeds its own bound, so neither does the estimate
       if (coded == take && coded < size) {
         final bound = size + (size >> 7) + 64;
-        var want = out.length + (out.length * (size - coded)) ~/ coded;
+        final cost = out.length - origin;
+        var want = cost + (cost * (size - coded)) ~/ coded;
         want += want >> 3;
-        out.reserve(want < bound ? want : bound);
+        out.reserve(origin + (want < bound ? want : bound));
       }
     }
 

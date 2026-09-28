@@ -9,6 +9,7 @@ import '../../util/output_stream.dart';
 import '../../util/sha256.dart';
 import '../bcj_x86.dart';
 import '../lzma/lzma_decoder.dart';
+import 'xz_index.dart';
 
 // The XZ specification can be found at
 // https://tukaani.org/xz/xz-file-format.txt.
@@ -325,6 +326,9 @@ class XZStreamDecoder {
     final paddingSize = _readPadding(input, _streamStart);
     if (paddingSize < 0) {
       return _fail('Invalid block padding');
+    }
+    if (input.length < xzCheckSize(checkType)) {
+      return _fail('Block check is truncated');
     }
 
     // Checksum

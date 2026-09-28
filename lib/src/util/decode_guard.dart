@@ -5,7 +5,8 @@ _DecodeContext? _activeDecodeContext;
 /// Runs [decode] under the `verify` and `throwOnError` rules shared by every
 /// decoder: without `verify` a checksum failure is never thrown as
 /// [ArchiveChecksumException], and without either flag decoding errors are
-/// suppressed except [ArchivePasswordException], while callback errors propagate
+/// suppressed except [ArchivePasswordException], while callback errors
+/// propagate
 bool guardDecode(
     String format, bool verify, bool throwOnError, bool Function() decode) {
   final strict = verify || throwOnError;
@@ -92,6 +93,8 @@ Stream<T> archiveStreamErrors<S, T>(
         (Object error, StackTrace stack) => Error.throwWithStackTrace(
             error is _SourceError ? error.error : archiveError(error), stack));
 
+/// Wraps user callback run inside guardDecode, so its error keeps its type
+/// instead of becoming ArchiveException
 void invokeDecodeCallback<T>(void Function(T) callback, T value) {
   try {
     callback(value);

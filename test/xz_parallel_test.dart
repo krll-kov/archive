@@ -300,6 +300,22 @@ void main() {
           throwsA(isA<ArchiveChecksumException>()));
     });
 
+    test('a check field cut short is a cut archive, not a wrong check',
+        () async {
+      final compressed = fixture('sha256');
+      final cut = Uint8List.sublistView(compressed, 0, compressed.length - 130);
+      final truncated = allOf(
+          isA<ArchiveException>(), isNot(isA<ArchiveChecksumException>()));
+      expect(
+          () => XZDecoder().decodeBytes(cut, verify: true), throwsA(truncated));
+      await expectLater(decodeBytesOnIsolates(cut, verify: true, workers: 2),
+          throwsA(truncated));
+      await expectLater(
+          decodeStreamOnIsolates(InputMemoryStream(cut), OutputMemoryStream(),
+              verify: true, workers: 2),
+          throwsA(truncated));
+    });
+
     group('corrupt archives', () {
       late Uint8List pristine;
       late List<BlockInfo> blocks;

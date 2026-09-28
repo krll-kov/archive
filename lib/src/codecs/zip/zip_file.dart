@@ -62,7 +62,7 @@ class ZipFile extends FileContent {
   ZipFileHeader? header;
   bool verify = false;
   bool throwOnError = false;
-  var _unsupportedMethod = false;
+  int? unsupportedMethod;
 
   // Content of the file. If compressionMethod is not STORE, then it is
   // still compressed.
@@ -165,8 +165,8 @@ class ZipFile extends FileContent {
         }
       }
     }
-    _unsupportedMethod = !_compressionTypes
-        .containsKey(_aesHeader?.compressionMethod ?? compression);
+    final method = _aesHeader?.compressionMethod ?? compression;
+    unsupportedMethod = _compressionTypes.containsKey(method) ? null : method;
 
     // If bit 3 (0x08) of the flags field is set, then the CRC-32 and file
     // sizes are not known when the header is written. The fields in the
@@ -492,7 +492,10 @@ class ZipFile extends FileContent {
     final start = _rawContent!.position;
     final check =
         flags & 0x08 != 0 ? (lastModFileTime >> 8) & 0xff : crc32 >>> 24;
-    final candidates = _passwordBytes();
+    final candidates = [
+      for (final password in _passwordBytes())
+        if (password != null) password
+    ];
     final passing = [
       for (final password in candidates)
         if (_zipCryptoHeader(password, start) == check) password
@@ -651,7 +654,7 @@ class ZipFile extends FileContent {
   }
 
   void _checkMethod() {
-    if (_unsupportedMethod) {
+    if (unsupportedMethod != null) {
       throw ArchiveException(
           'zip: unsupported compression method for $filename');
     }

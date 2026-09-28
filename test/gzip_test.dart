@@ -684,6 +684,73 @@ void main() {
         }
       });
 
+      test('members after an empty member are decoded', () {
+        final first = GZipEncoder().encodeBytes(List.filled(5000, 65));
+        final empty = GZipEncoder().encodeBytes(const <int>[]);
+        final last = GZipEncoder().encodeBytes(List.filled(3000, 66));
+        final random = Random(2);
+        final large = List.generate(20000, (_) => random.nextInt(256));
+        for (final (joined, expected) in [
+          (
+            [...first, ...empty, ...last],
+            [...List.filled(5000, 65), ...List.filled(3000, 66)]
+          ),
+          ([...empty, ...last], List.filled(3000, 66)),
+          (
+            [...first, ...empty, ...GZipEncoder().encodeBytes(large)],
+            [...List.filled(5000, 65), ...large]
+          ),
+        ]) {
+          final bytes = Uint8List.fromList(joined);
+          for (final (verify, throwOnError) in [
+            (false, false),
+            (true, false),
+            (false, true)
+          ]) {
+            final reason = 'length ${bytes.length}, verify $verify, '
+                'throwOnError $throwOnError';
+            expect(
+                const GZipDecoder().decodeBytes(bytes,
+                    verify: verify, throwOnError: throwOnError),
+                expected,
+                reason: reason);
+            final out = OutputMemoryStream();
+            expect(
+                const GZipDecoder().decodeStream(InputMemoryStream(bytes), out,
+                    verify: verify, throwOnError: throwOnError),
+                isTrue,
+                reason: reason);
+            expect(out.getBytes(), expected, reason: reason);
+          }
+        }
+      });
+
+      test('a member after an empty one is kept when a read ends at a member',
+          () {
+        final random = Random(1);
+        final empty = GZipEncoder().encodeBytes(const <int>[]);
+        final middle = GZipEncoder().encodeBytes(List.filled(300, 67));
+        final last = GZipEncoder().encodeBytes(List.filled(3000, 68));
+        var size = 8192;
+        late List<int> data;
+        late List<int> first;
+        do {
+          size--;
+          data = List.generate(size, (_) => random.nextInt(256));
+          first = GZipEncoder().encodeBytes(data);
+        } while (first.length + empty.length + middle.length > 8192);
+        expect(first.length + empty.length + middle.length, 8192);
+        final bytes =
+            Uint8List.fromList([...first, ...empty, ...middle, ...last]);
+        final out = OutputMemoryStream();
+        expect(
+            const GZipDecoder().decodeStream(InputMemoryStream(bytes), out,
+                throwOnError: true),
+            isTrue);
+        expect(out.getBytes(),
+            [...data, ...List.filled(300, 67), ...List.filled(3000, 68)]);
+      });
+
       test('web raw inflate reads a last code that ends the data', () {
         final raw = Uint8List.fromList([155, 48, 113, 210, 228, 41, 0]);
         for (final throwOnError in [false, true]) {
