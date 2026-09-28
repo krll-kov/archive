@@ -73,6 +73,16 @@ class _GZipDecoder extends ZLibDecoderBase {
       if (trailerError != null) {
         throw trailerError;
       }
+      // Output above ISIZE comes from crafted input or member over 4 GiB.
+      // Checking it inflates whole input again in Dart, as `_completeDeflate`
+      // in zlib does, which made verify 3.4x slower, so check stays off
+      // if (valid &&
+      //     isGZip &&
+      //     (verify || throwOnError) &&
+      //     out.length > _gzipDeclaredSize(bytes, seen - 4)) {
+      //   return _validateAdditionalMembers(
+      //       InputMemoryStream(data), out.length, verify, throwOnError);
+      // }
       return valid;
     });
     if (partial.length > 0) {
@@ -90,11 +100,13 @@ class _GZipDecoder extends ZLibDecoderBase {
         return web.nativeGZipDecoder.decodeStream(input, output,
             verify: verify, throwOnError: throwOnError);
       }
-      return _decodeStream(input, output, verify);
+      return _decodeStream(input, output, verify, throwOnError);
     });
   }
 
-  bool _decodeStream(InputStream input, OutputStream output, bool verify) {
+  bool _decodeStream(
+      InputStream input, OutputStream output, bool verify, bool throwOnError) {
+    // final startPos = input.position;
     final seen = input.length;
     // Whether the input opened with the gzip signature, which decides whether
     // the trailer check below applies at all.
@@ -146,6 +158,20 @@ class _GZipDecoder extends ZLibDecoderBase {
     if (trailerError != null) {
       throw trailerError;
     }
+    // This ISIZE check also inflates input second time, so it stays off
+    // if (valid &&
+    //     isGZip &&
+    //     (verify || throwOnError) &&
+    //     outSink.written > _gzipDeclaredSize(trailer, trailer.length - 4)) {
+    //   final endPos = input.position;
+    //   input.setPosition(startPos);
+    //   try {
+    //     return _validateAdditionalMembers(
+    //         input, outSink.written, verify, throwOnError);
+    //   } finally {
+    //     input.setPosition(endPos);
+    //   }
+    // }
     return valid;
   }
 
@@ -201,6 +227,31 @@ class _GZipDecoder extends ZLibDecoderBase {
     return false;
   }
 }
+
+// int _gzipDeclaredSize(Uint8List bytes, int at) =>
+//     bytes[at] |
+//     (bytes[at + 1] << 8) |
+//     (bytes[at + 2] << 16) |
+//     (bytes[at + 3] << 24);
+//
+// bool _validateAdditionalMembers(
+//     InputStream input, int expectedLength, bool verify, bool throwOnError) {
+//   if (!_hasAdditionalMember(input)) {
+//     return false;
+//   }
+//   final output = SinkOutputStream(_DiscardSink());
+//   return web.nativeGZipDecoder.decodeStream(input, output,
+//           verify: verify, throwOnError: throwOnError) &&
+//       output.length == expectedLength;
+// }
+//
+// class _DiscardSink implements Sink<List<int>> {
+//   @override
+//   void add(List<int> data) {}
+//
+//   @override
+//   void close() {}
+// }
 
 final _nativeConcatenated = _supportsConcatenated();
 

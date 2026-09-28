@@ -136,6 +136,9 @@
   that claims terabytes.
 * Fixed `listTarFiles` listing a plain .tar as empty, and `listTarFiles` and `extractTarFiles` leaving open files 
   and temporary folders uncleaned.
+* Fixed `ZLibDecoderWeb` and `GZipDecoderWeb` accepting malformed deflate: a zlib header with a method other than
+  deflate or a window over 32 KB, a stream without its final block, and an oversubscribed Huffman table, which
+  decoded to garbage before, are now reported with `throwOnError` and `verify`.
 
 # 4.3.0
 

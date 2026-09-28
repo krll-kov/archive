@@ -51,6 +51,57 @@ void main() {
   final data = _sample(300000, 7);
 
   group('gzip verification on the web', () {
+    test('strict browser decoders reject malformed DEFLATE', () {
+      final header = Uint8List.fromList(ZLibEncoder().encodeBytes([1, 2, 3]));
+      header[0] = 0x79;
+      header[1] = (31 - ((header[0] << 8) % 31)) % 31;
+      final source = Uint8List.fromList(List.generate(16384, (i) => i & 255));
+      final table = Uint8List.fromList(ZLibEncoder().encodeBytes(source));
+      table[8] ^= 0xff;
+      for (final bad in [
+        header,
+        Uint8List.fromList([0x78, 0x9c, 0x03, 0xff, 0, 0, 0, 1]),
+        table,
+      ]) {
+        expect(() => ZLibDecoder().decodeBytes(bad, verify: true),
+            throwsA(isA<ArchiveException>()));
+        expect(
+            () => ZLibDecoder().decodeStream(
+                InputMemoryStream(bad), OutputMemoryStream(),
+                verify: true),
+            throwsA(isA<ArchiveException>()));
+      }
+      final badGzip = Uint8List.fromList([
+        0x1f,
+        0x8b,
+        8,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x13,
+        0x03,
+        0xff,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]);
+      expect(() => GZipDecoder().decodeBytes(badGzip, verify: true),
+          throwsA(isA<ArchiveException>()));
+      expect(
+          () => GZipDecoder().decodeStream(
+              InputMemoryStream(badGzip), OutputMemoryStream(),
+              verify: true),
+          throwsA(isA<ArchiveException>()));
+    });
+
     test('members verify with a write-only output that already has bytes', () {
       final encoded = GZipEncoder().encodeBytes(data);
       final collected = _Collect();

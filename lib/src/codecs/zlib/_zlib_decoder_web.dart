@@ -79,11 +79,14 @@ class _ZLibDecoder extends ZLibDecoderBase {
         final cmf = input.readByte();
         final flg = input.readByte();
 
-        final method = cmf & 8;
-        final cinfo = (cmf >> 3) & 8; // ignore: unused_local_variable
+        final method = cmf & 0x0f;
+        final cinfo = cmf >> 4;
 
         if (method != deflate) {
           //throw ArchiveException('Only DEFLATE compression supported: $method');
+          return buffer != null;
+        }
+        if (cinfo > 7) {
           return buffer != null;
         }
 
@@ -107,7 +110,7 @@ class _ZLibDecoder extends ZLibDecoderBase {
       // Inflate
       final inflate = Inflate.stream(input);
       buffer = inflate.getBytes();
-      if (raw && !inflate.isFinished) {
+      if (!inflate.isFinished) {
         output.writeBytes(buffer);
         return false;
       }

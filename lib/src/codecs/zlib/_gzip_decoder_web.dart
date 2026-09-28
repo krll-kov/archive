@@ -70,8 +70,11 @@ class _GZipDecoder extends ZLibDecoderBase {
           ? (SinkOutputStream(ZLibOutputSink(output))
             ..watch = (bytes) => sum = getCrc32(bytes, sum))
           : null;
-      Inflate.stream(input, output: checked ?? output);
+      final inflate = Inflate.stream(input, output: checked ?? output);
       checked?.flush();
+      if (!inflate.isFinished) {
+        return false;
+      }
 
       // A member cut short before its trailer would otherwise decode to a
       // short result and be reported as a success, which is a truncated

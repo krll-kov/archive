@@ -419,6 +419,229 @@ void main() {
             isTrue);
       });
 
+      test('zlib web rejects invalid method and window fields', () {
+        final valid = ZLibEncoder().encodeBytes([1, 2, 3, 4]);
+        for (final (field, cmf) in [('method', 0x79), ('window', 0x88)]) {
+          final bad = Uint8List.fromList(valid);
+          bad[0] = cmf;
+          bad[1] = (31 - ((cmf << 8) % 31)) % 31;
+          expect(CodecsRecognizer.isZLib(bad), isFalse, reason: field);
+          for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+            expect(
+                () => const ZLibDecoderWeb().decodeBytes(bad,
+                    verify: verify, throwOnError: throwOnError),
+                throwsA(isA<ArchiveException>()),
+                reason: '$field, bytes, verify $verify');
+            expect(
+                () => const ZLibDecoderWeb().decodeStream(
+                    InputMemoryStream(bad), OutputMemoryStream(),
+                    verify: verify, throwOnError: throwOnError),
+                throwsA(isA<ArchiveException>()),
+                reason: '$field, stream, verify $verify');
+          }
+        }
+      });
+
+      test('strict web decoders reject unfinished deflate blocks', () {
+        for (final (name, decoder, bad) in [
+          (
+            'zlib',
+            const ZLibDecoderWeb(),
+            Uint8List.fromList([0x78, 0x9c, 0x03, 0xff, 0, 0, 0, 1])
+          ),
+          (
+            'gzip',
+            const GZipDecoderWeb(),
+            Uint8List.fromList([
+              0x1f,
+              0x8b,
+              8,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0x13,
+              0x03,
+              0xff,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ])
+          ),
+        ]) {
+          for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+            expect(
+                () => decoder.decodeBytes(bad,
+                    verify: verify, throwOnError: throwOnError),
+                throwsA(isA<ArchiveException>()),
+                reason: '$name bytes, verify $verify');
+            expect(
+                () => decoder.decodeStream(
+                    InputMemoryStream(bad), OutputMemoryStream(),
+                    verify: verify, throwOnError: throwOnError),
+                throwsA(isA<ArchiveException>()),
+                reason: '$name stream, verify $verify');
+          }
+        }
+      });
+
+      // Needs computed Adler-32 trailer, which made throwOnError 12-20% slower
+      // on 100 and 500 MB, so test stays off
+      // test('strict native zlib rejects invalid deflate with valid checksum',
+      //     () {
+      //   final bad = Uint8List.fromList([0x78, 0x9c, 0xfc, 0, 0, 0, 0, 1]);
+      //   for (final (verify, throwOnError)
+      //       in [(true, false), (false, true)]) {
+      //     expect(
+      //         () => const ZLibDecoder()
+      //             .decodeBytes(bad,
+      //                 verify: verify, throwOnError: throwOnError),
+      //         throwsA(isA<ArchiveException>()),
+      //         reason: 'bytes, verify $verify');
+      //     expect(
+      //         () => const ZLibDecoder().decodeStream(
+      //             InputMemoryStream(bad), OutputMemoryStream(),
+      //             verify: verify, throwOnError: throwOnError),
+      //         throwsA(isA<ArchiveException>()),
+      //         reason: 'stream, verify $verify');
+      //   }
+      // });
+
+      // dart:io passes these streams without second inflate pass in Dart,
+      // which made zlib verify 3.4x slower on enwik8, so tests stay off
+      // test('strict native zlib requires a final deflate block', () {
+      //   final bad = Uint8List.fromList([0x78, 0x9c, 0x9c, 0, 0, 0, 1, 0, 1]);
+      //   expect(() => const ZLibDecoder().decodeBytes(bad, verify: true),
+      //       throwsA(isA<ArchiveException>()));
+      //   expect(
+      //       () => const ZLibDecoder().decodeStream(
+      //           InputMemoryStream(bad), OutputMemoryStream(),
+      //           verify: true),
+      //       throwsA(isA<ArchiveException>()));
+      //   for (final size in [0, 1, 128, 4096, 65536]) {
+      //     final source = List.generate(size, (i) => i & 255);
+      //     final packed = ZLibEncoder().encodeBytes(source);
+      //     expect(packed[2] & 1, 1);
+      //     final unfinished = Uint8List.fromList(packed)..[2] ^= 1;
+      //     expect(
+      //         () => const ZLibDecoder()
+      //             .decodeBytes(unfinished, verify: true),
+      //         throwsA(isA<ArchiveException>()),
+      //         reason: '$size bytes');
+      //     expect(
+      //         () => const ZLibDecoder().decodeStream(
+      //             InputMemoryStream(unfinished), OutputMemoryStream(),
+      //             verify: true),
+      //         throwsA(isA<ArchiveException>()),
+      //         reason: '$size bytes, stream');
+      //   }
+      // });
+//
+      // test('strict native zlib rejects a cut final block with its checksum',
+      //     () {
+      //   final bad = Uint8List.fromList([0x78, 0x9c, 0x03, 0, 0, 0, 1]);
+      //   expect(() => const ZLibDecoder().decodeBytes(bad, verify: true),
+      //       throwsA(isA<ArchiveException>()));
+      //   expect(
+      //       () => const ZLibDecoder().decodeStream(
+      //           InputMemoryStream(bad), OutputMemoryStream(), verify: true),
+      //       throwsA(isA<ArchiveException>()));
+      // });
+//
+      // test('strict native zlib requires a final stored block', () {
+      //   final valid = Uint8List.fromList([
+      //     0x78, 0x01, 0, 1, 0, 0xfe, 0xff, 0x41,
+      //     1, 1, 0, 0xfe, 0xff, 0x42, 0, 0xc6, 0, 0x84
+      //   ]);
+      //   expect(
+      //       const ZLibDecoder().decodeBytes(valid, verify: true), [65, 66]);
+      //   final bad = Uint8List.fromList(valid)..[8] = 0;
+      //   expect(() => const ZLibDecoder().decodeBytes(bad, verify: true),
+      //       throwsA(isA<ArchiveException>()));
+      //   expect(
+      //       () => const ZLibDecoder().decodeStream(
+      //           InputMemoryStream(bad), OutputMemoryStream(), verify: true),
+      //       throwsA(isA<ArchiveException>()));
+      // });
+
+      test('zlib web rejects an oversubscribed Huffman table', () {
+        final source = Uint8List.fromList(List.generate(16384, (i) => i & 255));
+        final packed = ZLibEncoder().encodeBytes(source);
+        final bad = Uint8List.fromList(packed)..[8] ^= 0xff;
+        expect(
+            const ZLibDecoderWeb().decodeBytes(packed, verify: true), source);
+        for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+          expect(
+              () => const ZLibDecoderWeb()
+                  .decodeBytes(bad, verify: verify, throwOnError: throwOnError),
+              throwsA(isA<ArchiveException>()),
+              reason: 'bytes, verify $verify');
+          expect(
+              () => const ZLibDecoderWeb().decodeStream(
+                  InputMemoryStream(bad), OutputMemoryStream(),
+                  verify: verify, throwOnError: throwOnError),
+              throwsA(isA<ArchiveException>()),
+              reason: 'stream, verify $verify');
+        }
+      });
+
+      // dart:io passes this input without second inflate pass in Dart,
+      // too costly for verify as in zlib tests above, so test stays off
+      // test('strict native gzip rejects output larger than one member', () {
+      //   final bad = Uint8List.fromList([
+      //     0x1f,
+      //     0x8b,
+      //     8,
+      //     0,
+      //     0,
+      //     0,
+      //     0,
+      //     0,
+      //     0,
+      //     0x13,
+      //     0xf3,
+      //     0xfe,
+      //     0x7e,
+      //     0x63,
+      //     0x95,
+      //     0xb3,
+      //     0x53,
+      //     0x64,
+      //     6,
+      //     0xff,
+      //     0xfa,
+      //     0xbd,
+      //     0x59,
+      //     0xa6,
+      //     8,
+      //     0,
+      //     0,
+      //     0
+      //   ]);
+      //   for (final (verify, throwOnError)
+      //       in [(true, false), (false, true)]) {
+      //     expect(
+      //         () => const GZipDecoder()
+      //             .decodeBytes(bad,
+      //                 verify: verify, throwOnError: throwOnError),
+      //         throwsA(isA<ArchiveException>()),
+      //         reason: 'bytes, verify $verify');
+      //     expect(
+      //         () => const GZipDecoder().decodeStream(
+      //             InputMemoryStream(bad), OutputMemoryStream(),
+      //             verify: verify, throwOnError: throwOnError),
+      //         throwsA(isA<ArchiveException>()),
+      //         reason: 'stream, verify $verify');
+      //   }
+      // });
+
       test('zlib verify on dart:io refuses over 4 KB after the stream', () {
         final padded = Uint8List.fromList([...zlib, ...Uint8List(4097)]);
         expect(

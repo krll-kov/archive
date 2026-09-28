@@ -18,6 +18,23 @@ class HuffmanTable {
       }
     }
 
+    if (maxCodeLength > 15) {
+      throw const FormatException('Invalid Huffman code length');
+    }
+    final counts = Uint16List(maxCodeLength + 1);
+    for (final length in lengths) {
+      if (length != 0) {
+        counts[length]++;
+      }
+    }
+    var available = 1;
+    for (var bits = 1; bits <= maxCodeLength; bits++) {
+      available = (available << 1) - counts[bits];
+      if (available < 0) {
+        throw const FormatException('Oversubscribed Huffman table');
+      }
+    }
+
     final size = 1 << maxCodeLength;
     table = Uint32List(size);
 
