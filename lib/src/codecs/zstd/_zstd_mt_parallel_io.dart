@@ -11,6 +11,7 @@ import '../../util/cancellable_stream.dart';
 import '../../util/input_file_stream.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
+import '../../util/report_progress.dart';
 import '../../util/xxh64.dart';
 import 'zstd_dictionary.dart';
 import 'zstd_level_params.dart';
@@ -41,7 +42,8 @@ Future<List<Uint8List>> zstdMtCompressJobs(
     bool firstIsFirstJob = true,
     int size = 0,
     int paramsSize = 0,
-    ZstdMtLdmPass? ldmPass}) {
+    ZstdMtLdmPass? ldmPass,
+    void Function(int consumed)? onProgress}) {
   // The job is copied out of the shared input once and then moved rather than
   // copied again: a message holding a Uint8List is serialised on its way to
   // the isolate, a transfer is not
@@ -70,7 +72,8 @@ Future<List<Uint8List>> zstdMtCompressJobs(
       paramsSize: sized,
       ldmFor: pass == null
           ? null
-          : (start, end) => zstdMtPackLdm(pass.generate(src, start, end)));
+          : (start, end) => zstdMtPackLdm(pass.generate(src, start, end)),
+      onProgress: onProgress);
 }
 
 /// As [zstdMtCompressJobs], with each job read from the file itself, so the
@@ -81,7 +84,8 @@ Future<List<Uint8List>> zstdMtCompressFileJobs(String path, int offset,
     required int overlapLog,
     required int workers,
     int cap = 0,
-    void Function(Uint8List part)? onPart}) async {
+    void Function(Uint8List part)? onPart,
+    void Function(int consumed)? onProgress}) async {
   Object source(int start, int end, int prefix) =>
       [path, offset + start - prefix, prefix + (end - start)];
   final pass = ZstdMtLdmPass.forParams(
@@ -105,7 +109,8 @@ Future<List<Uint8List>> zstdMtCompressFileJobs(String path, int offset,
         workers: workers,
         cap: cap,
         ldmFor: pass == null ? null : ldmFor,
-        onPart: onPart);
+        onPart: onPart,
+        onProgress: onProgress);
   } finally {
     handle?.closeSync();
   }
@@ -157,7 +162,8 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
     bool firstIsFirstJob = true,
     int paramsSize = 0,
     List<Object>? Function(int start, int end)? ldmFor,
-    void Function(Uint8List part)? onPart}) async {
+    void Function(Uint8List part)? onPart,
+    void Function(int consumed)? onProgress}) async {
   final parts = List<Uint8List?>.filled(starts.length, null);
   var pool = zstdMtPoolSize(workers, Platform.numberOfProcessors, cap);
   if (pool > starts.length) {
@@ -174,6 +180,10 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
   var written = 0;
   var next = 0;
   var left = starts.length;
+  var completed = 0;
+  final partial = <int, int>{};
+  void report() => reportProgress(onProgress,
+      starts[0] + completed + partial.values.fold<int>(0, (a, b) => a + b));
   Object? failure;
   StackTrace? failureStack;
 
@@ -209,6 +219,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
       // In job order, the order the one long distance pass over the frame
       // needs. `give` hands the jobs out that way whatever finishes first
       ldmFor?.call(start, end),
+      onProgress != null,
     ]);
   }
 
@@ -228,6 +239,11 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
       return;
     }
     final reply = message as List;
+    if (reply.length == 2) {
+      partial[reply[0] as int] = reply[1] as int;
+      report();
+      return;
+    }
     final worker = reply[0] as SendPort;
     final index = reply[1] as int;
     final error = reply[3];
@@ -256,6 +272,10 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
           failureStack ??= stack;
         }
       }
+      partial.remove(index);
+      completed += (index + 1 < starts.length ? starts[index + 1] : size) -
+          starts[index];
+      report();
     }
     left--;
     // A failed job loses the frame. No more jobs go out after it
@@ -323,7 +343,8 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
         int cap = 0,
         ZstdDictionary? dictionary,
         Uint8List Function(bool empty)? header,
-        int size = zstdMtSizeUnknown}) =>
+        int size = zstdMtSizeUnknown,
+        void Function(int consumed)? onProgress}) =>
     cancellableStream<List<int>, Uint8List>(
         input,
         (input, signal) => _zstdMtCompressStream(input, signal, level,
@@ -333,7 +354,8 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
             cap: cap,
             dictionary: dictionary,
             header: header,
-            size: size));
+            size: size,
+            onProgress: onProgress));
 
 Stream<Uint8List> _zstdMtCompressStream(
     StreamIterator<List<int>> input, CancelSignal signal, int level,
@@ -343,7 +365,8 @@ Stream<Uint8List> _zstdMtCompressStream(
     int cap = 0,
     ZstdDictionary? dictionary,
     Uint8List Function(bool empty)? header,
-    int size = zstdMtSizeUnknown}) async* {
+    int size = zstdMtSizeUnknown,
+    void Function(int consumed)? onProgress}) async* {
   final geometry = ZstdMtFrameEncoder.geometry(level, size,
       jobSize: jobSize, overlapLog: overlapLog);
   final ring = ZstdMtRing(geometry[0], geometry[1]);
@@ -369,6 +392,16 @@ Stream<Uint8List> _zstdMtCompressStream(
   var written = 0;
   var sent = 0;
   var back = 0;
+  final inputOf = <int, int>{};
+  final partialOf = <int, int>{};
+  var consumed = 0;
+  void reportStream() => reportProgress(
+      onProgress, consumed + partialOf.values.fold<int>(0, (a, b) => a + b));
+  void finishJob(int index) {
+    partialOf.remove(index);
+    consumed += inputOf.remove(index) ?? 0;
+    reportStream();
+  }
 
   /// How many jobs may be handed out beyond the part written next. Counting
   /// the replies instead would hold the whole frame behind one slow job, so
@@ -440,6 +473,11 @@ Stream<Uint8List> _zstdMtCompressStream(
       return;
     }
     final reply = message as List;
+    if (reply.length == 2) {
+      partialOf[reply[0] as int] = reply[1] as int;
+      reportStream();
+      return;
+    }
     final worker = reply[0] as SendPort;
     final index = reply[1] as int;
     final error = reply[3];
@@ -449,6 +487,7 @@ Stream<Uint8List> _zstdMtCompressStream(
     } else {
       held[index] =
           (reply[2] as TransferableTypedData).materialize().asUint8List();
+      finishJob(index);
       release();
     }
     back++;
@@ -469,6 +508,7 @@ Stream<Uint8List> _zstdMtCompressStream(
   });
 
   void submit(Uint8List job, int prefix, bool first, bool last) {
+    inputOf[sent] = job.length - prefix;
     // The dictionary belongs to the first job and does not cross the port, so
     // that one is compressed here and takes its place in the order like any
     // other part
@@ -484,8 +524,13 @@ Stream<Uint8List> _zstdMtCompressStream(
           jobSize: jobSize,
           overlapLog: overlapLog,
           dictionary: dictionary,
-          ldmSequences: ldmPass?.generate(job, prefix, job.length));
+          ldmSequences: ldmPass?.generate(job, prefix, job.length),
+          onBlock: (done) {
+        partialOf[sent] = done;
+        reportStream();
+      });
       held[sent] = out.getBytes();
+      finishJob(sent);
       sent++;
       back++;
       release();
@@ -502,6 +547,7 @@ Stream<Uint8List> _zstdMtCompressStream(
       jobSize,
       overlapLog,
       zstdMtPackLdm(ldmPass?.generate(job, prefix, job.length)),
+      onProgress != null,
     ];
     sent++;
     if (idle.isEmpty) {
@@ -626,13 +672,22 @@ void _zstdMtWorker(SendPort toMain) {
         }
       }
       final out = OutputMemoryStream();
+      var reported = 0;
       ZstdMtFrameEncoder.encodeJob(
           buffer, job[2] as int, out, job[3] as int, job[4] as int,
           firstJob: job[5] as bool,
           lastJob: job[6] as bool,
           jobSize: job[7] as int,
           overlapLog: job[8] as int,
-          ldmSequences: job.length > 9 ? zstdMtUnpackLdm(job[9]) : null);
+          ldmSequences: job.length > 9 ? zstdMtUnpackLdm(job[9]) : null,
+          onBlock: job.length > 10 && job[10] == true
+              ? (done) {
+                  if (done - reported >= 1 << 20) {
+                    reported = done;
+                    toMain.send([index, done]);
+                  }
+                }
+              : null);
       toMain.send([
         port.sendPort,
         index,

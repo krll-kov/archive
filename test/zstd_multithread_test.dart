@@ -810,6 +810,112 @@ void main() {
             .decodeBytes(frame, verify: true, throwOnError: true),
         input);
   });
+
+  group('onProgress', () {
+    final src = _repeatedBlocks(6 << 20);
+    const jobSize = 1 << 20;
+
+    void expectProgress(List<int> seen) {
+      expect(seen.length, greaterThan(1));
+      for (var i = 1; i < seen.length; i++) {
+        expect(seen[i], greaterThanOrEqualTo(seen[i - 1]));
+      }
+      expect(seen.last, src.length);
+    }
+
+    test('encodeBytes reports input covered by written jobs', () async {
+      final seen = <int>[];
+      final done = Completer<Uint8List>();
+      const ZstdEncoder(level: 3).encodeBytes(src,
+          multithread: ZstdMultithreadOptions<Uint8List>(
+              onDone: done.complete,
+              onError: done.completeError,
+              workers: 2,
+              jobSize: jobSize,
+              onProgress: seen.add));
+      expect(ZstdDecoder().decodeBytes(await done.future), src);
+      expectProgress(seen);
+    });
+
+    test('progress moves inside a job as its blocks are compressed', () async {
+      final seen = <int>[];
+      await for (final _ in Stream<List<int>>.fromIterable([src]).transform(
+          ZstdEncoderConverter(
+              level: 3,
+              multithread: ZstdMultithreadOptions.converter(
+                  workers: 1, onProgress: seen.add)))) {}
+      expect(seen.where((consumed) => consumed < src.length).length,
+          greaterThan(2));
+      expectProgress(seen);
+    });
+
+    test('encodeStream of a file reports it as well', () async {
+      final dir = Directory.systemTemp.createTempSync('zstd-progress');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final path = '${dir.path}/src.bin';
+      File(path).writeAsBytesSync(src);
+      final seen = <int>[];
+      final output = OutputMemoryStream();
+      final done = Completer<bool>();
+      final input = InputFileStream(path);
+      const ZstdEncoder(level: 3).encodeStream(input, output,
+          multithread: ZstdMultithreadOptions<bool>(
+              onDone: done.complete,
+              onError: done.completeError,
+              workers: 2,
+              jobSize: jobSize,
+              onProgress: seen.add));
+      await done.future;
+      await input.close();
+      expect(ZstdDecoder().decodeBytes(output.getBytes()), src);
+      expectProgress(seen);
+    });
+
+    test('the converter reports it as well', () async {
+      final seen = <int>[];
+      final out = BytesBuilder(copy: false);
+      await for (final piece in Stream<List<int>>.fromIterable([
+        for (var at = 0; at < src.length; at += 1 << 16)
+          Uint8List.sublistView(src, at, at + (1 << 16))
+      ]).transform(ZstdEncoderConverter(
+          level: 3,
+          multithread: ZstdMultithreadOptions.converter(
+              workers: 2, jobSize: jobSize, onProgress: seen.add)))) {
+        out.add(piece);
+      }
+      expect(ZstdDecoder().decodeBytes(out.toBytes()), src);
+      expectProgress(seen);
+    });
+
+    test('an onProgress that throws reaches the zone, the encode goes on',
+        () async {
+      final errors = <Object>[];
+      final converted = Completer<Uint8List>();
+      final bytes = Completer<Uint8List>();
+      runZonedGuarded(() {
+        unawaited(Stream<List<int>>.fromIterable([src])
+            .transform(ZstdEncoderConverter(
+                level: 3,
+                multithread: ZstdMultithreadOptions.converter(
+                    workers: 2,
+                    jobSize: jobSize,
+                    onProgress: (_) => throw StateError('stop'))))
+            .fold(BytesBuilder(copy: false), (b, piece) => b..add(piece))
+            .then((b) => converted.complete(b.toBytes())));
+        const ZstdEncoder(level: 3).encodeBytes(src,
+            multithread: ZstdMultithreadOptions<Uint8List>(
+                onDone: bytes.complete,
+                onError: bytes.completeError,
+                workers: 2,
+                jobSize: jobSize,
+                onProgress: (_) => throw StateError('stop')));
+      }, (error, _) => errors.add(error));
+      expect(ZstdDecoder().decodeBytes(await converted.future), src);
+      expect(ZstdDecoder().decodeBytes(await bytes.future), src);
+      expect(errors, isNotEmpty);
+      expect(errors, everyElement(isA<StateError>()));
+    });
+  });
 }
 
 class _Held implements Sink<List<int>> {

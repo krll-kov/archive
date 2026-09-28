@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import '../../util/archive_exception.dart';
 import '../../util/chunked_sink.dart';
 import '../../util/output_memory_stream.dart';
+import '../../util/report_progress.dart';
 import '../../util/xxh64.dart';
 import 'zstd_block_decoder.dart';
 import 'zstd_block_encoder.dart';
@@ -170,12 +171,17 @@ class ZstdEncoderConverter extends ChunkedConverter {
     // to ZSTDMT_JOBSIZE_MIN, so threaded frame of such input would not match C
     // output, and we compress it with single threaded encoder
     if (size != null && size <= zstdMtJobSizeMin) {
+      var consumed = 0;
       yield* ZstdEncoderConverter(
               level: level,
               checksum: checksum,
               dictionary: dictionary,
               contentSize: size)
-          .bind(stream);
+          .bind(stream.map((chunk) {
+        consumed += chunk.length;
+        reportProgress(options.onProgress, consumed);
+        return chunk;
+      }));
       return;
     }
     final sized = size == null
@@ -209,7 +215,8 @@ class ZstdEncoderConverter extends ChunkedConverter {
             ZstdMtFrameEncoder.geometry(level, sized,
                 jobSize: options.jobSize, overlapLog: options.overlapLog)),
         dictionary: _encodeDictionary,
-        size: sized, header: (empty) {
+        size: sized,
+        onProgress: options.onProgress, header: (empty) {
       final header = OutputMemoryStream();
       if (size != null && !empty) {
         writeZstdFrameHeader(

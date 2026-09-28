@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../../util/output_memory_stream.dart';
 import '../../util/output_stream.dart';
+import '../../util/report_progress.dart';
 import '../../util/xxh64.dart';
 import 'zstd_block_encoder.dart';
 import 'zstd_block_splitter.dart';
@@ -122,7 +123,8 @@ class ZstdMtFrameEncoder {
       bool firstJob,
       bool lastJob,
       ZstdDictionary? dictionary,
-      ZstdLdmSequences? ldmSequences) {
+      ZstdLdmSequences? ldmSequences,
+      {void Function(int done)? onBlock}) {
     // `ZSTDMT_compressionJob` turns the matcher off inside a job, found or not
     final blocks = zstdMtLongRange(params)
         ? ZstdBlockEncoder.external(blockSizeMax, params, ldmSequences)
@@ -168,6 +170,7 @@ class ZstdMtFrameEncoder {
           lastJob && at + take == end, _rep);
       savings += take - (out.length - before);
       at += take;
+      onBlock?.call(at - start);
       // What the first block cost says what the rest will, near enough to take
       // the room once instead of doubling into it. A job never exceeds its own
       // bound, so neither does the estimate
@@ -316,7 +319,8 @@ class ZstdMtFrameEncoder {
       int jobSize = 0,
       int overlapLog = 0,
       ZstdDictionary? dictionary,
-      ZstdLdmSequences? ldmSequences}) {
+      ZstdLdmSequences? ldmSequences,
+      void Function(int done)? onBlock}) {
     final params = zstdParamsForLevel(level, size);
     final matchWindow = 1 << params.windowLog;
     final windowSize = size <= matchWindow ? size : matchWindow;
@@ -334,7 +338,8 @@ class ZstdMtFrameEncoder {
         firstJob,
         lastJob,
         dictionary,
-        ldmSequences);
+        ldmSequences,
+        onBlock: onBlock);
   }
 }
 
@@ -487,7 +492,8 @@ Future<void> zstdMtCompressFile(
     int jobSize = 0,
     int overlapLog = 0,
     int workers = 1,
-    int memoryBudget = 0}) async {
+    int memoryBudget = 0,
+    void Function(int consumed)? onProgress}) async {
   final geometry = ZstdMtFrameEncoder.geometry(level, size,
       jobSize: jobSize, overlapLog: overlapLog);
   final starts = _jobStarts(size, geometry[0]);
@@ -499,7 +505,8 @@ Future<void> zstdMtCompressFile(
       overlapLog: overlapLog,
       workers: workers,
       cap: zstdMtWorkerCap(memoryBudget, level, size, geometry),
-      onPart: out.writeBytes);
+      onPart: out.writeBytes,
+      onProgress: onProgress);
   if (checksum) {
     _writeChecksum(out, zstdMtFileDigest(path, offset, size));
   }
@@ -582,7 +589,8 @@ Future<Uint8List> zstdMtCompress(Uint8List src, int level,
     int overlapLog = 0,
     int workers = 1,
     int memoryBudget = 0,
-    ZstdDictionary? dictionary}) async {
+    ZstdDictionary? dictionary,
+    void Function(int consumed)? onProgress}) async {
   // `ZSTD_getCParamsFromCCtxParams` sizes the frame by the content and the
   // dictionary buffer together, as the single threaded frame does
   final sized = src.length + (dictionary?.sourceSize ?? 0);
@@ -615,9 +623,11 @@ Future<Uint8List> zstdMtCompress(Uint8List src, int level,
         jobSize: jobSize,
         overlapLog: overlapLog,
         dictionary: dictionary,
-        ldmSequences: ldmPass?.generate(src, 0, firstEnd));
+        ldmSequences: ldmPass?.generate(src, 0, firstEnd),
+        onBlock: (done) => reportProgress(onProgress, done));
     firstPart = out0.getBytes();
     rest = starts.sublist(1);
+    reportProgress(onProgress, firstEnd);
   }
   final parts = rest.isEmpty
       ? const <Uint8List>[]
@@ -629,7 +639,8 @@ Future<Uint8List> zstdMtCompress(Uint8List src, int level,
           firstIsFirstJob: dictionary == null,
           size: src.length,
           paramsSize: sized,
-          ldmPass: ldmPass);
+          ldmPass: ldmPass,
+          onProgress: onProgress);
 
   final out = OutputMemoryStream();
   final params = zstdParamsForLevel(level, sized);

@@ -6,6 +6,7 @@ import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
 import '../util/output_stream.dart';
+import '../util/report_progress.dart';
 import 'zstd/zstd_dictionary.dart';
 import 'zstd/zstd_frame_encoder.dart';
 import 'zstd/zstd_level_params.dart';
@@ -58,7 +59,9 @@ class ZstdEncoder {
   Future<Uint8List> _multithreadBytes(
       Uint8List bytes, int level, ZstdMultithreadOptions<Object?> options) {
     if (bytes.length <= zstdMtJobSizeMin) {
-      return Future.value(encodeBytes(bytes, level: level));
+      final encoded = encodeBytes(bytes, level: level);
+      reportProgress(options.onProgress, bytes.length);
+      return Future.value(encoded);
     }
     return zstdMtCompress(bytes, level,
         checksum: checksum,
@@ -66,7 +69,8 @@ class ZstdEncoder {
         overlapLog: options.overlapLog,
         workers: options.workers ?? 0,
         memoryBudget: options.memoryBudget ?? zstdDefaultMemoryBudget,
-        dictionary: _dictionary);
+        dictionary: _dictionary,
+        onProgress: options.onProgress);
   }
 
   static void _reportAsync<T>(ZstdMultithreadOptions<T> options,
@@ -135,7 +139,8 @@ class ZstdEncoder {
             jobSize: multithread.jobSize,
             overlapLog: multithread.overlapLog,
             workers: multithread.workers ?? 0,
-            memoryBudget: multithread.memoryBudget ?? zstdDefaultMemoryBudget);
+            memoryBudget: multithread.memoryBudget ?? zstdDefaultMemoryBudget,
+            onProgress: multithread.onProgress);
         return true;
       }, false);
       return;

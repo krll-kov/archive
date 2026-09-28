@@ -1,12 +1,14 @@
 import 'dart:typed_data';
 
 import 'byte_order.dart';
-import 'decode_guard.dart';
 import 'input_stream.dart';
 import 'output_stream.dart';
+import 'report_progress.dart';
 
 /// Passes every write to [output] and calls [onProgress] with the number of
 /// bytes written through it, once per [interval] bytes and on flush and close.
+/// If [onProgress] throws, it's Exception goes to the zone without stopping
+/// the decoder/encoder.
 ///
 /// A decoder rarely knows its output size in advance, so a fraction is read
 /// off the input instead:
@@ -134,14 +136,14 @@ class ProgressOutputStream implements OutputStream {
     _written += count;
     if (_written - _reported >= interval) {
       _reported = _written;
-      invokeDecodeCallback(onProgress, _written);
+      reportProgress(onProgress, _written);
     }
   }
 
   void _report() {
     if (_written != _reported) {
       _reported = _written;
-      invokeDecodeCallback(onProgress, _written);
+      reportProgress(onProgress, _written);
     }
   }
 }

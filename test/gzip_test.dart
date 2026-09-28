@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -235,20 +236,23 @@ void main() {
           expect(chunks!.expand((chunk) => chunk), [1, 2, 3, ...data, ...data]);
         });
 
-        test('verified members report progress callback failures, web $web',
-            () {
+        test('verified members finish when progress throws, web $web', () {
           final error = StateError('progress callback failed');
           final input = InputMemoryStream([4, 5, ...gzip, ...gzip])..skip(2);
           final output = ProgressOutputStream(
               OutputMemoryStream(), (_) => throw error,
               interval: 1);
-          expect(
-              () => web
-                  ? const GZipDecoderWeb()
-                      .decodeStream(input, output, verify: true)
-                  : const GZipDecoder()
-                      .decodeStream(input, output, verify: true),
-              throwsA(same(error)));
+          final errors = <Object>[];
+          late bool ok;
+          runZonedGuarded(() {
+            ok = web
+                ? const GZipDecoderWeb()
+                    .decodeStream(input, output, verify: true)
+                : const GZipDecoder().decodeStream(input, output, verify: true);
+          }, (thrown, _) => errors.add(thrown));
+          expect(ok, isTrue);
+          expect(errors, isNotEmpty);
+          expect(errors, everyElement(same(error)));
         });
       }
 

@@ -6,6 +6,7 @@ import '../archive/archive_file.dart';
 import '../codecs/zip_encoder.dart';
 import '../util/input_file_stream.dart';
 import '../util/output_file_stream.dart';
+import '../util/report_progress.dart';
 import 'zip_file_progress.dart';
 
 class ZipFileEncoder {
@@ -130,7 +131,7 @@ class ZipFileEncoder {
           includeDirName ? '$dirName/$relPath' : relPath,
           level,
         );
-        onProgress?.call(progress);
+        reportProgress(onProgress, progress);
       }
     }
   }
@@ -174,7 +175,7 @@ class ZipFileEncoder {
           includeDirName ? '$dirName/$relPath' : relPath,
           level,
         );
-        onProgress?.call(progress);
+        reportProgress(onProgress, progress);
       }
     }
   }

@@ -23,6 +23,13 @@ class ZstdMultithreadOptions<T> {
   /// `ZSTD_c_overlapLog`, zero for the level's own, 9 for the whole window
   final int overlapLog;
 
+  /// Called with the count of input bytes compressed so far, finished jobs and
+  /// the part of running ones, as `Read:` of `zstd --progress`. Jobs are taken
+  /// ahead of that point, so the count of bytes handed over reaches the end
+  /// long before the work does.
+  /// An exception it throws goes to the zone and the encode continues
+  final void Function(int consumed)? onProgress;
+
   const ZstdMultithreadOptions({
     required this.onDone,
     this.onError,
@@ -30,6 +37,7 @@ class ZstdMultithreadOptions<T> {
     this.memoryBudget,
     this.jobSize = 0,
     this.overlapLog = 0,
+    this.onProgress,
   });
 
   /// {@macro archive.multithreaded_header}
@@ -39,6 +47,7 @@ class ZstdMultithreadOptions<T> {
     this.memoryBudget,
     this.jobSize = 0,
     this.overlapLog = 0,
+    this.onProgress,
   })  : onDone = null,
         onError = null;
 }

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../../util/cancellable_stream.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
+import '../../util/report_progress.dart';
 import 'zstd_dictionary.dart';
 import 'zstd_level_params.dart';
 import 'zstd_mt_frame_encoder.dart';
@@ -22,7 +23,8 @@ Future<List<Uint8List>> zstdMtCompressJobs(
     bool firstIsFirstJob = true,
     int size = 0,
     int paramsSize = 0,
-    ZstdMtLdmPass? ldmPass}) {
+    ZstdMtLdmPass? ldmPass,
+    void Function(int consumed)? onProgress}) {
   final parts = <Uint8List>[];
   final whole = size > 0 ? size : src.length;
   // With a dictionary the parameters are sized by more than the content, and
@@ -50,8 +52,10 @@ Future<List<Uint8List>> zstdMtCompressJobs(
         lastJob: i == starts.length - 1,
         jobSize: jobSize,
         overlapLog: overlapLog,
-        ldmSequences: pass?.generate(src, start, end));
+        ldmSequences: pass?.generate(src, start, end),
+        onBlock: (done) => reportProgress(onProgress, start + done));
     parts.add(out.getBytes());
+    reportProgress(onProgress, end);
   }
   return Future.value(parts);
 }
@@ -65,7 +69,8 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
         int cap = 0,
         ZstdDictionary? dictionary,
         Uint8List Function(bool empty)? header,
-        int size = zstdMtSizeUnknown}) =>
+        int size = zstdMtSizeUnknown,
+        void Function(int consumed)? onProgress}) =>
     cancellableStream<List<int>, Uint8List>(
         input,
         (input, signal) => _compressStream(input, signal, level,
@@ -73,7 +78,8 @@ Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
             overlapLog: overlapLog,
             dictionary: dictionary,
             header: header,
-            size: size));
+            size: size,
+            onProgress: onProgress));
 
 Stream<Uint8List> _compressStream(
     StreamIterator<List<int>> input, CancelSignal signal, int level,
@@ -81,14 +87,18 @@ Stream<Uint8List> _compressStream(
     required int overlapLog,
     ZstdDictionary? dictionary,
     Uint8List Function(bool empty)? header,
-    int size = zstdMtSizeUnknown}) async* {
+    int size = zstdMtSizeUnknown,
+    void Function(int consumed)? onProgress}) async* {
   final geometry = ZstdMtFrameEncoder.geometry(level, size,
       jobSize: jobSize, overlapLog: overlapLog);
   final ring = ZstdMtRing(geometry[0], geometry[1]);
   final ldmPass =
       ZstdMtLdmPass.forParams(zstdParamsForLevel(level, size), geometry[0]);
   var index = 0;
+  var consumed = 0;
   Uint8List run(Uint8List job, bool first, bool last) {
+    final before = consumed;
+    consumed += job.length - (first ? 0 : geometry[1]);
     final out = OutputMemoryStream();
     var buffer = job;
     var prefix = first ? 0 : geometry[1];
@@ -107,7 +117,8 @@ Stream<Uint8List> _compressStream(
         jobSize: jobSize,
         overlapLog: overlapLog,
         dictionary: first ? dict : null,
-        ldmSequences: found);
+        ldmSequences: found,
+        onBlock: (done) => reportProgress(onProgress, before + done));
     return out.getBytes();
   }
 
@@ -139,6 +150,7 @@ Stream<Uint8List> _compressStream(
       for (final piece in pieces(part)) {
         yield piece;
       }
+      reportProgress(onProgress, consumed);
       index++;
     }
   }
@@ -155,6 +167,7 @@ Stream<Uint8List> _compressStream(
   for (final piece in pieces(tail)) {
     yield piece;
   }
+  reportProgress(onProgress, consumed);
 }
 
 /// There are no files to read from where this file is chosen
@@ -164,7 +177,8 @@ Future<List<Uint8List>> zstdMtCompressFileJobs(String path, int offset,
         required int overlapLog,
         required int workers,
         int cap = 0,
-        void Function(Uint8List part)? onPart}) =>
+        void Function(Uint8List part)? onPart,
+        void Function(int consumed)? onProgress}) =>
     throw UnsupportedError('zstd: no file access on this target');
 
 int zstdMtFileDigest(String path, int offset, int size) =>

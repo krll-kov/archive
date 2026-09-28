@@ -1128,6 +1128,28 @@ void main() {
     expect(fs.readByte(), equals(80));
   });
 
+  test('zip directory finishes when onProgress throws', () async {
+    final root = Directory.systemTemp.createTempSync('archive-zip-progress-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final source = p.join(root.path, 'src');
+    generateDataDirectory(source, fileSize: 1024, numFiles: 5);
+    final zipPath = p.join(root.path, 'out.zip');
+    final errors = <Object>[];
+    await runZonedGuarded(() async {
+      await ZipFileEncoder().zipDirectory(Directory(source),
+          filename: zipPath,
+          onProgress: (_) => throw StateError('progress failed'));
+    }, (error, _) => errors.add(error));
+    expect(errors, hasLength(5));
+    expect(errors, everyElement(isA<StateError>()));
+    expect(
+        ZipDecoder()
+            .decodeBytes(File(zipPath).readAsBytesSync(), verify: true)
+            .files
+            .where((f) => f.isFile),
+        hasLength(5));
+  });
+
   test('zip directory', () async {
     final tmpPath = '$testOutputPath/test_zip_dir';
 
