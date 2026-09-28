@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'archive_exception.dart';
 import 'byte_order.dart';
+import 'decode_guard.dart';
 import 'input_stream.dart';
 import 'output_memory_stream.dart';
 import 'output_stream.dart';
@@ -151,8 +151,7 @@ abstract class ChunkedSink extends ByteConversionSink {
     try {
       body();
     } catch (error) {
-      _failure ??=
-          error is ArchiveException ? error : ArchiveException('$error');
+      _failure ??= archiveError(error);
       throw _failure!;
     }
   }

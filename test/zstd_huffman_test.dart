@@ -7,6 +7,7 @@ import 'package:archive/src/codecs/zstd/zstd_huffman_encoder.dart';
 import 'package:archive/src/codecs/zstd/zstd_huffman_loop.dart';
 import 'package:archive/src/codecs/zstd/zstd_literals.dart';
 import 'package:archive/src/codecs/zstd/zstd_literals_encoder.dart';
+import 'package:archive/src/util/archive_exception.dart';
 import 'package:archive/src/util/crc32.dart';
 import 'package:test/test.dart';
 
@@ -385,7 +386,7 @@ void main() {
       for (var cut = 1; cut < coded; cut++) {
         final literals = ZstdLiterals();
         expect(() => literals.decode(out, 0, cut, 1 << 17, into, 0),
-            throwsA(anything),
+            throwsA(isA<ArchiveException>()),
             reason: 'cut to $cut bytes');
       }
     });

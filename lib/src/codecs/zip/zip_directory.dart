@@ -45,6 +45,9 @@ class ZipDirectory {
     centralDirectoryOffset = input.readUint32();
 
     final len = input.readUint16();
+    if (verify && len > input.length) {
+      throw ArchiveException('zip: archive comment is truncated');
+    }
     if (len > 0) {
       zipFileComment = input.readString(size: len, utf8: false);
     }

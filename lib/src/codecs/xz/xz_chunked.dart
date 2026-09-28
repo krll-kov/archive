@@ -5,6 +5,7 @@ import '../../util/archive_exception.dart';
 import '../../util/chunked_sink.dart';
 import '../../util/crc32.dart';
 import '../../util/crc64.dart';
+import '../../util/decode_guard.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/output_memory_stream.dart';
 import '../../util/sha256.dart';
@@ -53,7 +54,8 @@ class XzDecoderConverter extends ChunkedConverter {
     if (options == null) {
       return super.bind(stream);
     }
-    return _bindMultithread(stream, options);
+    return archiveStreamErrors(stream,
+        (Stream<List<int>> source) => _bindMultithread(source, options));
   }
 
   Stream<List<int>> _bindMultithread(

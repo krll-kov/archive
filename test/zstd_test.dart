@@ -119,7 +119,7 @@ void main() {
                 Uint8List.sublistView(bytes, 0, cut),
                 verify: true,
                 throwOnError: true),
-            throwsA(anything),
+            throwsA(isA<ArchiveException>()),
             reason: 'cut to $cut bytes');
       }
     });
@@ -149,7 +149,7 @@ void main() {
           () => ZstdDecoder().decodeBytes(
               Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]),
               throwOnError: true),
-          throwsA(anything));
+          throwsA(isA<ArchiveException>()));
       expect(
           ZstdDecoder().decodeBytes(Uint8List.fromList([1, 2, 3, 4])), isEmpty);
     });
@@ -160,7 +160,7 @@ void main() {
       expect(
           () => ZstdDecoder(windowSizeLimit: 1024)
               .decodeBytes(bytes, throwOnError: true),
-          throwsA(anything));
+          throwsA(isA<ArchiveException>()));
     });
   });
 
@@ -176,7 +176,7 @@ void main() {
 
     void reject(Uint8List bytes, String reason) {
       expect(() => ZstdDecoder().decodeBytes(bytes, throwOnError: true),
-          throwsA(anything),
+          throwsA(isA<ArchiveException>()),
           reason: reason);
     }
 
@@ -195,7 +195,7 @@ void main() {
                 Uint8List.sublistView(frame, 0, cut),
                 verify: true,
                 throwOnError: true),
-            throwsA(anything),
+            throwsA(isA<ArchiveException>()),
             reason: 'cut to $cut bytes');
       }
     });
@@ -207,7 +207,7 @@ void main() {
                 Uint8List.sublistView(short, 0, cut),
                 verify: true,
                 throwOnError: true),
-            throwsA(anything),
+            throwsA(isA<ArchiveException>()),
             reason: 'cut to $cut bytes');
       }
     });
@@ -271,12 +271,12 @@ void main() {
 
     test('an empty archive', () {
       expect(() => ZstdDecoder().decodeBytes(Uint8List(0), throwOnError: true),
-          throwsA(anything));
+          throwsA(isA<ArchiveException>()));
       final out = OutputMemoryStream();
       expect(
           () => ZstdDecoder().decodeStream(InputMemoryStream(Uint8List(0)), out,
               throwOnError: true),
-          throwsA(anything));
+          throwsA(isA<ArchiveException>()));
     });
 
     test('a skippable frame that runs off the end', () {
@@ -402,7 +402,9 @@ void main() {
         expect(
             () => ZstdDecoder()
                 .decodeBytes(joined, verify: true, throwOnError: true),
-            throwsA(anything));
+            throwsA(failure == 'checksum'
+                ? isA<ArchiveChecksumException>()
+                : isA<ArchiveException>()));
       });
     }
   });

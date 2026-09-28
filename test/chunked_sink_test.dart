@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:archive/src/util/decode_guard.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -387,6 +388,81 @@ void main() {
             ..add(src)
             ..close(),
           throwsA(isA<ArchiveException>()));
+    });
+  });
+
+  group('failures that are not bad data', () {
+    test('what the output throws keeps its type', () {
+      final data = _sample(300000);
+      const failure = FileSystemException('No space left on device');
+      final cases = <(ChunkedSink Function(Sink<List<int>>), List<int>)>[
+        ((sink) => XzChunkedDecoder(sink), XZEncoder().encodeBytes(data)),
+        ((sink) => ZstdChunkedDecoder(sink), ZstdEncoder().encodeBytes(data)),
+        ((sink) => BZip2ChunkedDecoder(sink), BZip2Encoder().encodeBytes(data)),
+        ((sink) => XzChunkedEncoder(sink), data),
+        ((sink) => ZstdChunkedEncoder(sink), data),
+        ((sink) => BZip2ChunkedEncoder(sink), data),
+      ];
+      for (final (make, input) in cases) {
+        expect(
+            () => make(_FailingSink(failure))
+              ..add(input)
+              ..close(),
+            throwsA(same(failure)));
+      }
+    });
+
+    test('an error from the source reaches the caller as it is', () async {
+      final failure = RangeError('from the source');
+      final bytes = <StreamTransformer<List<int>, List<int>>>[
+        xzCodec.decoder,
+        const XzCodec(multithread: XZMultithreadOptions.converter(workers: 2))
+            .decoder,
+        xzCodec.encoder,
+        zstdCodec.decoder,
+        zstdCodec.encoder,
+        const ZstdCodec(
+                multithread: ZstdMultithreadOptions.converter(workers: 2))
+            .encoder,
+        bzip2Codec.decoder,
+        bzip2Codec.encoder,
+      ];
+      for (final transformer in bytes) {
+        await expectLater(
+            Stream<List<int>>.error(failure).transform(transformer).toList(),
+            throwsA(same(failure)));
+      }
+      await expectLater(
+          Stream<List<int>>.error(failure).transform(tarCodec.decoder).toList(),
+          throwsA(same(failure)));
+      for (final encoder in [tarCodec.encoder, zipCodec.encoder]) {
+        await expectLater(
+            Stream<ArchiveFile>.error(failure).transform(encoder).toList(),
+            throwsA(same(failure)));
+      }
+    });
+
+    test('an error from inside a stream converter is ArchiveException',
+        () async {
+      Stream<int> broken(Stream<int> source) async* {
+        await for (final value in source) {
+          yield value;
+        }
+        throw RangeError('inside');
+      }
+
+      await expectLater(archiveStreamErrors(Stream.value(1), broken).toList(),
+          throwsA(isA<ArchiveException>()));
+      const failure = FileSystemException('inside');
+      Stream<int> foreign(Stream<int> source) async* {
+        await for (final value in source) {
+          yield value;
+        }
+        throw failure;
+      }
+
+      await expectLater(archiveStreamErrors(Stream.value(1), foreign).toList(),
+          throwsA(same(failure)));
     });
   });
 

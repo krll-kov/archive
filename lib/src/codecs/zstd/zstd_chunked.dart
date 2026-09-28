@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import '../../util/archive_exception.dart';
 import '../../util/chunked_sink.dart';
+import '../../util/decode_guard.dart';
 import '../../util/output_memory_stream.dart';
 import '../../util/report_progress.dart';
 import '../../util/xxh64.dart';
@@ -157,7 +158,8 @@ class ZstdEncoderConverter extends ChunkedConverter {
     if (options == null) {
       return super.bind(stream);
     }
-    return _bindMultithread(stream, options);
+    return archiveStreamErrors(stream,
+        (Stream<List<int>> source) => _bindMultithread(source, options));
   }
 
   Stream<List<int>> _bindMultithread(Stream<List<int>> stream,
@@ -233,7 +235,7 @@ class ZstdEncoderConverter extends ChunkedConverter {
     }).transform(
         StreamTransformer.fromHandlers(handleError: (error, trace, sink) {
       failed = true;
-      sink.addError(zstdEncodeFailure(error), trace);
+      sink.addError(archiveError(error, 'zstd: '), trace);
     }));
     if (!failed && size != null && total != size) {
       throw ArchiveException('Input is $total bytes, contentSize is $size');

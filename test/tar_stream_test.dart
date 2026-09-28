@@ -328,6 +328,42 @@ void main() {
       });
     }
 
+    test('a pax record length cannot overflow the metadata boundary', () async {
+      final output = OutputMemoryStream();
+      final records = Uint8List.fromList(
+          utf8.encode('12 path=foo\n9223372036854775807 path=bar\n'));
+      (TarFile()
+            ..filename = 'PaxHeader'
+            ..typeFlag = TarFile.exHeader
+            ..fileSize = records.length
+            ..contentBytes = records)
+          .write(output);
+      (TarFile()
+            ..filename = 'entry'
+            ..fileSize = 1
+            ..contentBytes = Uint8List.fromList([42]))
+          .write(output);
+      output.writeBytes(Uint8List(1024));
+      final bytes = output.getBytes();
+      for (final piece in [1, 509, 4096]) {
+        expect(await _stream(bytes, piece), [
+          [
+            'foo',
+            1,
+            [42]
+          ]
+        ]);
+      }
+      for (final flags in [(false, false), (false, true), (true, false)]) {
+        final file = TarDecoder()
+            .decodeBytes(bytes, verify: flags.$1, throwOnError: flags.$2)
+            .files
+            .single;
+        expect(file.name, 'foo');
+        expect(file.content, [42]);
+      }
+    });
+
     test('a long name and a pax header survive the stream', () async {
       final long = '${'a-very-long-directory-name/' * 6}file.txt';
       final entries = [

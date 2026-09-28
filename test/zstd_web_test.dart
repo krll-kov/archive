@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:archive/src/codecs/zstd/zstd_constants.dart';
 import 'package:archive/src/codecs/zstd/zstd_dictionary.dart';
 import 'package:archive/src/codecs/zstd_decoder.dart';
+import 'package:archive/src/util/archive_exception.dart';
 import 'package:archive/src/util/crc32.dart';
 import 'package:archive/src/util/input_memory_stream.dart';
 import 'package:archive/src/util/output_memory_stream.dart';
@@ -208,7 +209,7 @@ void main() {
         expect(
             () => ZstdDecoder()
                 .decodeBytes(frame, verify: true, throwOnError: true),
-            throwsFormatException);
+            throwsA(isA<ArchiveException>()));
       } else {
         expect(
             ZstdDecoder().decodeBytes(frame, verify: true, throwOnError: true),
@@ -255,7 +256,7 @@ void main() {
         expect(
             () => ZstdDecoder()
                 .decodeBytes(frame, verify: true, throwOnError: true),
-            throwsFormatException);
+            throwsA(isA<ArchiveException>()));
       }
     });
   }
@@ -314,11 +315,11 @@ void main() {
 
   test('a damaged byte is caught by the checksum', () {
     final bytes = Uint8List.fromList(base64.decode(_vectors[5][1] as String));
-    bytes[bytes.length - 6] ^= 0x20;
+    bytes[bytes.length - 1] ^= 0x20;
     expect(
         () =>
             ZstdDecoder().decodeBytes(bytes, verify: true, throwOnError: true),
-        throwsA(anything));
+        throwsA(isA<ArchiveChecksumException>()));
   });
 
   test('XXH64 matches the reference on this platform', () {

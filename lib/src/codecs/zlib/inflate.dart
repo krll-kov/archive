@@ -322,7 +322,7 @@ class Inflate {
       codeLengths[_order[i]] = len;
     }
 
-    final codeLengthsTable = HuffmanTable(codeLengths);
+    final codeLengthsTable = HuffmanTable(codeLengths, codeLengthCodes: true);
 
     final litLenDistLengths = Uint8List(numLitLengthCodes + numDistanceCodes);
 
@@ -767,6 +767,8 @@ class Inflate {
 
   /// Fixed huffman distance code table
   static const _fixedDistanceTableData = <int>[
+    5,
+    5,
     5,
     5,
     5,

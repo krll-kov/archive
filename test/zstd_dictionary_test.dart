@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:archive/src/codecs/zstd/zstd_dictionary.dart';
 import 'package:archive/src/codecs/zstd_decoder.dart';
+import 'package:archive/src/util/archive_exception.dart';
 import 'package:archive/src/util/crc32.dart';
 import 'package:archive/src/util/input_memory_stream.dart';
 import 'package:archive/src/util/output_memory_stream.dart';
@@ -86,7 +87,7 @@ void main() {
       final bytes =
           File('${directory.path}/dv-small-trained-l19.zst').readAsBytesSync();
       expect(() => ZstdDecoder().decodeBytes(bytes, throwOnError: true),
-          throwsA(anything));
+          throwsA(isA<ArchiveException>()));
     });
 
     test('a frame naming a dictionary is rejected by the wrong one', () {
@@ -95,7 +96,7 @@ void main() {
       expect(
           () => ZstdDecoder(dictionary: dictionaries['raw'])
               .decodeBytes(bytes, throwOnError: true),
-          throwsA(anything));
+          throwsA(isA<ArchiveException>()));
     });
 
     test('a dictionary the frame does not name is still applied', () {
@@ -112,7 +113,7 @@ void main() {
           File('${directory.path}/dict-trained.dict').readAsBytesSync();
       for (final cut in [9, 20, 64, 100]) {
         expect(() => ZstdDictionary(Uint8List.sublistView(full, 0, cut)),
-            throwsA(anything),
+            throwsA(isA<ArchiveException>()),
             reason: 'cut to $cut bytes');
       }
     });
@@ -124,7 +125,7 @@ void main() {
           File('${directory.path}/dict-trained.dict').readAsBytesSync();
       for (final cut in [9, 20, 64, 100]) {
         expect(() => ZstdDictionary(Uint8List.sublistView(full, 0, cut)),
-            throwsA(isA<FormatException>()),
+            throwsA(isA<ArchiveException>()),
             reason: 'cut to $cut bytes');
       }
     });
@@ -147,7 +148,7 @@ void main() {
       final damaged = Uint8List.fromList(
           File('${directory.path}/dict-trained.dict').readAsBytesSync());
       damaged[8] = 37;
-      expect(() => ZstdDictionary(damaged), throwsA(isA<FormatException>()));
+      expect(() => ZstdDictionary(damaged), throwsA(isA<ArchiveException>()));
     });
   });
 }

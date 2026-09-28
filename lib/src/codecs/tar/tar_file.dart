@@ -564,7 +564,7 @@ class TarMetadata {
       // and can't run past the end of the header.
       if (length == null ||
           length <= sp - pos + 1 ||
-          pos + length > records.length) {
+          length > records.length - pos) {
         break;
       }
       final recordEnd = pos + length;

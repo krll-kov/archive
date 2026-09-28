@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../util/decode_guard.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
@@ -78,7 +79,7 @@ class ZstdEncoder {
     unawaited(work().then(onDone, onError: (Object error, StackTrace stack) {
       final onError = options.onError;
       if (onError != null) {
-        onError(zstdEncodeFailure(error), stack);
+        onError(archiveError(error, 'zstd: '), stack);
       } else {
         onDone(onFailure);
       }
@@ -150,7 +151,7 @@ class ZstdEncoder {
           level: level ?? this.level,
           dictionary: dictionary);
     } catch (error, stack) {
-      Error.throwWithStackTrace(zstdEncodeFailure(error), stack);
+      Error.throwWithStackTrace(archiveError(error, 'zstd: '), stack);
     }
   }
 }

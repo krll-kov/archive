@@ -824,6 +824,65 @@ void main() async {
         }
       });
 
+      test('strict decoding rejects a truncated archive comment', () {
+        final archive = Archive()
+          ..comment = 'archive comment'
+          ..add(ArchiveFile.string('a.txt', 'some content'));
+        final bytes = ZipEncoder().encodeBytes(archive);
+        final directory =
+            Directory.systemTemp.createTempSync('archive-zip-comment-');
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final file = File(p.join(directory.path, 'truncated.zip'));
+        for (var cut = 1; cut <= archive.comment!.length; cut++) {
+          final truncated = bytes.sublist(0, bytes.length - cut);
+          expect(ZipDecoder().decodeBytes(truncated).first.content,
+              utf8.encode('some content'));
+          file.writeAsBytesSync(truncated);
+          for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+            expect(
+                () => ZipDecoder().decodeBytes(truncated,
+                    verify: verify, throwOnError: throwOnError),
+                throwsA(isA<ArchiveException>()),
+                reason: 'cut $cut verify $verify');
+            final input = InputFileStream(file.path, bufferSize: 7);
+            try {
+              expect(
+                  () => ZipDecoder().decodeStream(input,
+                      verify: verify, throwOnError: throwOnError),
+                  throwsA(isA<ArchiveException>()),
+                  reason: 'file cut $cut verify $verify');
+            } finally {
+              input.closeSync();
+            }
+          }
+        }
+      });
+
+      test('strict decoding accepts a 65535-byte archive comment', () {
+        final comment = 'a' * 65535;
+        final bytes = ZipEncoder().encodeBytes(Archive()
+          ..comment = comment
+          ..add(ArchiveFile.string('a.txt', 'some content')));
+        final directory =
+            Directory.systemTemp.createTempSync('archive-zip-comment-');
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final file = File(p.join(directory.path, 'comment.zip'))
+          ..writeAsBytesSync(bytes);
+        for (final input in [
+          InputMemoryStream(bytes),
+          InputFileStream(file.path, bufferSize: 7),
+        ]) {
+          try {
+            final decoder = ZipDecoder();
+            final archive = decoder.decodeStream(input, verify: true);
+            expect(archive.first.content, utf8.encode('some content'));
+            expect(decoder.directory.zipFileComment, comment);
+          } finally {
+            input.closeSync();
+          }
+        }
+      });
+
       test('strict decoding rejects an unsupported compression method', () {
         final bad = Uint8List.fromList(zip);
         ByteData.sublistView(bad).setUint16(8, 42, Endian.little);
@@ -1589,7 +1648,7 @@ void main() async {
           .files
           .firstWhere((f) => f.name == 'readme.notzip');
       expect(() => (tampered.rawContent! as ZipFile).verifyCrc32(),
-          throwsException);
+          throwsA(isA<ArchiveChecksumException>()));
     });
 
     test('an AES zip encoded again has the CRC of its content', () {

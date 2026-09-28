@@ -6,7 +6,7 @@ class HuffmanTable {
   int maxCodeLength = 0;
   int minCodeLength = 0x7fffffff;
 
-  HuffmanTable(List<int> lengths) {
+  HuffmanTable(List<int> lengths, {bool codeLengthCodes = false}) {
     final listSize = lengths.length;
 
     for (var i = 0; i < listSize; ++i) {
@@ -33,6 +33,9 @@ class HuffmanTable {
       if (available < 0) {
         throw const FormatException('Oversubscribed Huffman table');
       }
+    }
+    if (available > 0 && maxCodeLength > (codeLengthCodes ? 0 : 1)) {
+      throw const FormatException('Incomplete Huffman table');
     }
 
     final size = 1 << maxCodeLength;

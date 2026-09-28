@@ -7,6 +7,7 @@ import '../../util/_pieces.dart';
 import '../../util/archive_exception.dart';
 import '../../util/cancellable_stream.dart';
 import '../../util/chunked_sink.dart';
+import '../../util/decode_guard.dart';
 import '../../util/input_memory_stream.dart';
 import '../tar_encoder.dart';
 import 'tar_file.dart';
@@ -108,9 +109,10 @@ class TarEncoderTransformer
   static const _piece = 64 * 1024;
 
   @override
-  Stream<List<int>> bind(Stream<ArchiveFile> stream) =>
-      cancellableStream<ArchiveFile, List<int>>(
-          stream, (input, signal) => _write(input, signal));
+  Stream<List<int>> bind(Stream<ArchiveFile> stream) => archiveStreamErrors(
+      stream,
+      (Stream<ArchiveFile> source) => cancellableStream<ArchiveFile, List<int>>(
+          source, (input, signal) => _write(input, signal)));
 
   Stream<List<int>> _write(
       StreamIterator<ArchiveFile> input, CancelSignal signal) async* {
@@ -176,9 +178,11 @@ class TarDecoderTransformer extends StreamTransformerBase<List<int>, TarEntry> {
   const TarDecoderTransformer({this.filenameEncoding = const Utf8Codec()});
 
   @override
-  Stream<TarEntry> bind(Stream<List<int>> stream) =>
-      cancellableStream<List<int>, TarEntry>(stream,
-          (input, signal) => _read(_Reader(input), filenameEncoding, signal));
+  Stream<TarEntry> bind(Stream<List<int>> stream) => archiveStreamErrors(
+      stream,
+      (Stream<List<int>> source) => cancellableStream<List<int>, TarEntry>(
+          source,
+          (input, signal) => _read(_Reader(input), filenameEncoding, signal)));
 }
 
 /// The parsed type flag. Note that older tar files often use an empty field

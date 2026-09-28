@@ -5,6 +5,7 @@ import '../../archive/archive_file.dart';
 import '../../util/_pieces.dart';
 import '../../util/cancellable_stream.dart';
 import '../../util/chunked_sink.dart';
+import '../../util/decode_guard.dart';
 import '../zip_encoder.dart';
 import '../zlib/deflate.dart';
 
@@ -66,9 +67,10 @@ class ZipEncoderTransformer
       this.autoClose = false});
 
   @override
-  Stream<List<int>> bind(Stream<ArchiveFile> stream) =>
-      cancellableStream<ArchiveFile, List<int>>(
-          stream, (input, signal) => _write(input, signal));
+  Stream<List<int>> bind(Stream<ArchiveFile> stream) => archiveStreamErrors(
+      stream,
+      (Stream<ArchiveFile> source) => cancellableStream<ArchiveFile, List<int>>(
+          source, (input, signal) => _write(input, signal)));
 
   Stream<List<int>> _write(
       StreamIterator<ArchiveFile> input, CancelSignal signal) async* {

@@ -73,6 +73,25 @@ bool isDecodeDataError(Object error) =>
     error is RangeError ||
     error is TypeError;
 
+Object archiveError(Object error, [String prefix = '']) =>
+    isDecodeDataError(error) && error is! ArchiveException
+        ? ArchiveException('$prefix$error')
+        : error;
+
+class _SourceError {
+  final Object error;
+
+  _SourceError(this.error);
+}
+
+Stream<T> archiveStreamErrors<S, T>(
+        Stream<S> source, Stream<T> Function(Stream<S> source) convert) =>
+    convert(source.handleError(
+        (Object error, StackTrace stack) =>
+            Error.throwWithStackTrace(_SourceError(error), stack))).handleError(
+        (Object error, StackTrace stack) => Error.throwWithStackTrace(
+            error is _SourceError ? error.error : archiveError(error), stack));
+
 void invokeDecodeCallback<T>(void Function(T) callback, T value) {
   try {
     callback(value);

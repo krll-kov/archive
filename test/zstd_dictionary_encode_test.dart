@@ -7,6 +7,7 @@ import 'package:archive/src/codecs/zstd/zstd_level_params.dart';
 import 'package:archive/src/codecs/zstd/zstd_sequences_encoder.dart';
 import 'package:archive/src/codecs/zstd_decoder.dart';
 import 'package:archive/src/codecs/zstd_encoder.dart';
+import 'package:archive/src/util/archive_exception.dart';
 import 'package:archive/src/util/crc32.dart';
 import 'package:archive/src/util/input_memory_stream.dart';
 import 'package:archive/src/util/output_memory_stream.dart';
@@ -247,11 +248,11 @@ void main() {
           ZstdEncoder(level: 3, dictionary: trained).encodeBytes(raw.content);
       expect(trained.id, isNot(0));
       expect(() => ZstdDecoder().decodeBytes(frame, throwOnError: true),
-          throwsA(anything));
+          throwsA(isA<ArchiveException>()));
       expect(
           () => ZstdDecoder(dictionary: raw)
               .decodeBytes(frame, throwOnError: true),
-          throwsA(anything));
+          throwsA(isA<ArchiveException>()));
     });
 
     test('a raw dictionary names no id, so any decoder can read the frame', () {
