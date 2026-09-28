@@ -52,7 +52,10 @@ class _GZipDecoder extends ZLibDecoderBase {
               if (verify && isGZip)
                 Uint8List.sublistView(bytes, seen - trailerLength)
             ],
-            partial);
+            partial,
+            trailer: verify && isGZip
+                ? null
+                : Uint8List.sublistView(bytes, seen - trailerLength));
       } on FormatException catch (error) {
         if (!verify || !isGZip) {
           rethrow;
@@ -145,7 +148,8 @@ class _GZipDecoder extends ZLibDecoderBase {
       }
       inSink.add(chunk);
     }
-    var trailer = input.readBytes(trailerLength).toUint8List();
+    final tail = input.readBytes(trailerLength).toUint8List();
+    var trailer = tail;
     if (!isGZip && verify) {
       final back = min(zlibAdlerWindow, seen - trailerLength - left);
       input.rewind(back + trailerLength);
@@ -156,6 +160,8 @@ class _GZipDecoder extends ZLibDecoderBase {
     try {
       if (verify && isGZip) {
         inSink.add(trailer);
+      } else {
+        addTrailerUnchecked(inSink, tail);
       }
       inSink.close();
     } on FormatException catch (error) {

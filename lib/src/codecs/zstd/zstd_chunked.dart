@@ -233,7 +233,7 @@ class ZstdEncoderConverter extends ChunkedConverter {
     }).transform(
         StreamTransformer.fromHandlers(handleError: (error, trace, sink) {
       failed = true;
-      sink.addError(error, trace);
+      sink.addError(zstdEncodeFailure(error), trace);
     }));
     if (!failed && size != null && total != size) {
       throw ArchiveException('Input is $total bytes, contentSize is $size');

@@ -493,6 +493,28 @@ void main() {
     expect(jobs, 1);
   }, testOn: 'vm');
 
+  test('a failed job reaches the converter as ArchiveException', () async {
+    final real = zstdMtSpawnWorker;
+    final given = ReceivePort();
+    addTearDown(() {
+      zstdMtSpawnWorker = real;
+      given.close();
+    });
+    zstdMtSpawnWorker = (replies, errors) => Isolate.spawn(
+        _failingWorker, [replies, given.sendPort],
+        onError: errors, errorsAreFatal: true);
+    await expectLater(
+        Stream<List<int>>.fromIterable(
+                [for (var i = 0; i < 8; i++) Uint8List(524288)])
+            .transform(const ZstdCodec(
+              level: 1,
+              multithread:
+                  ZstdMultithreadOptions.converter(workers: 1, jobSize: 524288),
+            ).encoder)
+            .toList(),
+        throwsA(isA<ArchiveException>()));
+  }, testOn: 'vm');
+
   for (final path in ['file', 'transform']) {
     test('$path bounds completed jobs while the first job waits', () async {
       final real = zstdMtSpawnWorker;
@@ -744,8 +766,20 @@ void main() {
                 onError: (failure, _) => error.complete(failure))),
         returnsNormally);
     expect(await error.future.timeout(const Duration(seconds: 5)),
-        isA<ArchiveException>());
+        isA<FileSystemException>());
     expect(completed, isFalse);
+  });
+
+  test('a RangeError reaches onError as ArchiveException', () async {
+    final error = Completer<Object>();
+    ZstdEncoder().encodeStream(
+        _BrokenInput(RangeError('bug')), OutputMemoryStream(),
+        multithread: ZstdMultithreadOptions<bool>(
+            workers: 1,
+            onDone: (_) {},
+            onError: (failure, _) => error.complete(failure)));
+    expect(await error.future.timeout(const Duration(seconds: 5)),
+        isA<ArchiveException>());
   });
 
   test('file output failures reach onError', () async {
@@ -930,6 +964,15 @@ class _UnreadableInput extends InputMemoryStream {
 
   @override
   Uint8List toUint8List() => throw FileSystemException('input failed');
+}
+
+class _BrokenInput extends InputMemoryStream {
+  final Object failure;
+
+  _BrokenInput(this.failure) : super([1, 2, 3]);
+
+  @override
+  Uint8List toUint8List() => throw failure;
 }
 
 class _FailingOutput extends OutputMemoryStream {

@@ -266,7 +266,7 @@ class Inflate {
     final nlen = _readBits(16) ^ 0xffff;
 
     // Make sure the block size checksum is valid.
-    if (len != 0 && len != nlen) {
+    if (len != nlen) {
       return -1;
     }
 
@@ -290,7 +290,7 @@ class Inflate {
       return -1;
     }
     numLitLengthCodes += 257;
-    if (numLitLengthCodes > 288) {
+    if (numLitLengthCodes > 286) {
       return -1;
     }
     // number of distance codes.
@@ -406,6 +406,9 @@ class Inflate {
       switch (code) {
         case 16:
           // Repeat last code
+          if (i == 0) {
+            return -1;
+          }
           var repeat = _readBits(2);
           if (repeat == -1) {
             return -1;

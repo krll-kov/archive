@@ -312,6 +312,112 @@ void main() {
         expect(blocks.length, greaterThan(4));
       });
 
+      test('index output lengths cannot overflow their total', () async {
+        final empty = emptyBlockStream();
+        final block = empty.sublist(12, empty.length - 20);
+        final length = [...List.filled(8, 0x80), 0x40];
+        final records = <int>[0, 2, 17, ...length, 17, ...length];
+        while (records.length % 4 != 0) {
+          records.add(0);
+        }
+        final index = [...records, ..._uint32(getCrc32(records))];
+        final backward = [..._uint32(index.length ~/ 4 - 1), 0, 1];
+        final data = Uint8List.fromList([
+          ...empty.sublist(0, 12),
+          ...block,
+          ...block,
+          ...index,
+          ..._uint32(getCrc32(backward)),
+          ...backward,
+          0x59,
+          0x5a,
+        ]);
+
+        expect(
+            XZDecoder(maxPreallocateSize: 0x7fffffffffffffff)
+                .uncompressedSize(data),
+            isNull);
+        expect(() => XZDecoder().decodeBytes(data, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+        await expectLater(decodeBytesOnIsolates(data, verify: true, workers: 2),
+            throwsA(isA<ArchiveException>()));
+        expect(await decodeBytesOnIsolates(data, workers: 2), isEmpty);
+      });
+
+      test('an error on the calling isolate follows the flags', () async {
+        expect(
+            await decodeStreamOnIsolates(
+                _ThrowingInput(pristine, RangeError('cut')),
+                OutputMemoryStream(),
+                workers: 2),
+            isFalse);
+        await expectLater(
+            decodeStreamOnIsolates(_ThrowingInput(pristine, RangeError('cut')),
+                OutputMemoryStream(),
+                verify: true, workers: 2),
+            throwsA(isA<ArchiveException>()));
+        final failure = _ReadFailure();
+        await expectLater(
+            decodeStreamOnIsolates(
+                _ThrowingInput(pristine, failure), OutputMemoryStream(),
+                workers: 2),
+            throwsA(same(failure)));
+      });
+
+      test('nonzero index padding with a valid checksum is refused', () async {
+        final backward = ByteData.sublistView(pristine)
+            .getUint32(pristine.length - 8, Endian.little);
+        final size = (backward + 1) * 4;
+        final start = pristine.length - 12 - size;
+        expect(pristine[start + size - 5], 0);
+        final data = Uint8List.fromList(pristine)..[start + size - 5] = 1;
+        ByteData.sublistView(data).setUint32(start + size - 4,
+            getCrc32(data.sublist(start, start + size - 4)), Endian.little);
+
+        expect(() => XZDecoder().decodeBytes(data, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+        await expectLater(decodeBytesOnIsolates(data, verify: true, workers: 2),
+            throwsA(isA<ArchiveException>()));
+        await expectLater(
+            decodeStreamOnIsolates(
+                InputMemoryStream(data), OutputMemoryStream(),
+                verify: true, workers: 2),
+            throwsA(isA<ArchiveException>()));
+      });
+
+      test('excess zero index padding with a valid checksum is refused',
+          () async {
+        final backward = ByteData.sublistView(pristine)
+            .getUint32(pristine.length - 8, Endian.little);
+        final size = (backward + 1) * 4;
+        final start = pristine.length - 12 - size;
+        final records = [
+          ...pristine.sublist(start, start + size - 4),
+          0,
+          0,
+          0,
+          0,
+        ];
+        final footer = [
+          ..._uint32(backward + 1),
+          ...pristine.sublist(pristine.length - 4, pristine.length - 2),
+        ];
+        final data = Uint8List.fromList([
+          ...pristine.sublist(0, start),
+          ...records,
+          ..._uint32(getCrc32(records)),
+          ..._uint32(getCrc32(footer)),
+          ...footer,
+          0x59,
+          0x5a,
+        ]);
+
+        expect(() => XZDecoder().decodeBytes(data, throwOnError: true),
+            throwsA(isA<ArchiveException>()));
+        await expectLater(decodeBytesOnIsolates(data, verify: true, workers: 2),
+            throwsA(isA<ArchiveException>()));
+      });
+
       test('an overlong record count in the index is refused', () async {
         final backward = ByteData.sublistView(pristine)
             .getUint32(pristine.length - 8, Endian.little);
@@ -1977,6 +2083,15 @@ class BytesBuilderSink implements Sink<List<int>> {
 }
 
 class _ReadFailure implements Exception {}
+
+class _ThrowingInput extends InputMemoryStream {
+  final Object failure;
+
+  _ThrowingInput(super.bytes, this.failure);
+
+  @override
+  Uint8List toUint8List() => throw failure;
+}
 
 class _FailingInput extends InputMemoryStream {
   final Object failure;

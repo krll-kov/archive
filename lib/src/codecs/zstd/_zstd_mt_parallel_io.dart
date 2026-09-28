@@ -7,6 +7,7 @@ import 'dart:typed_data';
 // file_handle.dart, whose conditional export resolves to the web class when
 // the analyser has no platform in mind, and that one has no path
 import '../../util/_file_handle_io.dart';
+import '../../util/archive_exception.dart';
 import '../../util/cancellable_stream.dart';
 import '../../util/input_file_stream.dart';
 import '../../util/input_stream.dart';
@@ -226,7 +227,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
   final errors = ReceivePort();
   errors.listen((message) {
     final pair = message as List;
-    failure ??= pair[0];
+    failure ??= ArchiveException('zstd: ${pair[0]}');
     failureStack ??= StackTrace.fromString('${pair[1]}');
     if (!done.isCompleted) {
       done.complete();
@@ -248,7 +249,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
     final index = reply[1] as int;
     final error = reply[3];
     if (error != null) {
-      failure ??= error;
+      failure ??= ArchiveException('zstd: $error');
       failureStack ??= StackTrace.fromString(reply[4] as String);
     } else {
       final part =
@@ -460,7 +461,7 @@ Stream<Uint8List> _zstdMtCompressStream(
   final errors = ReceivePort();
   errors.listen((message) {
     final pair = message as List;
-    failure ??= pair[0];
+    failure ??= ArchiveException('zstd: ${pair[0]}');
     failureStack ??= StackTrace.fromString('${pair[1]}');
     // No further reply can arrive from a dead worker, so whoever is parked on
     // `waiting` has to be let go or the frame never ends
@@ -482,7 +483,7 @@ Stream<Uint8List> _zstdMtCompressStream(
     final index = reply[1] as int;
     final error = reply[3];
     if (error != null) {
-      failure ??= error;
+      failure ??= ArchiveException('zstd: $error');
       failureStack ??= StackTrace.fromString(reply[4] as String);
     } else {
       held[index] =

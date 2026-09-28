@@ -27,8 +27,21 @@ bool _isWithinOutputPath(String? realOut, String filePath) {
   return realOut != null && file != null && path.isWithin(realOut, file);
 }
 
+Future<bool> _isWithinOutputPathAsync(String? realOut, String filePath) async {
+  final file = await _realPathAsync(filePath, followDangling: true);
+  return realOut != null && file != null && path.isWithin(realOut, file);
+}
+
 bool _isEntryWithinOutputPath(String? realOut, String filePath) {
   final dir = _realPath(path.dirname(filePath));
+  return realOut != null &&
+      dir != null &&
+      path.isWithin(realOut, path.join(dir, path.basename(filePath)));
+}
+
+Future<bool> _isEntryWithinOutputPathAsync(
+    String? realOut, String filePath) async {
+  final dir = await _realPathAsync(path.dirname(filePath));
   return realOut != null &&
       dir != null &&
       path.isWithin(realOut, path.join(dir, path.basename(filePath)));
@@ -71,13 +84,47 @@ String? _realPath(String filePath,
   }
 }
 
+Future<String?> _realPathAsync(String filePath,
+    {bool followDangling = false, int depth = 0}) async {
+  var existing = path.absolute(filePath);
+  final rest = <String>[];
+  while (await FileSystemEntity.type(existing, followLinks: false) ==
+      FileSystemEntityType.notFound) {
+    if (path.dirname(existing) == existing) {
+      return path.canonicalize(filePath);
+    }
+    rest.insert(0, path.basename(existing));
+    existing = path.dirname(existing);
+  }
+  try {
+    return path.joinAll([await File(existing).resolveSymbolicLinks(), ...rest]);
+  } on FileSystemException {
+    if (!followDangling ||
+        depth >= 40 ||
+        await FileSystemEntity.type(existing, followLinks: false) !=
+            FileSystemEntityType.link) {
+      return null;
+    }
+    final target = await Link(existing).target();
+    return _realPathAsync(
+        path.joinAll([
+          path.isAbsolute(target)
+              ? target
+              : path.join(path.dirname(existing), target),
+          ...rest
+        ]),
+        followDangling: true,
+        depth: depth + 1);
+  }
+}
+
 String _entryPath(String outputPath, String name) => path.join(
     outputPath, path.normalize(name.replaceFirst(RegExp(r'^[/\\]+'), '')));
 
 bool _isValidSymLink(
     String outputPath, String? realOut, ArchiveFile file, bool allowAbsolute) {
   final filePath = path.dirname(_entryPath(outputPath, file.name));
-  final linkPath = path.normalize(_linkTarget(file));
+  final linkPath = _linkTarget(file);
   if (path.isAbsolute(linkPath)) {
     // Don't allow decoding of files outside of the output path.
     return allowAbsolute;
@@ -89,6 +136,18 @@ bool _isValidSymLink(
     return false;
   }
   return true;
+}
+
+Future<bool> _isValidSymLinkAsync(String outputPath, String? realOut,
+    ArchiveFile file, bool allowAbsolute) async {
+  final filePath = path.dirname(_entryPath(outputPath, file.name));
+  final linkPath = _linkTarget(file);
+  if (path.isAbsolute(linkPath)) {
+    return allowAbsolute;
+  }
+  final realPath = await _realPathAsync(filePath);
+  return realPath != null &&
+      await _isWithinOutputPathAsync(realOut, path.join(realPath, linkPath));
 }
 
 /// A hard link names its target from the archive root and a symlink from its
@@ -110,6 +169,74 @@ String _linkTarget(ArchiveFile file) {
 String _linkText(ArchiveFile file) {
   final text = _linkTarget(file);
   return Platform.isWindows ? text.replaceAll('/', r'\') : text;
+}
+
+/// A later archive entry could replace a parent directory with a symlink.
+/// Like GNU tar, we defer creating and validating these links until the
+/// entire tree is extracted
+bool _delaysLink(ArchiveFile file) {
+  final target = _linkTarget(file);
+  return path.isAbsolute(target) || path.split(target).contains('..');
+}
+
+void _delayLink(
+    Map<String, ArchiveFile> delayed, String filePath, ArchiveFile file) {
+  _clearPath(filePath);
+  Directory(path.dirname(filePath)).createSync(recursive: true);
+  delayed.remove(filePath);
+  delayed[filePath] = file;
+}
+
+Future<void> _delayLinkAsync(
+    Map<String, ArchiveFile> delayed, String filePath, ArchiveFile file) async {
+  await _clearPathAsync(filePath);
+  await Directory(path.dirname(filePath)).create(recursive: true);
+  delayed.remove(filePath);
+  delayed[filePath] = file;
+}
+
+void _createDelayedLinksSync(Map<String, ArchiveFile> delayed,
+    String outputPath, String? realOut, bool allowAbsoluteSymlinks) {
+  final created = <MapEntry<String, ArchiveFile>>[];
+  for (final entry in delayed.entries.toList().reversed) {
+    if (FileSystemEntity.typeSync(entry.key, followLinks: false) ==
+        FileSystemEntityType.notFound) {
+      Link(entry.key).createSync(_linkText(entry.value), recursive: true);
+      created.add(entry);
+    }
+  }
+  for (final MapEntry(key: filePath, value: file) in created) {
+    if (!_isValidSymLink(outputPath, realOut, file, allowAbsoluteSymlinks)) {
+      Link(filePath).deleteSync();
+    }
+  }
+}
+
+Future<void> _createDelayedLinks(Map<String, ArchiveFile> delayed,
+    String outputPath, String? realOut, bool allowAbsoluteSymlinks) async {
+  final created = <MapEntry<String, ArchiveFile>>[];
+  for (final entry in delayed.entries.toList().reversed) {
+    if (await FileSystemEntity.type(entry.key, followLinks: false) ==
+        FileSystemEntityType.notFound) {
+      await Link(entry.key).create(_linkText(entry.value), recursive: true);
+      created.add(entry);
+    }
+  }
+  for (final MapEntry(key: filePath, value: file) in created) {
+    if (!await _isValidSymLinkAsync(
+        outputPath, realOut, file, allowAbsoluteSymlinks)) {
+      await Link(filePath).delete();
+    }
+  }
+}
+
+Future<void> _clearPathAsync(String filePath) async {
+  final type = await FileSystemEntity.type(filePath, followLinks: false);
+  if (type == FileSystemEntityType.link) {
+    await Link(filePath).delete();
+  } else if (type == FileSystemEntityType.file) {
+    await File(filePath).delete();
+  }
 }
 
 void _clearPath(String filePath) {
@@ -214,14 +341,20 @@ void extractArchiveToDiskSync(
 }) {
   _prepareOutDir(outputPath);
   final realOut = _realPath(outputPath);
+  final delayed = <String, ArchiveFile>{};
   for (final entry in archive) {
     final filePath = _prepareArchiveFilePath(
         entry, outputPath, realOut, allowAbsoluteSymlinks);
     if (filePath != null) {
+      if (entry.isSymbolicLink && _delaysLink(entry)) {
+        _delayLink(delayed, filePath, entry);
+        continue;
+      }
       _extractArchiveEntryToDiskSync(entry, filePath,
           bufferSize: bufferSize, throwOnError: throwOnError);
     }
   }
+  _createDelayedLinksSync(delayed, outputPath, realOut, allowAbsoluteSymlinks);
 }
 
 /// Writes the entries of [archive] into [outputPath]
@@ -235,25 +368,31 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
     bool throwOnError = false,
     bool allowAbsoluteSymlinks = false}) async {
   final outDir = Directory(outputPath);
-  if (!outDir.existsSync()) {
-    outDir.createSync(recursive: true);
+  if (!await outDir.exists()) {
+    await outDir.create(recursive: true);
   }
-  final realOut = _realPath(outputPath);
+  final realOut = await _realPathAsync(outputPath);
+  final delayed = <String, ArchiveFile>{};
 
   for (final entry in archive) {
     final filePath = _entryPath(outputPath, entry.name);
 
     if ((entry.isDirectory && !entry.isSymbolicLink) ||
-        !_isEntryWithinOutputPath(realOut, filePath)) {
+        !await _isEntryWithinOutputPathAsync(realOut, filePath)) {
       continue;
     }
 
     if (entry.isSymbolicLink) {
-      if (!_isValidSymLink(outputPath, realOut, entry, allowAbsoluteSymlinks)) {
+      if (!await _isValidSymLinkAsync(
+          outputPath, realOut, entry, allowAbsoluteSymlinks)) {
+        continue;
+      }
+      if (_delaysLink(entry)) {
+        await _delayLinkAsync(delayed, filePath, entry);
         continue;
       }
 
-      _clearPath(filePath);
+      await _clearPathAsync(filePath);
       final link = Link(filePath);
       await link.create(_linkText(entry), recursive: true);
       continue;
@@ -269,7 +408,7 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
     bufferSize ??= OutputFileStream.kDefaultBufferSize;
     final fileSize = file.size;
     final fileBufferSize = fileSize < bufferSize ? fileSize : bufferSize;
-    _clearPath(filePath);
+    await _clearPathAsync(filePath);
     final output = OutputFileStream(filePath, bufferSize: fileBufferSize);
     try {
       file.writeContent(output);
@@ -277,33 +416,35 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
       if (err is ArchivePasswordException) {
         await output.close();
         try {
-          File(filePath).deleteSync();
+          await File(filePath).delete();
         } catch (_) {}
         rethrow;
       }
       if (!isDecodeDataError(err)) {
         await output.close();
         try {
-          File(filePath).deleteSync();
+          await File(filePath).delete();
         } catch (_) {}
         rethrow;
       }
       if (throwOnError) {
         await output.close();
         try {
-          File(filePath).deleteSync();
+          await File(filePath).delete();
         } catch (_) {}
         rethrow;
       }
       //
       await output.close();
       try {
-        File(filePath).deleteSync();
+        await File(filePath).delete();
       } catch (_) {}
       continue;
     }
     await output.close();
   }
+  await _createDelayedLinks(
+      delayed, outputPath, realOut, allowAbsoluteSymlinks);
 }
 
 // a utility function to get the extension of the input file.
@@ -394,7 +535,7 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
   // and only complete tar entries are extracted
   Future<void> unwrap(
       bool Function(InputStream input, OutputStream output) decode) async {
-    final directory = Directory.systemTemp.createTempSync('dart_archive');
+    final directory = await Directory.systemTemp.createTemp('dart_archive');
     final target = path.join(directory.path, 'temp.tar');
     tempDir = directory;
     archivePath = target;
@@ -485,31 +626,36 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
           inputPath, 'inputPath', 'Must end $extensionMsg');
     }
 
-    final realOut = _realPath(outputPath);
+    final realOut = await _realPathAsync(outputPath);
+    final delayed = <String, ArchiveFile>{};
     for (final file in archive) {
       final filePath = _entryPath(outputPath, file.name);
-      if (!_isEntryWithinOutputPath(realOut, filePath)) {
+      if (!await _isEntryWithinOutputPathAsync(realOut, filePath)) {
         continue;
       }
 
       if (file.isSymbolicLink) {
-        if (!_isValidSymLink(
+        if (!await _isValidSymLinkAsync(
             outputPath, realOut, file, allowAbsoluteSymlinks)) {
+          continue;
+        }
+        if (_delaysLink(file)) {
+          await _delayLinkAsync(delayed, filePath, file);
           continue;
         }
       }
 
       if (file.isDirectory && !file.isSymbolicLink) {
-        Directory(filePath).createSync(recursive: true);
+        await Directory(filePath).create(recursive: true);
         continue;
       }
 
       if (file.isSymbolicLink) {
-        _clearPath(filePath);
+        await _clearPathAsync(filePath);
         final link = Link(filePath);
-        link.createSync(_linkText(file), recursive: true);
+        await link.create(_linkText(file), recursive: true);
       } else if (file.isFile) {
-        _clearPath(filePath);
+        await _clearPathAsync(filePath);
         final output = OutputFileStream(filePath, bufferSize: bufferSize);
         try {
           file.writeContent(output);
@@ -519,9 +665,9 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
           try {
             await output.close();
           } catch (_) {}
-          // Windows deleteSync throws on an open file, so we ignore the error
+          // Windows delete throws on an open file, so we ignore the error
           try {
-            File(filePath).deleteSync();
+            await File(filePath).delete();
           } catch (_) {}
           if (error is ArchivePasswordException) {
             rethrow;
@@ -541,6 +687,8 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
         await output.close();
       }
     }
+    await _createDelayedLinks(
+        delayed, outputPath, realOut, allowAbsoluteSymlinks);
 
     await archive.clear();
   } finally {

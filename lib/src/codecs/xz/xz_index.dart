@@ -230,10 +230,21 @@ XZLayout? parseXZLayout(XZByteSource source, {int? maxUncompressedSize}) {
         }
 
         total += uncompressedLength;
-        if (blocksSize > indexStart ||
+        if (total < 0 ||
+            blocksSize > indexStart ||
             (maxUncompressedSize != null && total > maxUncompressedSize)) {
           return null;
         }
+      }
+
+      if (crcStart - position > 3) {
+        return null;
+      }
+      while (position < crcStart) {
+        if (index[position - indexStart] != 0) {
+          return null;
+        }
+        position++;
       }
 
       // The twelve byte stream header sits in front of the blocks.

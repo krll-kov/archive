@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
+import '../../util/decode_guard.dart';
 import '../../util/output_memory_stream.dart';
 import '../../util/output_stream.dart';
 import '../../util/report_progress.dart';
@@ -664,3 +666,8 @@ Future<Uint8List> zstdMtCompress(Uint8List src, int level,
   }
   return out.getBytes();
 }
+
+Object zstdEncodeFailure(Object error) =>
+    isDecodeDataError(error) && error is! ArchiveException
+        ? ArchiveException('zstd: $error')
+        : error;

@@ -50,11 +50,26 @@ class ZLibOutputSink implements Sink<List<int>> {
 }
 
 Uint8List convertKeepingPartial(Converter<List<int>, List<int>> decoder,
-    List<List<int>> pieces, OutputMemoryStream partial) {
+    List<List<int>> pieces, OutputMemoryStream partial,
+    {List<int>? trailer}) {
   final sink = decoder.startChunkedConversion(ZLibOutputSink(partial));
   for (final piece in pieces) {
     sink.add(piece);
   }
+  if (trailer != null) {
+    addTrailerUnchecked(sink, trailer);
+  }
   sink.close();
   return partial.getBytes();
+}
+
+void addTrailerUnchecked(Sink<List<int>> sink, List<int> trailer) {
+  if (trailer.isEmpty) {
+    return;
+  }
+  try {
+    sink.add(trailer);
+  } on FormatException {
+    return;
+  }
 }

@@ -1057,6 +1057,54 @@ void main() {
       expect(File(p.join(output, 'b.txt')).readAsStringSync(), 'b');
     }, testOn: '!windows');
 
+    test('$method extraction rejects link targets escaping through links',
+        () async {
+      final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final output = p.join(root.path, 'out');
+      final secret = File(p.join(root.path, 'secret.txt'))
+        ..writeAsStringSync('outside');
+      await extract(
+          Archive()
+            ..add(ArchiveFile.string('sub/file.txt', 'inside'))
+            ..add(ArchiveFile.symlink('nested/hop', '../sub'))
+            ..add(ArchiveFile.symlink('escape', 'nested/hop/../../secret.txt')),
+          output,
+          root.path);
+
+      expect(File(p.join(output, 'nested/hop/file.txt')).readAsStringSync(),
+          'inside');
+      expect(
+          FileSystemEntity.typeSync(p.join(output, 'escape'),
+              followLinks: false),
+          FileSystemEntityType.notFound);
+      expect(secret.readAsStringSync(), 'outside');
+    }, testOn: '!windows');
+
+    test('$method extraction rejects an escape named before its link',
+        () async {
+      final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final output = p.join(root.path, 'out');
+      final secret = File(p.join(root.path, 'secret.txt'))
+        ..writeAsStringSync('outside');
+      await extract(
+          Archive()
+            ..add(ArchiveFile.string('sub/file.txt', 'inside'))
+            ..add(ArchiveFile.symlink('escape', 'nested/hop/../../secret.txt'))
+            ..add(ArchiveFile.symlink('nested/hop', '../sub')),
+          output,
+          root.path);
+
+      expect(File(p.join(output, 'nested/hop/file.txt')).readAsStringSync(),
+          'inside');
+      expect(
+          FileSystemEntity.typeSync(p.join(output, 'escape'),
+              followLinks: false),
+          FileSystemEntityType.notFound);
+      expect(secret.readAsStringSync(), 'outside');
+    }, testOn: '!windows');
+
     test('$method extraction checks links under the physical output directory',
         () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');
@@ -1510,6 +1558,10 @@ class _FullDiskFile implements File {
   @override
   void deleteSync({bool recursive = false}) =>
       _real.deleteSync(recursive: recursive);
+
+  @override
+  Future<FileSystemEntity> delete({bool recursive = false}) =>
+      _real.delete(recursive: recursive);
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

@@ -47,7 +47,8 @@ class _ZLibDecoder extends ZLibDecoderBase {
       out = convertKeepingPartial(
           ZLibCodec(raw: raw).decoder,
           [Uint8List.sublistView(bytes, 0, bytes.length - trailerLength)],
-          partial);
+          partial,
+          trailer: Uint8List.sublistView(bytes, bytes.length - trailerLength));
       // }
       if (verify && !raw) {
         checkZlibAdler(
@@ -76,7 +77,7 @@ class _ZLibDecoder extends ZLibDecoderBase {
   bool _decodeStream(InputStream input, OutputStream output, bool verify,
       bool raw, bool throwOnError) {
     // dart:io reports a wrong checksum and damaged data with one message, so
-    // it never gets the Adler-32 and we check it ourselves
+    // its verdict on the Adler-32 is dropped and we check it ourselves
     final trailerLength = raw ? 0 : 4;
     final seen = input.length;
     if (!raw && seen < trailerLength + 2) {
@@ -105,16 +106,16 @@ class _ZLibDecoder extends ZLibDecoderBase {
     // if (!raw && (verify || throwOnError)) {
     //   inSink.add(_adlerTrailer(outSink.value));
     // }
+    addTrailerUnchecked(inSink, input.readBytes(trailerLength).toUint8List());
     inSink.close();
     if (raw) {
       return true;
     }
     if (!verify) {
-      input.skip(4);
       return true;
     }
     final back = min(zlibAdlerWindow, seen - trailerLength - left);
-    input.rewind(back);
+    input.rewind(back + trailerLength);
     checkZlibAdler(input.readBytes(back + 4).toUint8List(), outSink.value);
     // if (!_completeDeflate(input, start, seen)) {
     //   return false;

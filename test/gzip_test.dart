@@ -749,6 +749,131 @@ void main() {
         expect(const GZipDecoder().decodeBytes(padded), output.getBytes());
       });
 
+      test('strict web decoders validate empty stored block complements', () {
+        for (final complement in [0, 1, 0x7fff, 0xfffe, 0xffff]) {
+          final raw = [1, 0, 0, complement & 0xff, complement >> 8];
+          final zlib = [0x78, 0x9c, ...raw, 0, 0, 0, 1];
+          final gzip = [
+            0x1f,
+            0x8b,
+            8,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3,
+            ...raw,
+            ...List<int>.filled(8, 0)
+          ];
+          for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+            final decodes = [
+              () => const ZLibDecoderWeb().decodeBytes(raw,
+                  raw: true, verify: verify, throwOnError: throwOnError),
+              () => const ZLibDecoderWeb().decodeBytes(zlib,
+                  verify: verify, throwOnError: throwOnError),
+              () => const GZipDecoderWeb()
+                  .decodeBytes(gzip, verify: verify, throwOnError: throwOnError)
+            ];
+            for (final decode in decodes) {
+              if (complement == 0xffff) {
+                expect(decode(), isEmpty);
+              } else {
+                expect(decode, throwsA(isA<ArchiveException>()),
+                    reason: 'complement $complement');
+              }
+            }
+          }
+        }
+      });
+
+      test('strict web zlib rejects a literal alphabet above 286 symbols', () {
+        for (final encoded in [
+          'eJz1wAUEAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAIAAAAAAAQ==',
+          'eJz9wAUEAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAABAAAAAQ=='
+        ]) {
+          final packed = base64Decode(encoded);
+          for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+            expect(
+                () => const ZLibDecoderWeb().decodeBytes(packed,
+                    verify: verify, throwOnError: throwOnError),
+                throwsA(isA<ArchiveException>()));
+          }
+        }
+        final valid = base64Decode(
+            'eJztwAUEAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAEAAAAAAAQ==');
+        expect(
+            const ZLibDecoderWeb().decodeBytes(valid, verify: true), isEmpty);
+      });
+
+      test('strict web zlib requires a previous code length before a repeat',
+          () {
+        final packed = base64Decode(
+            'eJwFwAUEAAAAAKABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAAAAB');
+        for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+          expect(
+              () => const ZLibDecoderWeb().decodeBytes(packed,
+                  verify: verify, throwOnError: throwOnError),
+              throwsA(isA<ArchiveException>()));
+        }
+        final valid = base64Decode(
+            'eJwFwAUEAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAIAAAAB');
+        expect(
+            const ZLibDecoderWeb().decodeBytes(valid, verify: true), isEmpty);
+      });
+
+      test('web decoders keep output when the zlib checksum is truncated', () {
+        for (final decoder in [
+          const ZLibDecoderWeb(),
+          const GZipDecoderWeb()
+        ]) {
+          for (var cut = 1; cut <= 4; cut++) {
+            final damaged = Uint8List.sublistView(zlib, 0, zlib.length - cut);
+            final output = OutputMemoryStream();
+            expect(decoder.decodeStream(InputMemoryStream(damaged), output),
+                isFalse);
+            expect(output.getBytes(), data, reason: 'cut $cut');
+            expect(decoder.decodeBytes(damaged), data, reason: 'cut $cut');
+            for (final (verify, throwOnError) in [
+              (true, false),
+              (false, true)
+            ]) {
+              expect(
+                  () => decoder.decodeBytes(damaged,
+                      verify: verify, throwOnError: throwOnError),
+                  throwsA(isA<ArchiveException>()));
+            }
+          }
+        }
+      });
+
+      test('io decoders keep output when the trailer is cut', () {
+        for (final (packed, trailer, decodeBytes, decodeStream) in [
+          (
+            gzip,
+            8,
+            const GZipDecoder().decodeBytes,
+            const GZipDecoder().decodeStream
+          ),
+          (
+            zlib,
+            4,
+            const ZLibDecoder().decodeBytes,
+            const ZLibDecoder().decodeStream
+          ),
+        ]) {
+          for (var cut = 1; cut <= trailer; cut++) {
+            final damaged =
+                Uint8List.sublistView(packed, 0, packed.length - cut);
+            expect(decodeBytes(damaged), data, reason: 'cut $cut');
+            final output = OutputMemoryStream();
+            decodeStream(InputMemoryStream(damaged), output);
+            expect(output.getBytes(), data, reason: 'cut $cut');
+          }
+        }
+      });
+
       test('verify finds a wrong gzip checksum through decodeBytes', () {
         final damaged = Uint8List.fromList(gzip)..[gzip.length - 8] ^= 0xff;
         expect(() => const GZipDecoder().decodeBytes(damaged, verify: true),

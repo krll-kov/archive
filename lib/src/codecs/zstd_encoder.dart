@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import '../util/archive_exception.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
@@ -79,7 +78,7 @@ class ZstdEncoder {
     unawaited(work().then(onDone, onError: (Object error, StackTrace stack) {
       final onError = options.onError;
       if (onError != null) {
-        onError(_wrap(error), stack);
+        onError(zstdEncodeFailure(error), stack);
       } else {
         onDone(onFailure);
       }
@@ -151,15 +150,7 @@ class ZstdEncoder {
           level: level ?? this.level,
           dictionary: dictionary);
     } catch (error, stack) {
-      Error.throwWithStackTrace(_wrap(error), stack);
+      Error.throwWithStackTrace(zstdEncodeFailure(error), stack);
     }
   }
-
-  /// The codec's own exceptions live inside `src` and a caller cannot name
-  /// them, so the one type the package exports is what leaves here
-  static Object _wrap(Object error) => error is ArchiveException ||
-          error is ArgumentError ||
-          error is OutOfMemoryError
-      ? error
-      : ArchiveException('zstd: $error');
 }

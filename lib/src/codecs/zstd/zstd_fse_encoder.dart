@@ -1,13 +1,13 @@
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
 import 'zstd_bit_writer.dart';
 import 'zstd_constants.dart';
 import 'zstd_fse.dart';
 import 'zstd_web.dart';
 
-class ZstdFseEncoderException implements Exception {
-  final String message;
-  ZstdFseEncoderException(this.message);
+class ZstdFseEncoderException extends ArchiveException {
+  ZstdFseEncoderException(super.message);
   @override
   String toString() => 'ZstdFseEncoderException: $message';
 }

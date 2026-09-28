@@ -70,7 +70,9 @@ class XZDecoder {
     _reportAsync(
         multithread,
         () => _decodeBytesOnIsolates(bytes, verify, throwOnError, multithread),
-        Uint8List(0));
+        Uint8List(0),
+        verify,
+        throwOnError);
     return Uint8List(0);
   }
 
@@ -105,7 +107,9 @@ class XZDecoder {
         multithread,
         () => _decodeStreamOnIsolates(
             input, output, verify, throwOnError, multithread),
-        false);
+        false,
+        verify,
+        throwOnError);
     return false;
   }
 
@@ -373,18 +377,25 @@ class XZDecoder {
   }
 
   // As [_report], for work that finishes later.
-  static void _reportAsync<T>(
-      XZMultithreadOptions<T> options, Future<T> Function() work, T onFailure) {
-    unawaited(
-        work().then(options.onDone, onError: (Object error, StackTrace stack) {
-      final onError = options.onError;
-      if (onError != null) {
-        onError(error, stack);
-      } else {
-        // Nothing would observe an unhandled asynchronous error, so the
-        // failure is reported the same way an invalid archive is.
-        options.onDone(onFailure);
+  static void _reportAsync<T>(XZMultithreadOptions<T> options,
+      Future<T> Function() work, T onFailure, bool verify, bool throwOnError) {
+    unawaited(work().then(options.onDone,
+        onError: (Object failure, StackTrace trace) {
+      try {
+        guardDecode('XZ', verify, throwOnError,
+            () => Error.throwWithStackTrace(failure, trace));
+      } catch (error, stack) {
+        final onError = options.onError;
+        if (onError != null) {
+          onError(error, stack);
+        } else {
+          // Nothing would observe an unhandled asynchronous error, so the
+          // failure is reported the same way an invalid archive is.
+          options.onDone(onFailure);
+        }
+        return;
       }
+      options.onDone(onFailure);
     }));
   }
 

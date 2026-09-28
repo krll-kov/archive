@@ -118,6 +118,7 @@ class _ZLibDecoder extends ZLibDecoderBase {
       // verify adler-32
       if (!raw) {
         if (input.length < 4) {
+          output.writeBytes(buffer);
           return false;
         }
         final adler32 = input.readUint32();

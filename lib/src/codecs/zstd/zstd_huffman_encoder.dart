@@ -1,13 +1,13 @@
 import 'dart:typed_data';
 
+import '../../util/archive_exception.dart';
 import 'zstd_bit_writer.dart';
 import 'zstd_constants.dart';
 import 'zstd_fse_encoder.dart';
 import 'zstd_web.dart';
 
-class ZstdHuffmanEncoderException implements Exception {
-  final String message;
-  ZstdHuffmanEncoderException(this.message);
+class ZstdHuffmanEncoderException extends ArchiveException {
+  ZstdHuffmanEncoderException(super.message);
   @override
   String toString() => 'ZstdHuffmanEncoderException: $message';
 }
