@@ -564,6 +564,48 @@ void main() {
     expect(archive.length, equals(6));
   });
 
+  test('stream zip encode store writes entries without compression', () async {
+    final data = File('test/_data/tarurls.txt');
+    final path = '$testOutputPath/example_store.zip';
+    final encoder = ZipFileEncoder()..create(path, level: ZipFileEncoder.store);
+    await encoder.addFile(data, 'async.txt');
+    encoder.addFileSync(data, 'sync.txt');
+    await encoder.addDirectory(Directory('test/_data/test2'));
+    final added = ArchiveFile.string('string.txt', 'x' * 5000);
+    encoder.addArchiveFile(added);
+    await encoder.close();
+    expect(added.compression, isNull);
+
+    final decoder = ZipDecoder();
+    final archive =
+        decoder.decodeBytes(File(path).readAsBytesSync(), verify: true);
+    for (final header in decoder.directory.fileHeaders) {
+      if (!header.filename.endsWith('/')) {
+        expect(header.compressionMethod, 0, reason: header.filename);
+      }
+    }
+    expect(archive.findFile('async.txt')!.content, data.readAsBytesSync());
+    expect(archive.findFile('sync.txt')!.content, data.readAsBytesSync());
+    expect(archive.findFile('string.txt')!.content, List.filled(5000, 0x78));
+  });
+
+  test('stream zip encode store level of one file', () async {
+    final data = File('test/_data/tarurls.txt');
+    final path = '$testOutputPath/example_store_one.zip';
+    final encoder = ZipFileEncoder()..create(path);
+    await encoder.addFile(data, 'stored.txt', ZipFileEncoder.store);
+    await encoder.addFile(data, 'deflated.txt');
+    await encoder.close();
+
+    final decoder = ZipDecoder()
+      ..decodeBytes(File(path).readAsBytesSync(), verify: true);
+    final methods = {
+      for (final header in decoder.directory.fileHeaders)
+        header.filename: header.compressionMethod
+    };
+    expect(methods, {'stored.txt': 0, 'deflated.txt': 8});
+  });
+
   test('stream zip encode levels', () async {
     final encoder = ZipFileEncoder();
     encoder.create('$testOutputPath/example3.zip');

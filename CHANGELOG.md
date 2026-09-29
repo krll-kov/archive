@@ -144,6 +144,10 @@
 * Fixed `ZLibDecoderWeb` and `GZipDecoderWeb` accepting malformed deflate: a zlib header with a method other than
   deflate or a window over 32 KB, a stream without its final block, and an oversubscribed Huffman table, which
   decoded to garbage before, are now reported with `throwOnError` and `verify`.
+* Fixed `ZipFileEncoder.store` writing entries as deflate level 0 and holding each whole entry in memory: a 1 GB
+  file needed 2 GB of RAM. The `store` level of `create`, `zipDirectory`, `addFile`, `addFileSync` and
+  `addDirectory` now writes uncompressed entries (method 0) streamed from the file. An `ArchiveFile` given to
+  `addArchiveFile` is stored too, unless its `compression` is set.
 
 # 4.3.0
 

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 
 import '../archive/archive_file.dart';
+import '../archive/compression_type.dart';
 import '../codecs/zip_encoder.dart';
 import '../util/input_file_stream.dart';
 import '../util/output_file_stream.dart';
@@ -12,6 +13,7 @@ import 'zip_file_progress.dart';
 class ZipFileEncoder {
   late OutputFileStream _output;
   late ZipEncoder _encoder;
+  int? _level;
   final String? password;
 
   static const store = 0;
@@ -87,6 +89,7 @@ class ZipFileEncoder {
     DateTime? modified,
   }) {
     _output = outputFileStream;
+    _level = level;
     _encoder = ZipEncoder(password: password);
     _encoder.startEncode(_output, level: level, modified: modified);
   }
@@ -191,7 +194,7 @@ class ZipFileEncoder {
 
     archiveFile.mode = (file.statSync()).mode;
 
-    _encoder.add(archiveFile, level: level);
+    _add(archiveFile, level);
   }
 
   Future<void> addFile(File file, [String? filename, int? level]) async {
@@ -205,13 +208,29 @@ class ZipFileEncoder {
 
     archiveFile.mode = (await file.stat()).mode;
 
-    _encoder.add(archiveFile, level: level);
+    _add(archiveFile, level);
 
     await fileStream.close();
   }
 
   void addArchiveFile(ArchiveFile file) {
-    _encoder.add(file);
+    _add(file, null);
+  }
+
+  void _add(ArchiveFile file, int? level) {
+    // store reached ZipEncoder as deflate level 0: whole entry was buffered in
+    // memory, 2 GB for 1 GB file, and written as method 8. Method 0 streams
+    if ((level ?? _level) != store || file.compression != null) {
+      _encoder.add(file, level: level);
+      return;
+    }
+    final previous = file.compression;
+    file.compression = CompressionType.none;
+    try {
+      _encoder.add(file, level: level);
+    } finally {
+      file.compression = previous;
+    }
   }
 
   void closeSync() {
