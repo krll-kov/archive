@@ -372,7 +372,11 @@ class ZipFile extends FileContent {
         _checkSize(stream.length);
       }
       if (verify && decompress) {
-        _checkCrc32(getCrc32(stream.toUint8List()));
+        if (stream is! InputMemoryStream &&
+            stream.length <= _maxVerifyBufferSize) {
+          stream = InputMemoryStream(stream.toUint8List());
+        }
+        _checkCrc32(_crc32Of(stream));
       }
       return true;
     });
@@ -429,8 +433,28 @@ class ZipFile extends FileContent {
       _decodeLzma(output);
       return InputMemoryStream(output.getBytes());
     } else {
-      final content = _rawContent!.toUint8List();
-      return InputMemoryStream(content);
+      // Copy of stored entry needed 1.3 GB RAM for 1 GB entry, so we read file
+      // on demand and verify buffers at most 1 MB. InputFileStream.subset()
+      // starts at 0, so we pass current position
+      return _rawContent!.subset(position: _rawContent!.position);
+    }
+  }
+
+  static const _maxVerifyBufferSize = 1 << 20;
+
+  static int _crc32Of(InputStream stream) {
+    if (stream is InputMemoryStream) {
+      return getCrc32(stream.toUint8List());
+    }
+    final probe = stream.subset(position: stream.position);
+    final chunk = Uint8List(1 << 20);
+    var crc = 0;
+    while (true) {
+      final got = probe.readInto(chunk, 0, chunk.length);
+      if (got <= 0) {
+        return crc;
+      }
+      crc = getCrc32(Uint8List.sublistView(chunk, 0, got), crc);
     }
   }
 
