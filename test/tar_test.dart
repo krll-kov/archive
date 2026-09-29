@@ -236,6 +236,44 @@ void main() {
       expect(again.files.single.nameOfLinkedFile, 'usr/bin/gcc');
     });
 
+    test('a zip entry that cannot be read keeps the entries after it',
+        () async {
+      final data = Uint8List.fromList(List.generate(3000, (i) => i * 7 % 251));
+      final zip = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('odd', data))
+        ..add(ArchiveFile.bytes('good', data)));
+      final view = ByteData.sublistView(zip);
+      for (var at = 0; at + 46 < zip.length; at++) {
+        final signature = view.getUint32(at, Endian.little);
+        final central = signature == 0x02014b50;
+        if (!central && signature != 0x04034b50) {
+          continue;
+        }
+        final nameAt = at + (central ? 46 : 30);
+        if (String.fromCharCodes(zip, nameAt, nameAt + 3) == 'odd') {
+          view.setUint16(at + (central ? 10 : 8), 9, Endian.little);
+        }
+      }
+      final streamed = await tarCodec.encoder
+          .bind(Stream.fromIterable(ZipDecoder().decodeBytes(zip).files))
+          .expand((piece) => piece)
+          .toList();
+      for (final (name, tar) in [
+        (
+          'encodeBytes',
+          TarEncoder().encodeBytes(ZipDecoder().decodeBytes(zip))
+        ),
+        ('tarCodec', streamed),
+      ]) {
+        expect(
+            () => TarDecoder().decodeBytes(tar, verify: true), returnsNormally,
+            reason: name);
+        final files = TarDecoder().decodeBytes(tar).files;
+        expect(files.map((f) => f.name), ['odd', 'good'], reason: name);
+        expect(files.last.content, data, reason: name);
+      }
+    });
+
     test('invalid archive', () {
       final bytes = Uint8List.fromList([1, 2, 3]);
       expect(TarDecoder().decodeBytes(bytes), isEmpty);

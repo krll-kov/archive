@@ -12,6 +12,10 @@ String linkTarget(ArchiveFile file) {
   }
   String clean(String p) =>
       path.posix.normalize(p.replaceFirst(RegExp('^/+'), ''));
-  return path.posix
-      .relative(clean(text), from: path.posix.dirname(clean(file.name)));
+  try {
+    return path.posix
+        .relative(clean(text), from: path.posix.dirname(clean(file.name)));
+  } on path.PathException {
+    return text;
+  }
 }

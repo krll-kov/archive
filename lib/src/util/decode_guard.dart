@@ -94,7 +94,8 @@ Stream<T> archiveStreamErrors<S, T>(
             error is _SourceError ? error.error : archiveError(error), stack));
 
 /// Wraps user callback run inside guardDecode, so its error keeps its type
-/// instead of becoming ArchiveException
+/// instead of becoming ArchiveException.
+/// Not used yet but useful if new features appear in package
 void invokeDecodeCallback<T>(void Function(T) callback, T value) {
   try {
     callback(value);

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../archive/archive.dart';
 import '../archive/archive_file.dart';
 import '../util/_cast.dart';
+import '../util/file_content.dart';
 import '../util/output_memory_stream.dart';
 import '../util/output_stream.dart';
 import 'tar/tar_file.dart';
@@ -136,9 +137,13 @@ class TarEncoder {
         // read the whole entry into memory first
         final raw = file.rawContent;
         if (raw != null && !raw.isCompressed) {
-          ts.content = raw;
+          final body = raw.getStream();
+          ts.fileSize = body.length;
+          ts.content = FileContentStream(body);
         } else {
-          ts.contentBytes = file.getContent()?.toUint8List();
+          final bytes = file.getContent()?.toUint8List();
+          ts.contentBytes = bytes;
+          ts.fileSize = bytes?.length ?? 0;
         }
       }
     }

@@ -1052,6 +1052,27 @@ void main() async {
                 .toUint8List());
       });
 
+      test('an unsupported method encoded again keeps its option bits', () {
+        final one = ZipEncoder().encodeBytes(Archive()
+          ..add(ArchiveFile.bytes('odd', data)
+            ..compression = CompressionType.none));
+        final view = ByteData.sublistView(one);
+        final centralAt = view.getUint32(one.length - 6, Endian.little);
+        for (final at in [0, centralAt]) {
+          final central = at != 0;
+          final flagsAt = at + (central ? 8 : 6);
+          view.setUint16(at + (central ? 10 : 8), 6, Endian.little);
+          view.setUint16(flagsAt, view.getUint16(flagsAt, Endian.little) | 6,
+              Endian.little);
+        }
+        final again = ZipEncoder().encodeBytes(ZipDecoder().decodeBytes(one));
+        final after = ZipDecoder()..decodeBytes(again);
+        final odd = after.directory.fileHeaders.single;
+        expect(odd.compressionMethod, 6);
+        expect(odd.generalPurposeBitFlag & 6, 6);
+        expect(odd.file!.flags & 6, 6);
+      });
+
       test('strict decoding keeps local records before the central directory',
           () {
         final stored = ZipEncoder().encodeBytes(Archive()
@@ -2140,6 +2161,17 @@ void main() async {
         expect(archive.findFile('link')!.isSymbolicLink, isTrue,
             reason: 'throwOnError $throwOnError');
       }
+    });
+
+    test('a hard link named above the archive root is still encoded', () {
+      final archive = Archive()
+        ..add(ArchiveFile.string('a.txt', 'hello'))
+        ..add(ArchiveFile.symlink('../up', 'a.txt')..isHardLink = true)
+        ..add(ArchiveFile.string('b.txt', 'b'));
+      expect(() => ZipEncoder().encodeBytes(archive), returnsNormally);
+      final back = ZipDecoder().decodeBytes(ZipEncoder().encodeBytes(archive));
+      expect(back.files.map((f) => f.name), ['a.txt', '../up', 'b.txt']);
+      expect(back.findFile('../up')!.isSymbolicLink, isTrue);
     });
 
     test('decode many files (100k)', () async {

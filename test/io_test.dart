@@ -1491,6 +1491,55 @@ void main() {
       }
     });
 
+    test('the callback gets every entry of a zip with a wrong end record',
+        () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final zip = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('a.bin', content()))
+        ..add(ArchiveFile.bytes('b.bin', content())));
+      final damaged = Uint8List.fromList(zip)..[zip.length - 22 + 10] = 5;
+      final input = File(p.join(directory.path, 'count.zip'))
+        ..writeAsBytesSync(damaged);
+      final seen = <String>[];
+      await extractFileToDisk(input.path, p.join(directory.path, 'out'),
+          callback: (file) => seen.add(file.name));
+      expect(File(p.join(directory.path, 'out', 'b.bin')).existsSync(), isTrue);
+      expect(seen, ['a.bin', 'b.bin']);
+    });
+
+    test('the callback gets each entry once when a zip link cannot be read',
+        () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final zip = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('a.bin', content()))
+        ..add(ArchiveFile.string('link', 'a.bin' * 600))
+        ..add(ArchiveFile.bytes('c.bin', content())));
+      final damaged = Uint8List.fromList(zip);
+      final view = ByteData.sublistView(damaged);
+      final link = (ZipDecoder()..decodeBytes(zip)).directory.fileHeaders[1];
+      final data = link.localHeaderOffset +
+          30 +
+          view.getUint16(link.localHeaderOffset + 26, Endian.little) +
+          view.getUint16(link.localHeaderOffset + 28, Endian.little);
+      damaged.fillRange(data, data + 4, 0xff);
+      var at = view.getUint32(zip.length - 6, Endian.little);
+      at += 46 +
+          view.getUint16(at + 28, Endian.little) +
+          view.getUint16(at + 30, Endian.little) +
+          view.getUint16(at + 32, Endian.little);
+      view.setUint8(at + 5, 3);
+      view.setUint32(at + 38, 0xa1ff << 16, Endian.little);
+      final input = File(p.join(directory.path, 'link.zip'))
+        ..writeAsBytesSync(damaged);
+      final seen = <String>[];
+      await extractFileToDisk(input.path, p.join(directory.path, 'out'),
+          callback: (file) => seen.add(file.name));
+      expect(File(p.join(directory.path, 'out', 'c.bin')).existsSync(), isTrue);
+      expect(seen, ['a.bin', 'link', 'c.bin']);
+    });
+
     test('verify checks the checksum of the tar container', () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));

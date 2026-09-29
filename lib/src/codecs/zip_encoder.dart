@@ -61,6 +61,7 @@ class _ZipFileData {
   int? method;
   int aesVersion = 1;
   bool lzmaEndMarker = false;
+  int methodFlags = 0;
   String? comment = '';
   int position = 0;
   int mode = 0;
@@ -310,6 +311,7 @@ class ZipEncoder {
       compressedData = zipFile.getStream(decompress: false);
       crc32 = zipFile.crc32;
       fileData.method = zipFile.unsupportedMethod;
+      fileData.methodFlags = zipFile.flags & 0x06;
     } else if (entry.isFile) {
       final file = entry;
       if (file.isCompressed) {
@@ -531,6 +533,7 @@ class ZipEncoder {
     if (lzma && fileData.lzmaEndMarker) {
       flags |= 0x02;
     }
+    flags |= fileData.methodFlags;
 
     final compressionMethod = password != null
         ? ZipFile.zipCompressionAexEncryption
@@ -664,6 +667,7 @@ class ZipEncoder {
       if (lzma && fileData.lzmaEndMarker) {
         generalPurposeBitFlag |= 0x02;
       }
+      generalPurposeBitFlag |= fileData.methodFlags;
       final compressionMethod = password != null
           ? ZipFile.zipCompressionAexEncryption
           : _compressionMethod(fileData);

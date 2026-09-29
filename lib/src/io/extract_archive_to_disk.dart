@@ -629,7 +629,15 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
         await input.close();
         final again = InputFileStream(archivePath);
         toClose = again;
-        archive = ZipDecoder().decodeStream(again, password: password);
+        var skip = whole.length;
+        archive = ZipDecoder().decodeStream(again, password: password,
+            callback: (file) {
+          if (skip > 0) {
+            skip--;
+            return;
+          }
+          collect(file);
+        });
       }
     } else {
       throw ArgumentError.value(
