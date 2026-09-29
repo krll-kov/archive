@@ -63,8 +63,8 @@ class InputFileStream extends InputStream {
 
   /// Create an [InputFileStream] from another [InputFileStream].
   /// If [position] is provided, it is the offset into [other] to start reading,
-  /// relative to the current position of [other]. Otherwise the current
-  /// position of [other] is used.
+  /// relative to start of [other]. Otherwise reading starts at start of
+  /// [other], not at its current position.
   /// If [length] is provided, it sets the length of this [InputFileStream],
   /// otherwise the remaining bytes in [other] is used.
   /// [bufferSize] determines the size of the cache used by the created
@@ -157,6 +157,9 @@ class InputFileStream extends InputStream {
     }
   }
 
+  /// Returns stream over part of this file. Without [position] it starts at
+  /// offset 0 of this stream, not at read position as [InputStream.subset]
+  /// says, so pass [position] to read from current position
   @override
   InputStream subset({int? position, int? length, int? bufferSize}) {
     return InputFileStream.fromFileStream(this,

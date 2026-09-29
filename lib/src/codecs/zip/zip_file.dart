@@ -433,9 +433,9 @@ class ZipFile extends FileContent {
       _decodeLzma(output);
       return InputMemoryStream(output.getBytes());
     } else {
-      // Copy of stored entry needed 1.3 GB RAM for 1 GB entry, so we read file
+      // Copying stored entry took 1.3 GB of RAM for 1 GB entry, so we read file
       // on demand and verify buffers at most 1 MB. InputFileStream.subset()
-      // starts at 0, so we pass current position
+      // without position starts at 0, so we pass current position
       return _rawContent!.subset(position: _rawContent!.position);
     }
   }

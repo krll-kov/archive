@@ -1014,6 +1014,20 @@ void main() {
           'abs');
     });
 
+    test('$method extraction creates an empty directory entry', () async {
+      final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final output = p.join(root.path, 'out');
+      await extract(
+          Archive()
+            ..add(ArchiveFile.directory('empty/'))
+            ..add(ArchiveFile.string('full/a.txt', 'a')),
+          output,
+          root.path);
+      expect(Directory(p.join(output, 'empty')).existsSync(), isTrue);
+      expect(File(p.join(output, 'full', 'a.txt')).readAsStringSync(), 'a');
+    });
+
     // Python tarfile default filter and 7-Zip 26 also keep such link out,
     // bsdtar and Python filter='tar' create it as allowAbsoluteSymlinks does
     test('$method extraction creates absolute symlinks only when allowed',
@@ -1234,6 +1248,31 @@ void main() {
     a.add(f2);
     extractArchiveToDiskSync(a, '$testOutputPath/extractArchiveToDisk_symlink');
   });
+
+  for (final method in ['sync', 'async']) {
+    test('$method extraction of a decoded tar writes it the second time too',
+        () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final data = Uint8List.fromList(List.generate(3000, (i) => i * 7 % 251));
+      final tar = File(p.join(directory.path, 'a.tar'))
+        ..writeAsBytesSync(TarEncoder()
+            .encodeBytes(Archive()..add(ArchiveFile.bytes('a.bin', data))));
+      final input = InputFileStream(tar.path);
+      addTearDown(input.closeSync);
+      final archive = TarDecoder().decodeStream(input);
+      for (final name in ['one', 'two']) {
+        final out = p.join(directory.path, name);
+        if (method == 'sync') {
+          extractArchiveToDiskSync(archive, out);
+        } else {
+          await extractArchiveToDisk(archive, out);
+        }
+        expect(File(p.join(out, 'a.bin')).readAsBytesSync(), data,
+            reason: name);
+      }
+    });
+  }
 
   test('FileHandle', () async {
     final fh = FileHandle('test/_data/zip/zip_bzip2.zip');

@@ -59,7 +59,7 @@ class _GZipDecoder extends ZLibDecoderBase {
               ? getCrc32(out)
               : getAdler32(out);
       final start = isGZip
-          ? seen - trailerLength
+          ? max(0, seen - trailerLength - _junkWindow)
           : max(0, seen - trailerLength - zlibAdlerWindow);
       final valid = _checkTrailer(Uint8List.sublistView(bytes, start), seen,
           out.length, sum, isGZip, verify);
@@ -204,6 +204,12 @@ class _GZipDecoder extends ZLibDecoderBase {
       input.rewind(back + trailerLength);
       trailer = input.readBytes(back + trailerLength).toUint8List();
     }
+    var checked = trailer;
+    if (isGZip && verify) {
+      final back = min(_junkWindow, seen - trailerLength - left);
+      input.rewind(back + trailerLength);
+      checked = input.readBytes(back + trailerLength).toUint8List();
+    }
 
     FormatException? trailerError;
     try {
@@ -217,7 +223,7 @@ class _GZipDecoder extends ZLibDecoderBase {
       trailerError = error;
     }
     final valid = _checkTrailer(
-        trailer, seen, outSink.written, outSink.value, isGZip, verify);
+        checked, seen, outSink.written, outSink.value, isGZip, verify);
     if (trailerError != null) {
       throw trailerError;
     }
@@ -270,14 +276,15 @@ class _GZipDecoder extends ZLibDecoderBase {
     if (seen < 20) {
       return false;
     }
-    final crc = trailer[0] |
-        (trailer[1] << 8) |
-        (trailer[2] << 16) |
-        (trailer[3] << 24);
-    final declared = trailer[4] |
-        (trailer[5] << 8) |
-        (trailer[6] << 16) |
-        (trailer[7] << 24);
+    // dart:io drops input after empty member, so decodeBytes accepted cut
+    // header of next member in last 9 bytes. Any member takes at least 20
+    // bytes, so with verify we reject header that starts in last 9 bytes
+    if (verify && _afterEmptyMember(_none, trailer, _none, 8) >= 0) {
+      return false;
+    }
+    final at = trailer.length - 8;
+    final crc = _uint32(trailer, at);
+    final declared = _uint32(trailer, at + 4);
     if (written % 0x100000000 == declared) {
       if (verify && sum != crc) {
         throw ArchiveChecksumException('Invalid gzip checksum');
@@ -285,10 +292,27 @@ class _GZipDecoder extends ZLibDecoderBase {
       return true;
     }
     if (written >= 0x100000000 || declared < written) {
+      // dart:io accepts cut header of 1 to 9 bytes after last member, and then
+      // trailer read at end looks like concatenated member. Member takes 20
+      // bytes or more, so whole output trailer 1 to 9 bytes from end means junk
+      if (verify) {
+        for (var i = at - 1; i >= 0; i--) {
+          if (_uint32(trailer, i) == sum &&
+              _uint32(trailer, i + 4) == written % 0x100000000) {
+            return false;
+          }
+        }
+      }
       return true;
     }
     return false;
   }
+
+  static int _uint32(Uint8List bytes, int at) =>
+      bytes[at] |
+      (bytes[at + 1] << 8) |
+      (bytes[at + 2] << 16) |
+      (bytes[at + 3] << 24);
 }
 
 // int _gzipDeclaredSize(Uint8List bytes, int at) =>
@@ -316,11 +340,12 @@ class _GZipDecoder extends ZLibDecoderBase {
 //   void close() {}
 // }
 
-/// dart:io gzip decoder fails when read splits last 9 bytes of member that
-/// another member follows, so chunk is extended to next member header
+/// dart:io gzip decoder fails when read splits last 18 bytes of member that
+/// another member follows, so chunk is extended to next member header. We
+/// look 32 bytes ahead, since we measured only zlib and this package encoders
 int _toNextMember(InputStream input, int left) {
-  final ahead = input.peekBytes(min(12, left)).toUint8List();
-  for (var k = 0; k <= 9 && k + 2 < ahead.length; k++) {
+  final ahead = input.peekBytes(min(35, left)).toUint8List();
+  for (var k = 0; k <= 32 && k + 2 < ahead.length; k++) {
     if (ahead[k] == 0x1f && ahead[k + 1] == 0x8b && ahead[k + 2] == 8) {
       return k;
     }
@@ -334,6 +359,9 @@ Uint8List _convertMembers(Uint8List bytes, int end, bool isGZip, bool checked,
   var sink = GZipCodec().decoder.startChunkedConversion(output);
   final body = Uint8List.sublistView(bytes, 0, end);
   final trailer = Uint8List.sublistView(bytes, end);
+  // dart:io drops output of failing inflate call, up to 64 KiB before damage.
+  // Feeding 8 KiB pieces keeps that output but costs 15-17% on text and 80% on
+  // random data, and second decode after error reads input twice
   sink.add(body);
   try {
     sink.add(trailer);
@@ -365,6 +393,8 @@ Uint8List _convertMembers(Uint8List bytes, int end, bool isGZip, bool checked,
 }
 
 final _none = Uint8List(0);
+
+const _junkWindow = 9;
 
 /// dart:io drops input after empty gzip member in ZLibInflateFilter, see
 /// https://github.com/dart-lang/sdk/blob/ab942a8bcf/runtime/bin/filter.cc#L419

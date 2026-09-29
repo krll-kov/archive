@@ -90,7 +90,10 @@ class ZipFileEncoder {
   }) {
     _output = outputFileStream;
     _level = level;
-    _encoder = ZipEncoder(password: password);
+    // Without streamed ZipEncoder compressed each deflated entry into memory:
+    // 1042 MB for 920 MB file at level 1, 667 MB at level 6. With streamed it
+    // writes sizes in data descriptor after data and needs 19 MB
+    _encoder = ZipEncoder(password: password, streamed: true);
     _encoder.startEncode(_output, level: level, modified: modified);
   }
 
@@ -218,8 +221,9 @@ class ZipFileEncoder {
   }
 
   void _add(ArchiveFile file, int? level) {
-    // store reached ZipEncoder as deflate level 0: whole entry was buffered in
-    // memory, 2 GB for 1 GB file, and written as method 8. Method 0 streams
+    // ZipEncoder took store as deflate level 0: it buffered whole entry in
+    // memory, 2 GB for 1 GB file, and wrote method 8. We set method 0, which
+    // ZipEncoder writes straight from file
     if ((level ?? _level) != store || file.compression != null) {
       _encoder.add(file, level: level);
       return;

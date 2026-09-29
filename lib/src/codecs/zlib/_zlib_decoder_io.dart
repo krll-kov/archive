@@ -44,6 +44,9 @@ class _ZLibDecoder extends ZLibDecoderBase {
       //   out = partial.getBytes();
       //   adler = outSink.value;
       // } else {
+      // dart:io drops output of failing inflate call, up to 64 KiB before
+      // damage. Feeding 8 KiB pieces keeps that output but costs 15-17% on
+      // text and 80% on random data, and second decode reads input twice
       out = convertKeepingPartial(
           ZLibCodec(raw: raw).decoder,
           [Uint8List.sublistView(bytes, 0, bytes.length - trailerLength)],

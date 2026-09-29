@@ -274,6 +274,44 @@ void main() {
       }
     });
 
+    test('an entry whose stream was written to a file is tarred whole',
+        () async {
+      final directory = Directory.systemTemp.createTempSync('archive-tar-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final data = Uint8List.fromList(List.generate(3000, (i) => i * 7 % 251));
+      final source = File(p.join(directory.path, 'source.bin'))
+        ..writeAsBytesSync(data);
+      final input = InputFileStream(source.path);
+      addTearDown(input.closeSync);
+      for (final entry in [
+        ArchiveFile.stream('file', input),
+        ArchiveFile.stream('memory', InputMemoryStream(data)),
+      ]) {
+        final output = OutputFileStream(p.join(directory.path, entry.name));
+        entry.writeContent(output);
+        output.closeSync();
+        final streamed = await tarCodec.encoder
+            .bind(
+                Stream.fromIterable([entry, ArchiveFile.string('after', 'a')]))
+            .expand((piece) => piece)
+            .toList();
+        for (final (name, tar) in [
+          (
+            'encodeBytes',
+            TarEncoder().encodeBytes(Archive()
+              ..add(entry)
+              ..add(ArchiveFile.string('after', 'a')))
+          ),
+          ('tarCodec', streamed),
+        ]) {
+          final files = TarDecoder().decodeBytes(tar, verify: true).files;
+          expect(files.map((f) => f.name), [entry.name, 'after'],
+              reason: '${entry.name}, $name');
+          expect(files.first.content, data, reason: '${entry.name}, $name');
+        }
+      }
+    });
+
     test('invalid archive', () {
       final bytes = Uint8List.fromList([1, 2, 3]);
       expect(TarDecoder().decodeBytes(bytes), isEmpty);

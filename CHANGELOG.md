@@ -148,6 +148,12 @@
   file needed 2 GB of RAM. The `store` level of `create`, `zipDirectory`, `addFile`, `addFileSync` and
   `addDirectory` now writes uncompressed entries (method 0) streamed from the file. An `ArchiveFile` given to
   `addArchiveFile` is stored too, unless its `compression` is set.
+* Fixed `ZipFileEncoder` holding each whole deflated entry in memory: a 920 MB file needed 1042 MB of RAM at level 1
+  and 667 MB at level 6, now 19 MB at every level. `ZipFileEncoder` now uses `ZipEncoder(streamed: true)`, so a
+  deflated entry without a password has bit 3 set, zero CRC and sizes in its local header, and a data descriptor
+  after its data. The archives decode the same, but their bytes differ from earlier versions.
+* Fixed `OutputFileStream.writeStream` moving the read position of its source to the end, unlike the other
+  `OutputStream` types. The source position is now left unchanged.
 
 # 4.3.0
 

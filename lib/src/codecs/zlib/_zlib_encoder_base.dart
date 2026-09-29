@@ -70,9 +70,9 @@ void addTrailerUnchecked(Sink<List<int>> sink, List<int> trailer) {
   try {
     sink.add(trailer);
   } on FormatException {
-    // This catch also hides garbage after gzip member: 8 or 9 zero bytes pass
-    // throwOnError while verify throws. We learn where member ends only from
-    // second inflate pass, too slow for this rare case
+    // This catch also hides garbage after gzip member: throwOnError accepts 8
+    // or 9 trailing zero bytes, while verify rejects them. Only second inflate
+    // pass finds where member ends, and it is too slow for this rare case
     return;
   }
 }

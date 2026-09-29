@@ -285,6 +285,36 @@ void main() {
           }
         });
 
+        test('web gzip checks optional header CRC, stream $stream', () {
+          final header = gzip.sublist(0, 10)..[3] |= 2;
+          final crc = getCrc32(header);
+          final member = Uint8List.fromList([
+            ...header,
+            crc & 255,
+            (crc >> 8) & 255,
+            ...gzip.sublist(10),
+          ]);
+          Object decode(List<int> bytes,
+                  {bool verify = false, bool throwOnError = false}) =>
+              stream
+                  ? const GZipDecoderWeb().decodeStream(
+                      InputMemoryStream(bytes), OutputMemoryStream(),
+                      verify: verify, throwOnError: throwOnError)
+                  : const GZipDecoderWeb().decodeBytes(bytes,
+                      verify: verify, throwOnError: throwOnError);
+          expect(decode(member, verify: true), stream ? isTrue : equals(data));
+          for (final byte in [3, 10, 11]) {
+            final bad = Uint8List.fromList(member);
+            bad[byte] ^= byte == 3 ? 0x80 : 1;
+            expect(() => decode(bad, verify: true),
+                throwsA(isA<ArchiveException>()),
+                reason: 'header byte $byte');
+            expect(() => decode(bad, throwOnError: true),
+                throwsA(isA<ArchiveException>()),
+                reason: 'header byte $byte');
+          }
+        });
+
         test('strict options reject damaged later gzip headers, stream $stream',
             () {
           for (final byte in [0, 1, 2]) {
@@ -971,6 +1001,45 @@ void main() {
           return;
         }
         fail('no damage made the stream fail after some output');
+      });
+
+      test('gzip verify refuses one zero byte after the last member', () {
+        final padded = Uint8List.fromList([...gzip, 0]);
+        for (final (name, decode) in [
+          (
+            'gzip',
+            (Uint8List bytes) =>
+                const GZipDecoder().decodeBytes(bytes, verify: true)
+          ),
+          (
+            'gzip web',
+            (Uint8List bytes) =>
+                const GZipDecoderWeb().decodeBytes(bytes, verify: true)
+          ),
+        ]) {
+          expect(() => decode(padded), throwsA(isA<ArchiveException>()),
+              reason: name);
+        }
+      });
+
+      test('gzip verify refuses a cut header after an empty last member', () {
+        final whole = Uint8List.fromList(
+            [...gzip, ...GZipEncoder().encodeBytes(Uint8List(0))]);
+        expect(const GZipDecoder().decodeBytes(whole, verify: true), data);
+        const header = [0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3];
+        for (var cut = 3; cut <= 9; cut++) {
+          final padded =
+              Uint8List.fromList([...whole, ...header.sublist(0, cut)]);
+          expect(() => const GZipDecoder().decodeBytes(padded, verify: true),
+              throwsA(isA<ArchiveException>()),
+              reason: 'bytes, cut $cut');
+          expect(
+              () => const GZipDecoder().decodeStream(
+                  InputMemoryStream(padded), OutputMemoryStream(),
+                  verify: true),
+              throwsA(isA<ArchiveException>()),
+              reason: 'stream, cut $cut');
+        }
       });
 
       test('zlib web ignores bytes after a whole stream with either flag', () {

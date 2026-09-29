@@ -614,6 +614,7 @@ class BZip2Decoder {
             rTPos = 0;
           }
         }
+        rNToGo--;
         k1 ^= ((rNToGo == 1) ? 1 : 0);
         cNBlockUsed++;
         if (cNBlockUsed == sSaveNBlockPP) {
@@ -635,6 +636,7 @@ class BZip2Decoder {
             rTPos = 0;
           }
         }
+        rNToGo--;
         k1 ^= ((rNToGo == 1) ? 1 : 0);
         cNBlockUsed++;
         if (cNBlockUsed == sSaveNBlockPP) {
@@ -655,6 +657,7 @@ class BZip2Decoder {
             rTPos = 0;
           }
         }
+        rNToGo--;
         k1 ^= ((rNToGo == 1) ? 1 : 0);
         cNBlockUsed++;
         cStateOutLen = k1 + 4;
@@ -669,6 +672,7 @@ class BZip2Decoder {
             rTPos = 0;
           }
         }
+        rNToGo--;
         k0 ^= ((rNToGo == 1) ? 1 : 0);
         cNBlockUsed++;
       }

@@ -38,19 +38,24 @@ class _GZipDecoder extends ZLibDecoderBase {
       {bool verify = false, bool raw = false, bool throwOnError = false}) {
     final held = input.byteOrder;
     input.byteOrder = ByteOrder.littleEndian;
+    // Apple gzip and Python gzip decode members with reserved FLG bits or wrong
+    // FHCRC, so rejecting them without flags loses data. We check header like
+    // zlib only with verify or throwOnError
+    final strict = _verifyHeader || verify || throwOnError;
     try {
       return guardDecode('gzip', verify, throwOnError,
-          () => _decode(input, output, verify, raw));
+          () => _decode(input, output, verify, raw, strict));
     } finally {
       input.byteOrder = held;
     }
   }
 
-  bool _decode(InputStream input, OutputStream output, bool verify, bool raw) {
+  bool _decode(InputStream input, OutputStream output, bool verify, bool raw,
+      bool strict) {
     var members = 0;
     while (!input.isEOS) {
       final startPos = input.position;
-      if (!_readHeader(input)) {
+      if (!_readHeader(input, strict)) {
         if (members != 0) {
           // Bytes after a member that do not begin another one. The stream
           // does not end where it says it does, so it is not whole.
@@ -106,7 +111,7 @@ class _GZipDecoder extends ZLibDecoderBase {
     return members != 0;
   }
 
-  bool _readHeader(InputStream input) {
+  bool _readHeader(InputStream input, bool strict) {
     // The GZip format has the following structure:
     // Offset   Length   Contents
     // 0      2 bytes  magic header  0x1f, 0x8b (\037 \213)
@@ -169,7 +174,7 @@ class _GZipDecoder extends ZLibDecoderBase {
     }
 
     final flags = input.readByte();
-    if (_verifyHeader && flags & 0xe0 != 0) {
+    if (strict && flags & 0xe0 != 0) {
       return false;
     }
     /*int fileModTime =*/ input.readUint32();
@@ -205,7 +210,7 @@ class _GZipDecoder extends ZLibDecoderBase {
       if (input.length < 2) {
         return false;
       }
-      if (_verifyHeader) {
+      if (strict) {
         final expected = input.readUint16();
         final header = input.subset(
             position: headerStart, length: input.position - headerStart - 2);

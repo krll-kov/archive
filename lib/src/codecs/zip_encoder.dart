@@ -192,6 +192,18 @@ class ZipEncoder {
     final s = content.getStream(decompress: false);
     s.reset();
     var crc32 = 0;
+    if (s is! InputMemoryStream) {
+      final chunk = Uint8List(min(s.length, 1024 * 1024));
+      while (true) {
+        final got = s.readInto(chunk, 0, chunk.length);
+        if (got <= 0) {
+          break;
+        }
+        crc32 = getCrc32(Uint8List.sublistView(chunk, 0, got), crc32);
+      }
+      s.reset();
+      return crc32;
+    }
     var size = s.length;
     const chunkSize = 1024 * 1024;
     while (size > chunkSize) {

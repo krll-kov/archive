@@ -43,6 +43,9 @@ abstract class OutputStream {
   void reserve(int total) {}
 
   /// Write an InputStream to the output stream.
+  ///
+  /// Writes [stream] from its current position to its end and leaves that
+  /// position unchanged, so [stream] can be written again
   void writeStream(InputStream stream);
 
   /// Write a 16-bit word to the output stream.

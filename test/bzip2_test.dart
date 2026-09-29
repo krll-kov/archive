@@ -217,6 +217,69 @@ void main() {
     expect(output.getBytes(), BZip2Encoder().encodeBytes(data));
     expect(BZip2Decoder().decodeBytes(output.getBytes(), verify: true), data);
   });
+
+  test('a randomised block decodes to its data on every path', () async {
+    final data = Uint8List.fromList(
+        List.generate(20000, (i) => (i ~/ 3 * 37 + (i >> 5) * 11) % 128 * 2));
+    final archive = _randomised(data);
+    expect(BZip2Decoder().decodeBytes(archive, verify: true), data);
+    final output = OutputMemoryStream();
+    expect(
+        BZip2Decoder()
+            .decodeStream(InputMemoryStream(archive), output, verify: true),
+        isTrue);
+    expect(output.getBytes(), data);
+    expect(bzip2Codec.decode(archive), data);
+  });
+}
+
+Uint8List _randomised(Uint8List data) {
+  final masked = Uint8List.fromList(data);
+  var toGo = 0;
+  var next = 0;
+  for (var i = 0; i < masked.length; i++) {
+    if (toGo == 0) {
+      toGo = BZip2Decoder.bz2RNums[next];
+      next = (next + 1) % BZip2Decoder.bz2RNums.length;
+    }
+    toGo--;
+    if (toGo == 1) {
+      masked[i] ^= 1;
+    }
+  }
+  var crc = BZip2.initialCrc;
+  for (final byte in data) {
+    crc = BZip2.updateCrc(byte, crc);
+  }
+  crc = BZip2.finalizeCrc(crc);
+  final stream = BZip2Encoder().encodeBytes(masked);
+  final reader = _BitReader(stream);
+  var end = stream.length * 8 - 80;
+  while (true) {
+    reader.at = end;
+    if (reader.read(48) == 0x177245385090) {
+      break;
+    }
+    end--;
+  }
+  reader.at = 0;
+  final writer = _BitWriter();
+  void copy(int bits) => writer.write(reader.read(bits), bits);
+  copy(32);
+  copy(48);
+  reader.read(33);
+  writer.write(crc, 32);
+  writer.write(1, 1);
+  while (reader.at < end) {
+    copy(1);
+  }
+  copy(48);
+  reader.read(32);
+  writer.write(crc, 32);
+  while (reader.at < stream.length * 8) {
+    copy(1);
+  }
+  return writer.bytes;
 }
 
 Uint8List _withExtraSelectors(Uint8List stream, int extra) {

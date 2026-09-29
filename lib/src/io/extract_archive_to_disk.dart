@@ -247,8 +247,7 @@ String? _prepareArchiveFilePath(ArchiveFile archiveFile, String outputPath,
     String? realOut, bool allowAbsoluteSymlinks) {
   final filePath = _entryPath(outputPath, archiveFile.name);
 
-  if ((archiveFile.isDirectory && !archiveFile.isSymbolicLink) ||
-      !_isEntryWithinOutputPath(realOut, filePath)) {
+  if (!_isEntryWithinOutputPath(realOut, filePath)) {
     return null;
   }
 
@@ -384,8 +383,7 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
   for (final entry in archive) {
     final filePath = _entryPath(outputPath, entry.name);
 
-    if ((entry.isDirectory && !entry.isSymbolicLink) ||
-        !await _isEntryWithinOutputPathAsync(realOut, filePath)) {
+    if (!await _isEntryWithinOutputPathAsync(realOut, filePath)) {
       continue;
     }
 

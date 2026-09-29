@@ -149,10 +149,19 @@ class OutputFileStream extends OutputStream {
 
   @override
   void writeStream(InputStream stream) {
+    final held = stream.position;
+    try {
+      _writeStream(stream);
+    } finally {
+      stream.setPosition(held);
+    }
+  }
+
+  void _writeStream(InputStream stream) {
     var size = stream.length;
     const chunkSize = 1024 * 1024;
     // Fresh 1 MB array per chunk costs page faults on first write: reading
-    // 1 GB file took 111 ms against 45 ms into one reused buffer
+    // 1 GB file took 111 ms, against 45 ms with one reused buffer
     if (stream is! InputMemoryStream && size > 0) {
       final chunk = Uint8List(size < chunkSize ? size : chunkSize);
       while (size > 0) {
