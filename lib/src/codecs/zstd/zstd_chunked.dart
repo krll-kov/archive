@@ -110,8 +110,8 @@ class ZstdEncoderConverter extends ChunkedConverter {
   /// Whether the frame carries an XXH64 of its content
   final bool checksum;
 
-  /// `startChunkedConversion` cannot take this option. Its sink owes its output
-  /// before it returns, and a worker answers later
+  /// `startChunkedConversion` cannot take this option. Its sink writes its
+  /// output before it returns, and a worker answers later
   final ZstdMultithreadOptions<Object?>? multithread;
 
   /// Placed before the content, as [ZstdChunkedEncoder.dictionary] describes

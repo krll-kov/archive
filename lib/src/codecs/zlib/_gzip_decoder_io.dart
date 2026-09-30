@@ -122,6 +122,7 @@ class _GZipDecoder extends ZLibDecoderBase {
     }
     var inSink = GZipCodec().decoder.startChunkedConversion(outSink);
     var left = seen - trailerLength;
+    final bodyStart = input.position;
     final bodyEnd = input.position + left;
     var split = false;
     var fed = _none;
@@ -134,6 +135,38 @@ class _GZipDecoder extends ZLibDecoderBase {
       left = bodyEnd - position;
       last8 = Uint8List(8);
       split = true;
+    }
+
+    void addPieces(Uint8List chunk) {
+      final after =
+          left > 0 ? input.peekBytes(min(2, left)).toUint8List() : _none;
+      var from = 0;
+      for (var i = _afterEmptyMember(last8, chunk, after, 1);
+          i >= 0;
+          i = _afterEmptyMember(last8, chunk, after, i + 1)) {
+        inSink.add(Uint8List.sublistView(chunk, from, i));
+        from = i;
+      }
+      inSink.add(Uint8List.sublistView(chunk, from));
+    }
+
+    int emptyMemberIn(Uint8List after) {
+      final position = input.position;
+      try {
+        for (var i = _afterEmptyMember(fedBefore, fed, after, 1);
+            i >= 0;
+            i = _afterEmptyMember(fedBefore, fed, after, i + 1)) {
+          final from = max(bodyStart, fedAt + i - _emptyMemberWindow);
+          input.setPosition(from);
+          final bytes = input.readBytes(fedAt + i - from).toUint8List();
+          if (_endsEmptyMember(bytes, bytes.length)) {
+            return i;
+          }
+        }
+        return -1;
+      } finally {
+        input.setPosition(position);
+      }
     }
 
     while (true) {
@@ -153,24 +186,19 @@ class _GZipDecoder extends ZLibDecoderBase {
           left -= next;
         }
         if (split) {
-          final after =
-              left > 0 ? input.peekBytes(min(2, left)).toUint8List() : _none;
-          var from = 0;
-          for (var i = _afterEmptyMember(last8, chunk, after, 1);
-              i >= 0;
-              i = _afterEmptyMember(last8, chunk, after, i + 1)) {
-            inSink.add(Uint8List.sublistView(chunk, from, i));
-            from = i;
-          }
-          inSink.add(Uint8List.sublistView(chunk, from));
+          addPieces(chunk);
           last8 = _lastBytes(last8, chunk);
           continue;
         }
+        final pieces = isGZip && (next >= 0 || left == 0);
         try {
-          inSink.add(chunk);
+          if (pieces) {
+            addPieces(chunk);
+          } else {
+            inSink.add(chunk);
+          }
         } on FormatException {
-          final empty =
-              isGZip ? _afterEmptyMember(fedBefore, fed, chunk, 1) : -1;
+          final empty = isGZip ? emptyMemberIn(chunk) : -1;
           if (empty < 0) {
             rethrow;
           }
@@ -178,20 +206,14 @@ class _GZipDecoder extends ZLibDecoderBase {
           continue;
         }
         fedBefore = last8;
-        fed = chunk;
+        fed = pieces ? _none : chunk;
         fedAt = at;
         last8 = _lastBytes(last8, chunk);
-        if (isGZip && next >= 0) {
-          final empty = _afterEmptyMember(fedBefore, fed, _none, 1);
-          if (empty >= 0) {
-            restart(fedAt + empty);
-          }
-        }
       }
       if (split || !isGZip) {
         break;
       }
-      final empty = _afterEmptyMember(fedBefore, fed, _none, 1);
+      final empty = emptyMemberIn(_none);
       if (empty < 0) {
         break;
       }
@@ -367,6 +389,9 @@ Uint8List _convertMembers(Uint8List bytes, int end, bool isGZip, bool checked,
     sink.add(trailer);
   } on FormatException {
     var from = isGZip ? _afterEmptyMember(_none, body, trailer, 1) : -1;
+    while (from >= 0 && !_endsEmptyMember(body, from)) {
+      from = _afterEmptyMember(_none, body, trailer, from + 1);
+    }
     if (from < 0) {
       if (checked) {
         rethrow;
@@ -448,6 +473,76 @@ int _afterEmptyMember(
     }
   }
   return -1;
+}
+
+const _emptyMemberWindow = 1024;
+
+/// dart:io drops input after empty member and gives no offset. So level 0
+/// member holding .gz file with empty member inside looks like real boundary,
+/// and we decode that .gz into output. Only second decode could fix this
+bool _endsEmptyMember(Uint8List bytes, int end) {
+  for (var start = end - 20;
+      start >= max(0, end - _emptyMemberWindow);
+      start--) {
+    if (bytes[start] == 0x1f &&
+        bytes[start + 1] == 0x8b &&
+        bytes[start + 2] == 8 &&
+        _isEmptyMember(bytes, start, end)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool _isEmptyMember(Uint8List bytes, int start, int end) {
+  final stop = end - 8;
+  final flags = bytes[start + 3];
+  var at = start + 10;
+  if (flags & 4 != 0) {
+    if (at + 2 > stop) {
+      return false;
+    }
+    at += 2 + (bytes[at] | (bytes[at + 1] << 8));
+  }
+  for (final flag in const [8, 16]) {
+    if (flags & flag != 0) {
+      while (at < stop && bytes[at] != 0) {
+        at++;
+      }
+      at++;
+    }
+  }
+  if (flags & 2 != 0) {
+    at += 2;
+  }
+  final limit = stop * 8;
+  var bit = at * 8;
+  int read(int count) {
+    if (bit + count > limit) {
+      return -1;
+    }
+    var value = 0;
+    for (var k = 0; k < count; k++, bit++) {
+      value |= ((bytes[bit >> 3] >> (bit & 7)) & 1) << k;
+    }
+    return value;
+  }
+
+  while (true) {
+    final last = read(1);
+    final type = read(2);
+    if (type == 0) {
+      bit = (bit + 7) & ~7;
+      if (read(16) != 0 || read(16) != 0xffff) {
+        return false;
+      }
+    } else if (type != 1 || read(7) != 0) {
+      return false;
+    }
+    if (last == 1) {
+      return (bit + 7) >> 3 == stop;
+    }
+  }
 }
 
 Uint8List _lastBytes(Uint8List before, Uint8List chunk) {

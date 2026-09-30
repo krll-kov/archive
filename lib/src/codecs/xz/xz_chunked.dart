@@ -27,8 +27,8 @@ class XzDecoderConverter extends ChunkedConverter {
   /// {@macro archive.xz.verify_default}
   final bool verify;
 
-  /// `startChunkedConversion` cannot take this option. Its sink owes its output
-  /// before it returns, and a worker answers later
+  /// `startChunkedConversion` cannot take this option. Its sink writes its
+  /// output before it returns, and a worker answers later
   final XZMultithreadOptions<Object?>? multithread;
 
   const XzDecoderConverter({this.verify = true, this.multithread});

@@ -113,6 +113,10 @@ class ZipFile extends FileContent {
           'zip: local header of ${header?.filename} is damaged');
     }
     filename = input.readString(size: fnLen);
+    if (verify && header != null && filename != header!.filename) {
+      throw ArchiveException(
+          'zip: local header of ${header?.filename} is damaged');
+    }
     extraField = input.readBytes(exLen).toUint8List();
 
     // Use the compressedSize and uncompressedSize from the CFD header.

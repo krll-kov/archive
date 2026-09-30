@@ -72,6 +72,9 @@ class TarDecoder {
       // The end of the archive is a block of zeros; two of them can't be told
       // from a damaged header, which is what verify is there to catch
       final endCheck = input.peekBytes(verify ? 512 : 2).toUint8List();
+      if (verify && endCheck.length < 512 && !endCheck.any((b) => b != 0)) {
+        throw ArchiveException('Unexpected end of tar data');
+      }
       if (verify
           ? !endCheck.any((b) => b != 0)
           : endCheck.length < 2 || (endCheck[0] == 0 && endCheck[1] == 0)) {

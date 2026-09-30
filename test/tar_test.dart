@@ -583,6 +583,25 @@ void main() {
       }
     });
 
+    test('strict decoding refuses an end block cut short, as the stream does',
+        () async {
+      final tar = TarEncoder().encodeBytes(
+          Archive()..add(ArchiveFile.bytes('a.txt', Uint8List(100))));
+      final cut = Uint8List.sublistView(tar, 0, 512 + 512 + 100);
+      await expectLater(
+          Stream<List<int>>.value(cut)
+              .transform(tarCodec.decoder)
+              .drain<void>(),
+          throwsA(isA<ArchiveException>()));
+      for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+        expect(
+            () => TarDecoder()
+                .decodeBytes(cut, verify: verify, throwOnError: throwOnError),
+            throwsA(isA<ArchiveException>()),
+            reason: 'verify $verify, throwOnError $throwOnError');
+      }
+    });
+
     test('an error thrown by the callback reaches the caller unchanged', () {
       final tar = TarEncoder().encodeBytes(Archive()
         ..add(ArchiveFile.bytes('a.txt', Uint8List(100)))

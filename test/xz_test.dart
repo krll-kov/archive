@@ -86,6 +86,20 @@ void main() {
       compareBytes(data, bBytes);
     });
 
+    test('decodeStream reads a stream in either byte order', () {
+      final compressed =
+          File(p.join('test/_data/xz/good-1-lzma2-1.xz')).readAsBytesSync();
+      final expected = XZDecoder().decodeBytes(compressed, verify: true);
+      for (final order in ByteOrder.values) {
+        final input = InputMemoryStream(compressed, byteOrder: order);
+        final output = OutputMemoryStream();
+        expect(XZDecoder().decodeStream(input, output, verify: true), isTrue,
+            reason: '$order');
+        expect(output.getBytes(), expected, reason: '$order');
+        expect(input.byteOrder, order);
+      }
+    });
+
     test('encode empty', () {
       final file = File(p.join('test/_data/xz/empty.xz'));
       final expected = file.readAsBytesSync();

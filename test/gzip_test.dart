@@ -781,6 +781,52 @@ void main() {
             [...data, ...List.filled(300, 67), ...List.filled(3000, 68)]);
       });
 
+      test('stored data that looks like an empty member is not a boundary', () {
+        final random = Random(4);
+        final nested = GZipEncoder()
+            .encodeBytes(List.generate(1000, (_) => random.nextInt(256)));
+        final tar = TarEncoder().encodeBytes(Archive()
+          ..add(ArchiveFile.bytes('a.txt', 'hello'.codeUnits))
+          ..add(ArchiveFile.bytes('b.gz', nested)));
+        final stored = GZipEncoder().encodeBytes(tar, level: 0);
+        final empty = GZipEncoder().encodeBytes(const <int>[]);
+        final last = GZipEncoder().encodeBytes(List.filled(3000, 69));
+        final long = List.generate(20000, (_) => random.nextInt(256));
+        final tarOfMembers = TarEncoder().encodeBytes(
+            Archive()..add(ArchiveFile.bytes('c.gz', [...empty, ...nested])));
+        for (final (joined, expected) in [
+          (stored, tar),
+          ([...stored, ...empty, ...last], [...tar, ...List.filled(3000, 69)]),
+          (
+            [...stored, ...empty, ...GZipEncoder().encodeBytes(long)],
+            [...tar, ...long]
+          ),
+          (GZipEncoder().encodeBytes(tarOfMembers, level: 0), tarOfMembers),
+        ]) {
+          final bytes = Uint8List.fromList(joined);
+          for (final (verify, throwOnError) in [
+            (false, false),
+            (true, false),
+            (false, true)
+          ]) {
+            final reason = 'length ${bytes.length}, verify $verify, '
+                'throwOnError $throwOnError';
+            expect(
+                const GZipDecoder().decodeBytes(bytes,
+                    verify: verify, throwOnError: throwOnError),
+                expected,
+                reason: reason);
+            final out = OutputMemoryStream();
+            expect(
+                const GZipDecoder().decodeStream(InputMemoryStream(bytes), out,
+                    verify: verify, throwOnError: throwOnError),
+                isTrue,
+                reason: reason);
+            expect(out.getBytes(), expected, reason: reason);
+          }
+        }
+      });
+
       test('web raw inflate reads a last code that ends the data', () {
         final raw = Uint8List.fromList([155, 48, 113, 210, 228, 41, 0]);
         for (final throwOnError in [false, true]) {

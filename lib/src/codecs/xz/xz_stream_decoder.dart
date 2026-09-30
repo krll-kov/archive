@@ -115,18 +115,24 @@ class XZStreamDecoder {
   /// Decode this stream and return the uncompressed data.
   bool decode(InputStream input, OutputStream output) {
     failureReason = null;
-    while (true) {
-      if (!_decodeStream(input, output)) {
-        return false;
-      }
+    final held = input.byteOrder;
+    input.byteOrder = ByteOrder.littleEndian;
+    try {
+      while (true) {
+        if (!_decodeStream(input, output)) {
+          return false;
+        }
 
-      // Streams can be concatenated, and each one may be followed by padding.
-      if (!_skipStreamPadding(input)) {
-        return false;
+        // Streams can be concatenated, and each one may be followed by padding.
+        if (!_skipStreamPadding(input)) {
+          return false;
+        }
+        if (input.isEOS) {
+          return true;
+        }
       }
-      if (input.isEOS) {
-        return true;
-      }
+    } finally {
+      input.byteOrder = held;
     }
   }
 

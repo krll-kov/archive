@@ -120,7 +120,7 @@ class ZstdSequences extends ZstdSequencesBase {
     final lap = window.lap;
     final litLength = literals.length;
     final dstEnd = window.position + blockSizeMax;
-    // The gap is what lets a copy overrun the output without reaching the
+    // The gap lets a copy overrun the output without reaching the
     // literals it has not read yet
     final litStart = dstEnd + zstdCopySlack;
 

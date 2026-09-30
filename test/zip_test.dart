@@ -635,6 +635,20 @@ void main() async {
       }
     });
 
+    test('strict decoding refuses a local name the central one does not match',
+        () {
+      final bytes = ZipEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
+      final damaged = Uint8List.fromList(bytes)..[31] ^= 1;
+      for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+        expect(
+            () => ZipDecoder().decodeBytes(damaged,
+                verify: verify, throwOnError: throwOnError),
+            throwsA(isA<ArchiveException>()),
+            reason: 'verify $verify, throwOnError $throwOnError');
+      }
+    });
+
     test('verify refuses a zip without its end of central directory', () {
       final bytes = ZipEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
