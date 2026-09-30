@@ -27,7 +27,7 @@ class TarFileEncoder {
     var tarPath = filename ?? '$dirPath.tar';
     final tgzPath = filename ?? '$dirPath.tar.gz';
 
-    Directory tempDir;
+    Directory? tempDir;
     if (compression == gzip) {
       tempDir = await Directory.systemTemp.createTemp('dart_archive');
       tarPath = '${tempDir.path}/temp.tar';
@@ -42,9 +42,13 @@ class TarFileEncoder {
     if (compression == gzip) {
       final input = InputFileStream(tarPath);
       final output = OutputFileStream(tgzPath);
-      GZipEncoder().encodeStream(input, output, level: level ?? 6);
-      await input.close();
-      await File(tarPath).delete();
+      try {
+        GZipEncoder().encodeStream(input, output, level: level ?? 6);
+      } finally {
+        await input.close();
+        await output.close();
+        await tempDir!.delete(recursive: true);
+      }
     }
   }
 

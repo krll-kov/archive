@@ -56,6 +56,18 @@ void main() {
             source);
       });
     }
+
+    for (final check in XZCheck.values) {
+      test('a $check archive is the same in a big endian output', () {
+        final source = _sample(1000);
+        final expected = XZEncoder().encodeBytes(source, check: check);
+        final output = OutputMemoryStream(byteOrder: ByteOrder.bigEndian);
+        XZEncoder()
+            .encodeStream(InputMemoryStream(source), output, check: check);
+        expect(output.getBytes(), expected);
+        expect(output.byteOrder, ByteOrder.bigEndian);
+      });
+    }
   });
 
   group('xz chunked encoder', () {

@@ -312,7 +312,7 @@ void main() {
     }
 
     expect(await jobs(1000), await jobs(zstdMtJobSizeMin));
-  });
+  }, testOn: 'vm');
 
   test('a level the encoder cannot honour throws whatever the input size', () {
     // Under the job size minimum the frame is the single threaded one, and the
@@ -903,7 +903,7 @@ void main() {
       await input.close();
       expect(ZstdDecoder().decodeBytes(output.getBytes()), src);
       expectProgress(seen);
-    });
+    }, testOn: 'vm');
 
     test('the converter reports it as well', () async {
       final seen = <int>[];

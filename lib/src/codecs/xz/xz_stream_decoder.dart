@@ -259,8 +259,8 @@ class XZStreamDecoder {
         if (!_readLZMA2(input, filtered ?? sink, dictionarySize)) {
           return false;
         }
-      } finally {
         filtered?.finish();
+      } finally {
         checked?.flush();
       }
     } else if (needsBlockData && output is! OutputMemoryStream) {
@@ -285,31 +285,37 @@ class XZStreamDecoder {
         // on which kind of stream was passed in. The filter is applied to it,
         // matching the branches above and below, which filter it too.
         final partial = block.getBytes();
-        if (hasX86) {
-          bcjX86Decode(partial, x86StartOffset);
-        }
-        output.writeBytes(partial);
+        final done =
+            hasX86 ? bcjX86Decode(partial, x86StartOffset) : partial.length;
+        output.writeBytes(Uint8List.sublistView(partial, 0, done));
         rethrow;
       }
       blockData = block.getBytes();
+      var done = blockData.length;
       if (hasX86) {
-        bcjX86Decode(blockData, x86StartOffset);
+        done = bcjX86Decode(blockData, x86StartOffset);
       }
       if (!read) {
-        output.writeBytes(blockData);
+        output.writeBytes(Uint8List.sublistView(blockData, 0, done));
         return false;
       }
       output.writeBytes(blockData);
     } else {
+      var read = false;
       try {
-        if (!_readLZMA2(input, output, dictionarySize)) {
+        read = _readLZMA2(input, output, dictionarySize);
+        if (!read) {
           return false;
         }
       } finally {
         if (hasX86) {
           // subset() returns a view into the output buffer, so the filter is
           // applied in place without allocating a copy of the block.
-          bcjX86Decode(output.subset(startDataLength), x86StartOffset);
+          final done =
+              bcjX86Decode(output.subset(startDataLength), x86StartOffset);
+          if (!read && output is OutputMemoryStream) {
+            output.length = startDataLength + done;
+          }
         }
       }
     }

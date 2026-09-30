@@ -32,6 +32,8 @@
   bad password case.
 * *BREAKING CHANGE*: `listTarFiles` and `extractTarFiles` now throw an error for a damaged archive instead of
   silently using only its readable part.
+* *BREAKING CHANGE*: `lastModTime` of zip entries is now in seconds since epoch, as in tar, instead of the DOS date 
+  and time format.
 * *BREAKING CHANGE*: `extractFileToDisk` now accepts `verify` and `throwOnError`, `extractArchiveToDisk` and 
   `extractArchiveToDiskSync` accept `throwOnError`. Without them a damaged or cut archive no longer throws: Complete 
   entries are extracted, and damaged ones leave no partial files on disk. If these flags are set, the function throws
@@ -132,6 +134,7 @@
 * Fixed `InputFileStream` ignoring its `byteOrder` for `readUint16`, `readUint24`, `readUint32` and `readUint64`.
 * Fixed `ZLibDecoderWeb` and `GZipDecoderWeb` depending on the byte order of the input stream: `decodeStream`
   failed `verify` on a whole zlib stream from a little-endian stream, and gzip failed on a big-endian one.
+* Fixed not-restoring original InputStream endian for some decoders and encoders and decoding/encoding BigEndian files.
 * Fixed `ZLibDecoderWeb` dropping the decoded data when bytes follow the stream, and accepting an empty input.
 * Fixed `ZipDecoder` returning the raw compressed bytes as the content of an entry with an unsupported compression
   method. With `throwOnError` or `verify` reading that entry throws `ArchiveException`, without them it is empty,

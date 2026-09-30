@@ -61,6 +61,20 @@ void main() {
     expect(Inflate(overrun).getBytes(), isEmpty);
   });
 
+  test('a cut stream gives the start of the data and nothing else', () {
+    final data = Uint8List.fromList(
+        utf8.encode('the quick brown fox jumps over the lazy dog ' * 20));
+    final deflated = Uint8List.fromList(Deflate(data).getBytes());
+    for (var cut = 0; cut < deflated.length; cut++) {
+      final inflated =
+          Inflate(Uint8List.sublistView(deflated, 0, cut)).getBytes();
+      expect(inflated.length, lessThanOrEqualTo(data.length),
+          reason: 'cut at $cut');
+      expect(inflated, Uint8List.sublistView(data, 0, inflated.length),
+          reason: 'cut at $cut');
+    }
+  });
+
   test('stream/NO_COMPRESSION', () {
     // compress the buffer (assumption: deflate works correctly).
     final deflated = Deflate(buffer, level: DeflateLevel.none).getBytes();

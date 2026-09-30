@@ -569,6 +569,44 @@ void main() async {
           archive, '$testOutputPath/zip_decode_file_stream');
     });
 
+    test('the decoder reads a stream in either byte order', () {
+      for (final name in ['test.zip', 'lzma.zip']) {
+        final path = 'test/_data/zip/$name';
+        final bytes = File(path).readAsBytesSync();
+        final expected = ZipDecoder().decodeBytes(bytes);
+        expect(expected.files, isNotEmpty, reason: name);
+        for (final order in ByteOrder.values) {
+          for (final input in <InputStream>[
+            InputFileStream(path, byteOrder: order),
+            InputMemoryStream(bytes, byteOrder: order),
+          ]) {
+            final reason = '$name ${input.runtimeType} $order';
+            final archive = ZipDecoder().decodeStream(input);
+            expect(archive.files.map((f) => f.name),
+                expected.files.map((f) => f.name),
+                reason: reason);
+            for (var i = 0; i < archive.length; i++) {
+              expect(archive[i].readBytes(), expected[i].readBytes(),
+                  reason: '$reason ${archive[i].name}');
+            }
+            expect(input.byteOrder, order, reason: reason);
+            input.closeSync();
+          }
+        }
+      }
+    });
+
+    test('an entry decoded and encoded again keeps its modification time', () {
+      final decoded = ZipDecoder()
+          .decodeBytes(File('test/_data/zip/test.zip').readAsBytesSync());
+      final again = ZipDecoder().decodeBytes(ZipEncoder().encodeBytes(decoded));
+      expect(again.length, decoded.length);
+      for (final file in decoded.files) {
+        expect(again.findFile(file.name)!.lastModDateTime, file.lastModDateTime,
+            reason: file.name);
+      }
+    });
+
     test('decode', () async {
       var file = File(p.join('test/_data/zip/android-javadoc.zip'));
       var bytes = file.readAsBytesSync();
@@ -1374,6 +1412,34 @@ void main() async {
       expect(entry.readBytes, throwsA(isA<ArchiveException>()));
     });
 
+    test('an AES entry read again with a wrong password throws again', () {
+      final bytes = ZipEncoder(password: 'secret').encodeBytes(
+          Archive()..add(ArchiveFile.string('a.txt', 'hello' * 100)));
+      for (final password in [null, 'wrong']) {
+        for (final (verify, throwOnError) in [
+          (false, false),
+          (false, true),
+          (true, false)
+        ]) {
+          final entry = ZipDecoder()
+              .decodeBytes(bytes,
+                  password: password,
+                  verify: verify,
+                  throwOnError: throwOnError)
+              .findFile('a.txt')!;
+          for (var read = 0; read < 3; read++) {
+            final reason = 'password $password, verify $verify, '
+                'throwOnError $throwOnError, read $read';
+            expect(entry.readBytes, throwsA(isA<ArchivePasswordException>()),
+                reason: reason);
+            expect(() => entry.writeContent(OutputMemoryStream()),
+                throwsA(isA<ArchivePasswordException>()),
+                reason: reason);
+          }
+        }
+      }
+    });
+
     test('empty directory', () {
       final archive = Archive();
       archive.add(ArchiveFile.directory('empty'));
@@ -1542,7 +1608,7 @@ void main() async {
       for (var i = 0; i < arcData.length; ++i) {
         expect(arcData[i], equals(bdata.codeUnits[i]));
       }
-      expect(arc[0].lastModTime, equals(1008795648));
+      expect(arc[0].lastModDateTime, equals(DateTime(2010)));
     });
 
     test('zipCrypto', () {
@@ -2283,6 +2349,24 @@ void main() async {
         encoder.endEncode();
         expect(_walkLocalHeaders(output.getBytes()), ['a.txt', 'dir/', 'b.txt'],
             reason: 'password=$password');
+      }
+    });
+
+    test('the archive is the same in a big endian output', () {
+      Archive archive() => Archive()
+        ..add(ArchiveFile.string('a.txt', 'hello' * 100))
+        ..add(ArchiveFile.directory('dir'))
+        ..add(ArchiveFile.noCompress('b.txt', 4, utf8.encode('bbbb')));
+      final modified = DateTime(2024, 1, 2, 3, 4, 6);
+      for (final streamed in [false, true]) {
+        final expected = ZipEncoder(streamed: streamed)
+            .encodeBytes(archive(), modified: modified);
+        final output = OutputMemoryStream(byteOrder: ByteOrder.bigEndian);
+        ZipEncoder(streamed: streamed)
+            .encodeStream(archive(), output, modified: modified);
+        expect(output.getBytes(), expected, reason: 'streamed $streamed');
+        expect(output.byteOrder, ByteOrder.bigEndian,
+            reason: 'streamed $streamed');
       }
     });
 

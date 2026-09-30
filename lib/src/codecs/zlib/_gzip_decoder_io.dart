@@ -43,6 +43,14 @@ class _GZipDecoder extends ZLibDecoderBase {
         return false;
       }
       FormatException? trailerError;
+      if (isGZip) {
+        partial.reserve(min(
+            bytes[seen - 4] |
+                bytes[seen - 3] << 8 |
+                bytes[seen - 2] << 16 |
+                bytes[seen - 1] << 24,
+            seen * 1032));
+      }
       try {
         out = _convertMembers(
             bytes, seen - trailerLength, isGZip, verify && isGZip, partial);
@@ -384,7 +392,7 @@ Uint8List _convertMembers(Uint8List bytes, int end, bool isGZip, bool checked,
   // dart:io drops output of failing inflate call, up to 64 KiB before damage.
   // Feeding 8 KiB pieces keeps that output but costs 15-17% on text and 80% on
   // random data, and second decode after error reads input twice
-  sink.add(body);
+  sink.addSlice(bytes, 0, end, false);
   try {
     sink.add(trailer);
   } on FormatException {

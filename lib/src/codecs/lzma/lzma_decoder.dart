@@ -200,10 +200,7 @@ class LzmaDecoder {
   @pragma('vm:unsafe:no-bounds-checks')
   void _decodePackets(int finalSize) {
     final positionMask = (1 << _positionBits) - 1;
-    while (_writePosition < finalSize) {
-      if (_rc.isOverrun) {
-        throw RangeError('LZMA data is truncated or corrupt');
-      }
+    while (_writePosition < finalSize && !_rc.isNearEnd) {
       final posState = _writePosition & positionMask;
       if (_rc.readBitRaw(_nonLiteralTables[state.index].table, posState) == 0) {
         _decodeLiteral();
@@ -212,6 +209,25 @@ class LzmaDecoder {
       } else {
         _decodeRepeat(posState);
       }
+    }
+    var packetStart = _writePosition;
+    while (_writePosition < finalSize) {
+      if (_rc.isOverrun) {
+        _writePosition = packetStart;
+        return;
+      }
+      packetStart = _writePosition;
+      final posState = _writePosition & positionMask;
+      if (_rc.readBitRaw(_nonLiteralTables[state.index].table, posState) == 0) {
+        _decodeLiteral();
+      } else if (_rc.readBitRaw(_repeatTable.table, state.index) == 0) {
+        _decodeMatch(posState);
+      } else {
+        _decodeRepeat(posState);
+      }
+    }
+    if (_rc.isOverrun) {
+      _writePosition = packetStart;
     }
   }
 
@@ -238,6 +254,9 @@ class LzmaDecoder {
 
     final initialSize = _reserve(uncompressedLength);
     _decodePackets(initialSize + uncompressedLength);
+    if (_rc.isOverrun) {
+      throw RangeError('LZMA data is truncated or corrupt');
+    }
 
     return _dictionary.sublist(initialSize, _writePosition);
   }
@@ -275,13 +294,19 @@ class LzmaDecoder {
         final extra = tail < maxMatchLength - 1 ? tail : maxMatchLength - 1;
         _reserve(count + extra);
         _decodePackets(end);
+        if (_rc.isOverrun) {
+          break;
+        }
       }
-      if (_writePosition != finalSize) {
+      if (!_rc.isOverrun && _writePosition != finalSize) {
         throw RangeError('LZMA output exceeds the declared size');
       }
     }
 
     output.writeRange(_dictionary, initialSize, _writePosition);
+    if (_rc.isOverrun) {
+      throw RangeError('LZMA data is truncated or corrupt');
+    }
   }
 
   // Returns true if the previous packet seen was a literal. The first seven

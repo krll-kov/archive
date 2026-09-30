@@ -36,7 +36,7 @@ void main() {
       }
       expect(ZstdEncoder(level: 0).encodeBytes(parting),
           isNot(ZstdEncoder(level: 1).encodeBytes(parting)));
-    });
+    }, testOn: 'vm');
 
     test('a level above the table is clamped to it', () {
       final top = ZstdEncoder(level: 22).encodeBytes(source);

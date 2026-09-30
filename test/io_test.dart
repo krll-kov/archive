@@ -536,6 +536,19 @@ void main() {
     await encoder.close();
   });
 
+  test('TarFileEncoder tgz leaves nothing in the system temp folder', () async {
+    final directory = Directory.systemTemp.createTempSync('archive-tgz-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final scratch = Directory('${directory.path}/scratch')..createSync();
+
+    await IOOverrides.runZoned(() async {
+      await TarFileEncoder().tarDirectory(Directory('test/_data/test2'),
+          filename: '${directory.path}/example2.tgz',
+          compression: TarFileEncoder.gzip);
+      expect(scratch.listSync(), isEmpty);
+    }, getSystemTempDirectory: () => scratch);
+  });
+
   test('stream zip encode async', () async {
     final encoder = ZipFileEncoder();
     encoder.create('$testOutputPath/example2.zip');

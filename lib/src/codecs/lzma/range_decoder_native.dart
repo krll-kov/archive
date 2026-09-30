@@ -55,6 +55,8 @@ class RangeDecoder {
   // stream is truncated or corrupt.
   bool get isOverrun => _bufferPos > _dataEnd;
 
+  bool get isNearEnd => _bufferPos > _dataEnd - 48;
+
   // Set the input being read from. Must be set before initializing or reading
   // bits.
   void setBuffer(Uint8List data) {

@@ -37,6 +37,16 @@ void main() {
       compareBytes(uncompressed, origData);
     });
 
+    test('gzip encode_web into a big endian output/decode', () {
+      final origData = [1, 2, 3, 4, 5, 6];
+      final output = OutputMemoryStream(byteOrder: ByteOrder.bigEndian);
+      GZipEncoderWeb().encodeStream(InputMemoryStream(origData), output);
+      final uncompressed =
+          GZipDecoder().decodeBytes(output.getBytes(), verify: true);
+      compareBytes(uncompressed, origData);
+      expect(output.byteOrder, ByteOrder.bigEndian);
+    });
+
     test('gzip encode/decode_web', () {
       final origData = [1, 2, 3, 4, 5, 6];
       final compressed = GZipEncoder().encodeBytes(origData);

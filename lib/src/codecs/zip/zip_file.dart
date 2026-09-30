@@ -593,6 +593,7 @@ class ZipFile extends FileContent {
   }
 
   InputStream _decodeAes(InputStream input) {
+    final start = input.position;
     Uint8List salt;
     int keySize = 16;
     if (_aesHeader!.encryptionStrength == 1) {
@@ -641,6 +642,7 @@ class ZipFile extends FileContent {
       }
       return InputMemoryStream(bytes);
     }
+    input.setPosition(start);
     throw failure;
   }
 

@@ -8,6 +8,7 @@ import '../archive/compression_type.dart';
 import '../util/_link_target.dart';
 import '../util/aes.dart';
 import '../util/archive_exception.dart';
+import '../util/byte_order.dart';
 import '../util/chunked_sink.dart';
 import '../util/crc32.dart';
 import '../util/input_memory_stream.dart';
@@ -103,6 +104,7 @@ class _ZipEncoderData {
 class ZipEncoder {
   late _ZipEncoderData _data;
   OutputStream? _output;
+  ByteOrder? _held;
   final Encoding filenameEncoding;
   // Lazy, since only a password needs it. Eager, dart2js and Node cannot even
   // build a ZipEncoder: Random.secure() throws there
@@ -134,10 +136,14 @@ class ZipEncoder {
       bool autoClose = false,
       ArchiveCallback? callback}) {
     startEncode(output, level: level, modified: modified);
-    for (final file in archive) {
-      add(file, autoClose: autoClose, callback: callback);
+    try {
+      for (final file in archive) {
+        add(file, autoClose: autoClose, callback: callback);
+      }
+      endEncode(comment: archive.comment);
+    } finally {
+      _restoreOrder();
     }
-    endEncode(comment: archive.comment);
   }
 
   Uint8List encodeBytes(Archive archive,
@@ -173,6 +179,10 @@ class ZipEncoder {
       {int? level = DeflateLevel.bestSpeed, DateTime? modified}) {
     _data = _ZipEncoderData(level, modified);
     _output = output;
+    if (output != null) {
+      _held = output.byteOrder;
+      output.byteOrder = ByteOrder.littleEndian;
+    }
   }
 
   int getFileCrc32(ArchiveFile file) {
@@ -478,6 +488,15 @@ class ZipEncoder {
     _writeCentralDirectory(_data.files, comment, _output!);
     if (_output != null) {
       _output!.flush();
+    }
+    _restoreOrder();
+  }
+
+  void _restoreOrder() {
+    final held = _held;
+    if (held != null) {
+      _output?.byteOrder = held;
+      _held = null;
     }
   }
 

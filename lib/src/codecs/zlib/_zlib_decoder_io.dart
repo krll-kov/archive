@@ -22,12 +22,18 @@ class _ZLibDecoder extends ZLibDecoderBase {
       {bool verify = false, bool raw = false, bool throwOnError = false}) {
     var out = Uint8List(0);
     final partial = OutputMemoryStream();
+    List<int>? input = data;
     guardDecode('zlib', verify, throwOnError, () {
-      final bytes = data is Uint8List ? data : Uint8List.fromList(data);
+      final held = input!;
+      input = null;
+      final bytes = held is Uint8List ? held : Uint8List.fromList(held);
       final trailerLength = raw ? 0 : 4;
       if (!raw && bytes.length < trailerLength + 2) {
         return false;
       }
+      final tail = verify && !raw
+          ? bytes.sublist(max(0, bytes.length - 4 - zlibAdlerWindow))
+          : null;
       // Computed Adler-32 fed as trailer lets dart:io reject crafted deflate
       // with matching checksum, but Adler-32 on every input made throwOnError
       // 12-20% slower on 100 and 500 MB, so it stays off
@@ -47,17 +53,12 @@ class _ZLibDecoder extends ZLibDecoderBase {
       // dart:io drops output of failing inflate call, up to 64 KiB before
       // damage. Feeding 8 KiB pieces keeps that output but costs 15-17% on
       // text and 80% on random data, and second decode reads input twice
-      out = convertKeepingPartial(
-          ZLibCodec(raw: raw).decoder,
-          [Uint8List.sublistView(bytes, 0, bytes.length - trailerLength)],
-          partial,
-          trailer: Uint8List.sublistView(bytes, bytes.length - trailerLength));
+      out = convertKeepingPartial(ZLibCodec(raw: raw).decoder, bytes,
+          bytes.length - trailerLength, partial,
+          trailer: bytes.sublist(bytes.length - trailerLength));
       // }
       if (verify && !raw) {
-        checkZlibAdler(
-            Uint8List.sublistView(
-                bytes, max(0, bytes.length - 4 - zlibAdlerWindow)),
-            getAdler32(out));
+        checkZlibAdler(tail!, getAdler32(out));
         // if (!_completeDeflate(InputMemoryStream(bytes), 0, bytes.length)) {
         //   return false;
         // }

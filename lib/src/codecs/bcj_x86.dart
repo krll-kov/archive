@@ -20,8 +20,8 @@ bool _testMsByte(int b) => b == 0x00 || b == 0xff;
 ///
 /// The filter state never crosses an xz block boundary, so a whole block can
 /// be passed in a single call.
-void bcjX86Decode(Uint8List buffer, [int startOffset = 0]) =>
-    _decode(buffer, startOffset, 0, startOffset - 5);
+int bcjX86Decode(Uint8List buffer, [int startOffset = 0]) =>
+    _decode(buffer, startOffset, 0, startOffset - 5).$1;
 
 class BcjX86Decoder {
   BcjX86Decoder([int startOffset = 0])

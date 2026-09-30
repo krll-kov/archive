@@ -367,15 +367,22 @@ class Inflate {
       // length code
       final ti = code - 257;
 
-      var codeLength = _lengthCodeTable[ti] + _readBits(_lengthExtraTable[ti]);
+      final lengthExtra = _readBits(_lengthExtraTable[ti]);
+      if (lengthExtra < 0) {
+        return -1;
+      }
+      var codeLength = _lengthCodeTable[ti] + lengthExtra;
 
       // distance code
       final distCode = _readCodeByTable(dist);
       if (distCode < 0 || distCode > 29) {
         return -1;
       }
-      final distance =
-          _distCodeTable[distCode] + _readBits(_distExtraTable[distCode]);
+      final distanceExtra = _readBits(_distExtraTable[distCode]);
+      if (distanceExtra < 0) {
+        return -1;
+      }
+      final distance = _distCodeTable[distCode] + distanceExtra;
       // A match can only reach back into what has been written. Further is
       // damage, and would index behind the output, or with a distance of
       // zero never finish

@@ -42,8 +42,9 @@ try {
 
 ### Migration quick tips:
 * Code that relied on a decoder throwing without flags has to pass `throwOnError: true`.
-* `verify: true` now throws instead of returning `false` or partial data.
+* `verify: true` now throws instead of returning `false` or partial data and does work for all decoders when specified.
 * A wrong or missing zip password throws `ArchivePasswordException` regardless of flags.
+* `lastModTime` of zip entries is now in seconds since epoch, as in tar, instead of the DOS date and time format.
 * Classes that implement `InputStream` or `OutputStream` must add `readInto`, `viewBytes`, `writeRange` and
   `reserve`. Classes that extend them need no change.
 

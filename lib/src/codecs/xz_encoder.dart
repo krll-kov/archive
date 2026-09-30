@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../util/archive_exception.dart';
+import '../util/byte_order.dart';
 import '../util/crc32.dart';
 import '../util/crc64.dart';
 import '../util/input_memory_stream.dart';
@@ -60,6 +61,16 @@ class XZEncoder {
 
   void encodeStream(InputStream input, OutputStream output,
       {XZCheck check = XZCheck.crc64}) {
+    final held = output.byteOrder;
+    output.byteOrder = ByteOrder.littleEndian;
+    try {
+      _encodeStream(input, output, check);
+    } finally {
+      output.byteOrder = held;
+    }
+  }
+
+  void _encodeStream(InputStream input, OutputStream output, XZCheck check) {
     var flags = 0;
     switch (check) {
       case XZCheck.none:

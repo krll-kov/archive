@@ -1,10 +1,17 @@
 import '../archive/archive.dart';
 import '../archive/archive_file.dart';
 import '../util/archive_exception.dart';
+import '../util/byte_order.dart';
 import '../util/decode_guard.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import 'zip/zip_directory.dart';
+
+int _dosSeconds(int date, int time) =>
+    DateTime(((date >> 9) & 0x7f) + 1980, (date >> 5) & 0x0f, date & 0x1f,
+            (time >> 11) & 0x1f, (time >> 5) & 0x3f, (time << 1) & 0x3e)
+        .millisecondsSinceEpoch ~/
+    1000;
 
 /// Decode a zip formatted buffer into an [Archive] object.
 class ZipDecoder {
@@ -41,10 +48,16 @@ class ZipDecoder {
       String? password,
       ArchiveCallback? callback}) {
     final archive = Archive();
-    guardDecode('zip', verify, throwOnError, () {
-      _decode(input, archive, verify, throwOnError, password, callback);
-      return true;
-    });
+    final held = input.byteOrder;
+    input.byteOrder = ByteOrder.littleEndian;
+    try {
+      guardDecode('zip', verify, throwOnError, () {
+        _decode(input, archive, verify, throwOnError, password, callback);
+        return true;
+      });
+    } finally {
+      input.byteOrder = held;
+    }
     return archive;
   }
 
@@ -105,7 +118,7 @@ class ZipDecoder {
 
       entry
         ..crc32 = zf.hasCrc32 ? zf.crc32 : null
-        ..lastModTime = zf.lastModFileDate << 16 | zf.lastModFileTime;
+        ..lastModTime = _dosSeconds(zf.lastModFileDate, zf.lastModFileTime);
 
       if (callback != null) {
         try {

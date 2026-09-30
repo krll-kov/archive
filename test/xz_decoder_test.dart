@@ -203,6 +203,37 @@ void main() {
         }
       }
     });
+
+    test('a cut archive gives the start of the data and nothing else', () {
+      final path = p.join(Directory.systemTemp.path, 'xz_cut_$pid.bin');
+      for (final name in [
+        'hello-hello-hello.xz',
+        'good-1-lzma2-1.xz',
+        'x86.xz'
+      ]) {
+        final whole = archiveBytes(name);
+        final data = XZDecoder().decodeBytes(whole, verify: true);
+        for (var cut = 0; cut < whole.length; cut++) {
+          final bad = Uint8List.sublistView(whole, 0, cut);
+          final output = OutputMemoryStream();
+          XZDecoder().decodeStream(InputMemoryStream(bad), output);
+          final file = OutputFileStream(path);
+          XZDecoder().decodeStream(InputMemoryStream(bad), file);
+          file.closeSync();
+          for (final decoded in [
+            XZDecoder().decodeBytes(bad),
+            output.getBytes(),
+            File(path).readAsBytesSync()
+          ]) {
+            expect(decoded.length, lessThanOrEqualTo(data.length),
+                reason: '$name cut at $cut');
+            expect(decoded, Uint8List.sublistView(data, 0, decoded.length),
+                reason: '$name cut at $cut');
+          }
+        }
+      }
+      File(path).deleteSync();
+    });
   });
 
   group('xz decoder', () {

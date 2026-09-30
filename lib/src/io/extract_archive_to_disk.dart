@@ -34,21 +34,6 @@ Future<bool> _isWithinOutputPathAsync(String? realOut, String filePath) async {
   return realOut != null && file != null && path.isWithin(realOut, file);
 }
 
-bool _isEntryWithinOutputPath(String? realOut, String filePath) {
-  final dir = _realPath(path.dirname(filePath));
-  return realOut != null &&
-      dir != null &&
-      path.isWithin(realOut, path.join(dir, path.basename(filePath)));
-}
-
-Future<bool> _isEntryWithinOutputPathAsync(
-    String? realOut, String filePath) async {
-  final dir = await _realPathAsync(path.dirname(filePath));
-  return realOut != null &&
-      dir != null &&
-      path.isWithin(realOut, path.join(dir, path.basename(filePath)));
-}
-
 /// canonicalize ignores symlinks out of outputPath, so we resolve them on disk
 String? _realPath(String filePath,
     {bool followDangling = false, int depth = 0}) {
@@ -218,22 +203,63 @@ Future<void> _createDelayedLinks(Map<String, ArchiveFile> delayed,
   }
 }
 
-Future<void> _clearPathAsync(String filePath) async {
-  final type = await FileSystemEntity.type(filePath, followLinks: false);
-  if (type == FileSystemEntityType.link) {
-    await Link(filePath).delete();
-  } else if (type == FileSystemEntityType.file) {
-    await File(filePath).delete();
+/// Caching is needed to reduce speed by 50%
+class _OutputPaths {
+  final String? realOut;
+  final _dirs = <String, String?>{};
+
+  _OutputPaths(this.realOut);
+
+  bool isEntryWithin(String filePath) {
+    final dir = path.dirname(filePath);
+    if (!_dirs.containsKey(dir)) {
+      _dirs[dir] = _realPath(dir);
+    }
+    return _within(_dirs[dir], filePath);
+  }
+
+  Future<bool> isEntryWithinAsync(String filePath) async {
+    final dir = path.dirname(filePath);
+    if (!_dirs.containsKey(dir)) {
+      _dirs[dir] = await _realPathAsync(dir);
+    }
+    return _within(_dirs[dir], filePath);
+  }
+
+  bool _within(String? dir, String filePath) =>
+      realOut != null &&
+      dir != null &&
+      path.isWithin(realOut!, path.join(dir, path.basename(filePath)));
+
+  void linked() => _dirs.clear();
+
+  void cleared(bool link) {
+    if (link) {
+      _dirs.clear();
+    }
   }
 }
 
-void _clearPath(String filePath) {
+Future<bool> _clearPathAsync(String filePath) async {
+  final type = await FileSystemEntity.type(filePath, followLinks: false);
+  if (type == FileSystemEntityType.link) {
+    await Link(filePath).delete();
+    return true;
+  } else if (type == FileSystemEntityType.file) {
+    await File(filePath).delete();
+  }
+  return false;
+}
+
+bool _clearPath(String filePath) {
   final type = FileSystemEntity.typeSync(filePath, followLinks: false);
   if (type == FileSystemEntityType.link) {
     Link(filePath).deleteSync();
+    return true;
   } else if (type == FileSystemEntityType.file) {
     File(filePath).deleteSync();
   }
+  return false;
 }
 
 void _prepareOutDir(String outDirPath) {
@@ -244,10 +270,10 @@ void _prepareOutDir(String outDirPath) {
 }
 
 String? _prepareArchiveFilePath(ArchiveFile archiveFile, String outputPath,
-    String? realOut, bool allowAbsoluteSymlinks) {
+    String? realOut, bool allowAbsoluteSymlinks, _OutputPaths paths) {
   final filePath = _entryPath(outputPath, archiveFile.name);
 
-  if (!_isEntryWithinOutputPath(realOut, filePath)) {
+  if (!paths.isEntryWithin(filePath)) {
     return null;
   }
 
@@ -278,7 +304,8 @@ void _writeStrict(ArchiveFile entry, OutputStream output) {
 
 void _extractArchiveEntryToDiskSync(
   ArchiveFile entry,
-  String filePath, {
+  String filePath,
+  _OutputPaths paths, {
   int? bufferSize,
   bool throwOnError = false,
 }) {
@@ -286,10 +313,13 @@ void _extractArchiveEntryToDiskSync(
     _clearPath(filePath);
     final link = Link(filePath);
     link.createSync(_linkText(entry), recursive: true);
+    paths.linked();
   } else {
     if (entry.isFile) {
-      _clearPath(filePath);
-      final output = OutputFileStream(filePath, bufferSize: bufferSize);
+      paths.cleared(_clearPath(filePath));
+      bufferSize ??= OutputFileStream.kDefaultBufferSize;
+      final output = OutputFileStream(filePath,
+          bufferSize: entry.size < bufferSize ? entry.size : bufferSize);
       try {
         _writeStrict(entry, output);
       } catch (err) {
@@ -345,16 +375,18 @@ void extractArchiveToDiskSync(
 }) {
   _prepareOutDir(outputPath);
   final realOut = _realPath(outputPath);
+  final paths = _OutputPaths(realOut);
   final delayed = <String, ArchiveFile>{};
   for (final entry in archive) {
     final filePath = _prepareArchiveFilePath(
-        entry, outputPath, realOut, allowAbsoluteSymlinks);
+        entry, outputPath, realOut, allowAbsoluteSymlinks, paths);
     if (filePath != null) {
       if (entry.isSymbolicLink && _delaysLink(entry)) {
         _delayLink(delayed, filePath, entry);
+        paths.cleared(true);
         continue;
       }
-      _extractArchiveEntryToDiskSync(entry, filePath,
+      _extractArchiveEntryToDiskSync(entry, filePath, paths,
           bufferSize: bufferSize, throwOnError: throwOnError);
     }
   }
@@ -378,12 +410,13 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
     await outDir.create(recursive: true);
   }
   final realOut = await _realPathAsync(outputPath);
+  final paths = _OutputPaths(realOut);
   final delayed = <String, ArchiveFile>{};
 
   for (final entry in archive) {
     final filePath = _entryPath(outputPath, entry.name);
 
-    if (!await _isEntryWithinOutputPathAsync(realOut, filePath)) {
+    if (!await paths.isEntryWithinAsync(filePath)) {
       continue;
     }
 
@@ -394,12 +427,14 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
       }
       if (_delaysLink(entry)) {
         await _delayLinkAsync(delayed, filePath, entry);
+        paths.cleared(true);
         continue;
       }
 
       await _clearPathAsync(filePath);
       final link = Link(filePath);
       await link.create(_linkText(entry), recursive: true);
+      paths.linked();
       continue;
     }
 
@@ -413,7 +448,7 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
     bufferSize ??= OutputFileStream.kDefaultBufferSize;
     final fileSize = file.size;
     final fileBufferSize = fileSize < bufferSize ? fileSize : bufferSize;
-    await _clearPathAsync(filePath);
+    paths.cleared(await _clearPathAsync(filePath));
     final output = OutputFileStream(filePath, bufferSize: fileBufferSize);
     try {
       _writeStrict(file, output);
@@ -643,10 +678,11 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
     }
 
     final realOut = await _realPathAsync(outputPath);
+    final paths = _OutputPaths(realOut);
     final delayed = <String, ArchiveFile>{};
     for (final file in archive) {
       final filePath = _entryPath(outputPath, file.name);
-      if (!await _isEntryWithinOutputPathAsync(realOut, filePath)) {
+      if (!await paths.isEntryWithinAsync(filePath)) {
         continue;
       }
 
@@ -657,6 +693,7 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
         }
         if (_delaysLink(file)) {
           await _delayLinkAsync(delayed, filePath, file);
+          paths.cleared(true);
           continue;
         }
       }
@@ -670,9 +707,12 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
         await _clearPathAsync(filePath);
         final link = Link(filePath);
         await link.create(_linkText(file), recursive: true);
+        paths.linked();
       } else if (file.isFile) {
-        await _clearPathAsync(filePath);
-        final output = OutputFileStream(filePath, bufferSize: bufferSize);
+        paths.cleared(await _clearPathAsync(filePath));
+        final size = bufferSize ?? OutputFileStream.kDefaultBufferSize;
+        final output = OutputFileStream(filePath,
+            bufferSize: file.size < size ? file.size : size);
         try {
           _writeStrict(file, output);
         } catch (error) {

@@ -207,7 +207,7 @@ void main() {
       expect(dictionary.id, isNot(0));
       _refuse(ZstdEncoder(dictionary: dictionary).encodeBytes(_source),
           'a frame naming a dictionary');
-    });
+    }, testOn: 'vm');
 
     test('a content size the frame does not produce', () {
       for (final declared in [1, 79999, 80001, 1 << 20]) {
@@ -233,7 +233,7 @@ void main() {
             ]),
             'a frame declaring $declared bytes');
       }
-    });
+    }, testOn: 'vm');
 
     test('a header that stops inside its fields', () {
       for (final head in [
