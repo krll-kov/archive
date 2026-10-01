@@ -64,6 +64,14 @@ void main() {
     }
   });
 
+  test('matches the FIPS 180-2 vector of a million a', () {
+    final million = Uint8List(1000000)..fillRange(0, 1000000, 0x61);
+    expect(
+        _hex(Sha256.of(million)),
+        'cdc76e5c9914fb9281a1c7e284d73e67'
+        'f1809a48a497200e046d39ccc7112cd0');
+  });
+
   test('digest leaves the instance ready for the next input', () {
     final hash = Sha256();
     hash.update(data, 0, 1000);

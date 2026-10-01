@@ -7,12 +7,12 @@ import '../../util/archive_exception.dart';
 import '../../util/chunked_sink.dart';
 import '../../util/crc32.dart';
 import '../../util/decode_guard.dart';
-import '../../util/encryption.dart';
 import '../../util/file_content.dart';
 import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_memory_stream.dart';
 import '../../util/output_stream.dart';
+import '../../util/sha1.dart';
 import '../bzip2_decoder.dart';
 import '../lzma/lzma_decoder.dart';
 import '../zlib_decoder.dart';
@@ -658,12 +658,7 @@ class ZipFile extends FileContent {
       {int derivedKeyLength = 32}) {
     const iterationCount = 1000;
     final totalSize = (derivedKeyLength * 2) + 2;
-
-    final params = PcPbkdf2Parameters(salt, iterationCount, totalSize);
-    final keyDerivator = PcPBKDF2KeyDerivator(PcHMac(PcSHA1Digest(), 64));
-
-    keyDerivator.init(params);
-    return keyDerivator.process(passwordBytes);
+    return pbkdf2HmacSha1(passwordBytes, salt, iterationCount, totalSize);
   }
 
   @override

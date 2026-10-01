@@ -47,6 +47,8 @@ try {
 * `lastModTime` of zip entries is now in seconds since epoch, as in tar, instead of the DOS date and time format.
 * Classes that implement `InputStream` or `OutputStream` must add `readInto`, `viewBytes`, `writeRange` and
   `reserve`. Classes that extend them need no change.
+* `AesDecrypt` is removed, use `AesCtr`: `AesDecrypt(key).decryptCrt(data)` becomes
+  `AesCtr(key, Uint8List(16)).process(data)`. Hashes are exported as `Sha1`, `HmacSha1`, `pbkdf2HmacSha1` and `Sha256`.
 
 ---
 

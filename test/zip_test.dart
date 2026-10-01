@@ -259,6 +259,67 @@ void main() async {
       }
     });
 
+    test('an extra field with 1 to 3 trailing bytes is read', () {
+      final content = utf8.encode('extra field payload' * 20);
+      final name = utf8.encode('hello.txt');
+      final crc = getCrc32(content);
+      for (var trailing = 1; trailing <= 3; trailing++) {
+        final extra = (ByteData(9 + trailing)
+              ..setUint16(0, 0x5455, Endian.little)
+              ..setUint16(2, 5, Endian.little)
+              ..setUint8(4, 1)
+              ..setUint32(5, 1700000000, Endian.little))
+            .buffer
+            .asUint8List();
+        final local = ByteData(30)
+          ..setUint32(0, 0x04034b50, Endian.little)
+          ..setUint16(4, 10, Endian.little)
+          ..setUint32(14, crc, Endian.little)
+          ..setUint32(18, content.length, Endian.little)
+          ..setUint32(22, content.length, Endian.little)
+          ..setUint16(26, name.length, Endian.little)
+          ..setUint16(28, extra.length, Endian.little);
+        final central = ByteData(46)
+          ..setUint32(0, 0x02014b50, Endian.little)
+          ..setUint16(4, 20, Endian.little)
+          ..setUint16(6, 10, Endian.little)
+          ..setUint32(16, crc, Endian.little)
+          ..setUint32(20, content.length, Endian.little)
+          ..setUint32(24, content.length, Endian.little)
+          ..setUint16(28, name.length, Endian.little)
+          ..setUint16(30, extra.length, Endian.little);
+        final out = BytesBuilder()
+          ..add(local.buffer.asUint8List())
+          ..add(name)
+          ..add(extra)
+          ..add(content);
+        final centralOffset = out.length;
+        out
+          ..add(central.buffer.asUint8List())
+          ..add(name)
+          ..add(extra);
+        final end = ByteData(22)
+          ..setUint32(0, 0x06054b50, Endian.little)
+          ..setUint16(8, 1, Endian.little)
+          ..setUint16(10, 1, Endian.little)
+          ..setUint32(12, out.length - centralOffset, Endian.little)
+          ..setUint32(16, centralOffset, Endian.little);
+        out.add(end.buffer.asUint8List());
+        final bytes = out.takeBytes();
+        for (final (verify, throwOnError) in [
+          (false, false),
+          (true, false),
+          (false, true)
+        ]) {
+          final decoded = ZipDecoder()
+              .decodeBytes(bytes, verify: verify, throwOnError: throwOnError);
+          expect(decoded.single.content, content,
+              reason: 'trailing $trailing, verify $verify, '
+                  'throwOnError $throwOnError');
+        }
+      }
+    });
+
     test('EOCD remains covered when approaching the first chunk', () {
       final dir = Directory.systemTemp.createTempSync('archive-first-chunk-');
       addTearDown(() => dir.deleteSync(recursive: true));

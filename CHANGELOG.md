@@ -41,6 +41,8 @@
 * *BREAKING CHANGE*: `CompressionType` has a new value, `lzma`, so a switch over it needs a case for it.
 * *BREAKING CHANGE*: `TarEncoder` now writes a tar hard link read by `TarDecoder` back as a hard link. It used to
   write it as a symlink, which pointed to a missing file.
+* *BREAKING CHANGE*: Removed `AesDecrypt`, use the exported `AesCtr` instead. `Sha1`, `HmacSha1`, `pbkdf2HmacSha1`
+  and `Sha256` are exported as well.
 * Multithreaded `XZDecoder` requires `onError` with `verify`, as it already did with `throwOnError`
 * Added Dart async* `StreamTransformer`/`ByteConversionSink`/`Converter` support
   (`xzCodec`, `zstdCodec`, `bzip2Codec`, `tarCodec` and `zipCodec`) for decode and encode (decoders for
@@ -51,7 +53,7 @@
 * Added .tar.zst and .tzst to `extractFileToDisk`. Also, `extractFileToDisk` now checks for errors during
   unpack/decompress and does not leak temporary TAR files on fail.
 * Made CRC32, SHA-256, CRC64 and Adler32 significantly faster and less RAM-consumable on all
-  platforms (for `verify: true`).
+  platforms (for `verify: true`), and SHA-1 with its HMAC and PBKDF2 and AES for AES zip.
 * ZipCrypto decryption is 6.6-8.6x faster now: its keys are ints that stay exact on web instead of BigInt.
 * Added `ProgressOutputStream` to monitor progress during unpack.
 * Added usage examples of new apis is package readme file, shrinked amount of docs for `XZDecoder`.
