@@ -260,9 +260,19 @@ void main() {
 
     test('a block size outside one to nine is refused', () {
       expect(() => BZip2ChunkedEncoder(_Held(), blockSize100k: 0),
-          throwsA(isA<ArchiveException>()));
+          throwsA(isA<ArgumentError>()));
       expect(() => BZip2ChunkedEncoder(_Held(), blockSize100k: 10),
-          throwsA(isA<ArchiveException>()));
+          throwsA(isA<ArgumentError>()));
+    });
+
+    test('the codec refuses a block size outside one to nine', () async {
+      expect(() => BZip2Codec(blockSize100k: 0).encode([1, 2, 3]),
+          throwsA(isA<ArgumentError>()));
+      await expectLater(
+          () => Stream.value([1, 2, 3])
+              .transform(BZip2Codec(blockSize100k: 10).encoder)
+              .drain<void>(),
+          throwsA(isA<ArgumentError>()));
     });
   });
 

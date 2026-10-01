@@ -26,6 +26,7 @@ class _GZipDecoder extends ZLibDecoderBase {
       {bool verify = false, bool raw = false, bool throwOnError = false}) {
     var out = Uint8List(0);
     final partial = OutputMemoryStream();
+    var declared = 0;
     guardDecode('gzip', verify, throwOnError, () {
       if (!_nativeConcatenated &&
           (verify ||
@@ -44,12 +45,20 @@ class _GZipDecoder extends ZLibDecoderBase {
       }
       FormatException? trailerError;
       if (isGZip) {
-        partial.reserve(min(
+        declared = min(
             bytes[seen - 4] |
                 bytes[seen - 3] << 8 |
                 bytes[seen - 2] << 16 |
                 bytes[seen - 1] << 24,
-            seen * 1032));
+            seen * 1032);
+        // In cut file last 4 bytes are deflate data, not ISIZE, so reserve
+        // may take GBs. We skip it on OutOfMemoryError and copy output shorter
+        // than ISIZE into exact buffer, so result does not hold that memory
+        try {
+          partial.reserve(declared);
+        } on OutOfMemoryError {
+          declared = 0;
+        }
       }
       try {
         out = _convertMembers(
@@ -88,6 +97,9 @@ class _GZipDecoder extends ZLibDecoderBase {
     });
     if (partial.length > 0) {
       out = partial.getBytes();
+    }
+    if (out.length < declared) {
+      out = Uint8List.fromList(out);
     }
     return out;
   }
@@ -563,6 +575,8 @@ Uint8List _lastBytes(Uint8List before, Uint8List chunk) {
     ..setRange(keep, keep + chunk.length, chunk);
 }
 
+/// dart:io reads concatenated gzip members only from Dart 3.5.0, and package
+/// supports Dart 3.0.0, so older SDK falls back to web decoder
 final _nativeConcatenated = _supportsConcatenated();
 
 bool _supportsConcatenated() {

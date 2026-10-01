@@ -81,9 +81,8 @@ class BZip2ChunkedEncoder extends ChunkedSink {
 
   BZip2ChunkedEncoder(super.output, {this.blockSize100k = 9}) {
     if (blockSize100k < 1 || blockSize100k > 9) {
-      throw ArchiveException(
-          'bzip2: block size must be between 100_000 and 900_000 bytes, got '
-          '$blockSize100k');
+      throw ArgumentError.value(
+          blockSize100k, 'blockSize100k', 'Must be 1 to 9');
     }
   }
 

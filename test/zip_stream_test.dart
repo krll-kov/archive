@@ -405,6 +405,22 @@ void main() {
       expect(entry.content, want);
     });
 
+    for (final streamed in [true, false]) {
+      test('streamed $streamed: a level out of range is an ArgumentError',
+          () async {
+        expect(
+            () => ZipEncoder(streamed: streamed).encodeBytes(
+                Archive()..add(ArchiveFile.string('a.txt', 'hello')),
+                level: 10),
+            throwsA(isA<ArgumentError>()));
+        await expectLater(
+            Stream.value(ArchiveFile.string('a.txt', 'hello'))
+                .transform(ZipCodec(level: 10, streamed: streamed).encoder)
+                .drain<void>(),
+            throwsA(isA<ArgumentError>()));
+      });
+    }
+
     for (final streamed in [false, true]) {
       test('encodeBytes leaves a stream entry readable, streamed $streamed',
           () {

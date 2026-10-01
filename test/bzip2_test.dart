@@ -27,7 +27,7 @@ void main() {
 
   test('encode rejects a block size outside the format', () {
     expect(() => BZip2Encoder().encodeBytes([1, 2, 3], blockSize100k: 10),
-        throwsA(isA<ArchiveException>()));
+        throwsA(isA<ArgumentError>()));
   });
 
   // After a stream bzip2 1.0.8 reads BZh and a digit from 1 to 9. If a byte

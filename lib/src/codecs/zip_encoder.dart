@@ -375,6 +375,9 @@ class ZipEncoder {
         }
 
         final chosen = level ?? file.compressionLevel ?? _data.level ?? 6;
+        if (chosen < -1 || chosen > 9) {
+          throw ArgumentError.value(chosen, 'level', 'Must be -1 to 9');
+        }
         // An entry with no content at all cannot be deflated: a zero length
         // deflate stream is two bytes, not none, and a reader handed neither
         // identifies the entry corrupt
@@ -460,6 +463,9 @@ class ZipEncoder {
     fileData.crc32 = crc32;
     fileData.compressedSize = deferred ? 0 : dataLen;
     fileData.compressedData = compressedData;
+    // We write entry.size as declared, since zip64 choice and its tests use it.
+    // If size differs from content, ZipDecoder(verify: true) and 7z reject
+    // entry, so developer must keep size equal to content length
     fileData.uncompressedSize = entry.size;
     if (linkSize >= 0) {
       fileData.uncompressedSize = linkSize;

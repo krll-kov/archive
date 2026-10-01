@@ -46,9 +46,8 @@ class BZip2Encoder {
     // The format requires the block size to be a single digit (1-9).
     // Invalid values will silently corrupt the header signature. 0 is error
     if (blockSize100k < 1 || blockSize100k > 9) {
-      throw ArchiveException(
-          'bzip2: block size $blockSize100k is outside the one to nine the '
-          'format has');
+      throw ArgumentError.value(
+          blockSize100k, 'blockSize100k', 'Must be 1 to 9');
     }
     bw = Bz2BitWriter(output);
 

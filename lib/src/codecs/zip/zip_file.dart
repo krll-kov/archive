@@ -636,6 +636,9 @@ class ZipFile extends FileContent {
           : dataBytes.toUint8List();
       final aes = Aes(keyData, hmacKeyData, keySize);
       aes.processData(bytes, 0, bytes.length);
+      // pwdCheck has 2 bytes, so wrong password passes it 1 time in 65536,
+      // and only MAC picks between UTF-8 and code unit passwords. Without
+      // this check on every read, such password returns garbage as content
       if (!Uint8ListEquality.equals(dataMac.toUint8List(), aes.mac)) {
         failure = ArchiveChecksumException('macs don\'t match');
         continue;

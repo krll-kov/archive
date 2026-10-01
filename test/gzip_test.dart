@@ -1027,6 +1027,22 @@ void main() {
         }
       });
 
+      test('decodeBytes of a cut gzip is not sized by the bytes at the cut',
+          () {
+        final random = Random(3);
+        final text = Uint8List.fromList(
+            List.generate(1 << 20, (_) => random.nextInt(16) + 97));
+        final packed = Uint8List.fromList(GZipEncoder().encodeBytes(text));
+        for (var cut = packed.length ~/ 4;
+            cut < packed.length - 8;
+            cut += packed.length ~/ 4) {
+          final out = const GZipDecoder()
+              .decodeBytes(Uint8List.sublistView(packed, 0, cut));
+          expect(out.buffer.lengthInBytes, lessThan(32 << 20),
+              reason: 'cut $cut of ${packed.length}');
+        }
+      });
+
       test('verify finds a wrong gzip checksum through decodeBytes', () {
         final damaged = Uint8List.fromList(gzip)..[gzip.length - 8] ^= 0xff;
         expect(() => const GZipDecoder().decodeBytes(damaged, verify: true),
