@@ -616,7 +616,10 @@ void main() {
       };
       for (final MapEntry(key: how, value: archive) in archives.entries) {
         expect(_contains(archive, latin1.encode('café')), isTrue, reason: how);
-        expect(_describe(ZipDecoder().decodeBytes(archive, verify: true).files),
+        expect(
+            _describe(ZipDecoder(filenameEncoding: latin1)
+                .decodeBytes(archive, verify: true)
+                .files),
             _describe(entries),
             reason: how);
       }

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../archive/archive.dart';
 import '../archive/archive_file.dart';
 import '../util/archive_exception.dart';
@@ -16,6 +18,9 @@ int _dosSeconds(int date, int time) =>
 /// Decode a zip formatted buffer into an [Archive] object.
 class ZipDecoder {
   late ZipDirectory directory;
+  final Encoding? filenameEncoding;
+
+  ZipDecoder({this.filenameEncoding});
 
   /// Decodes [bytes] as a zip archive
   ///
@@ -64,7 +69,10 @@ class ZipDecoder {
   void _decode(InputStream input, Archive archive, bool verify,
       bool throwOnError, String? password, ArchiveCallback? callback) {
     directory = ZipDirectory();
-    directory.read(input, password: password, verify: verify || throwOnError);
+    directory.read(input,
+        password: password,
+        verify: verify || throwOnError,
+        filenameEncoding: filenameEncoding);
     if ((verify || throwOnError) && directory.filePosition < 0) {
       throw ArchiveException('zip: end of central directory not found');
     }
@@ -80,7 +88,10 @@ class ZipDecoder {
 
       final entryMode = mode >> 16;
 
-      var isDirectory = zf.filename.endsWith('/') || zf.filename.endsWith('\\');
+      var isDirectory = zf.filename.endsWith('/') ||
+          zf.filename.endsWith('\\') ||
+          (zfh.versionMadeBy >> 8 == 0 && mode & 0x10 != 0) ||
+          (zfh.versionMadeBy >> 8 == 3 && entryMode & 0xf000 == 0x4000);
 
       final filename = zf.filename;
 

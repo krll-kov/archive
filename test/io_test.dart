@@ -1460,8 +1460,9 @@ void main() {
         ..add(ArchiveFile.bytes('b.bin', content())
           ..compression = CompressionType.bzip2));
       const localHeader = 30;
+      const utField = 9;
       const bzipSignature = 4;
-      zip[localHeader + 'b.bin'.length + bzipSignature] ^= 0x55;
+      zip[localHeader + 'b.bin'.length + utField + bzipSignature] ^= 0x55;
       expect(ZipDecoder().decodeBytes(zip).first.content, isEmpty);
       expect(
           () => ZipDecoder().decodeBytes(zip, throwOnError: true).first.content,
@@ -1510,8 +1511,9 @@ void main() {
         ..add(ArchiveFile.bytes('b.bin', content())
           ..compression = CompressionType.bzip2));
       const localHeader = 30;
+      const utField = 9;
       const bzipSignature = 4;
-      zip[localHeader + 'b.bin'.length + bzipSignature] ^= 0x55;
+      zip[localHeader + 'b.bin'.length + utField + bzipSignature] ^= 0x55;
       for (final sync in [false, true]) {
         final lenient = p.join(directory.path, 'lenient_$sync');
         final thrown = p.join(directory.path, 'thrown_$sync');
@@ -1543,7 +1545,8 @@ void main() {
         ..add(ArchiveFile.bytes('s.bin', content())
           ..compression = CompressionType.none));
       const localHeader = 30;
-      zip[localHeader + 's.bin'.length + 100] ^= 0x55;
+      const utField = 9;
+      zip[localHeader + 's.bin'.length + utField + 100] ^= 0x55;
       final input = File(p.join(directory.path, 'crc.zip'))
         ..writeAsBytesSync(zip);
 

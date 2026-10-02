@@ -17,7 +17,7 @@ class InputMemoryStream extends InputStream {
       : _position = 0 {
     offset ??= 0;
     length ??= bytes.length - offset;
-    if ((offset + length) > bytes.length) {
+    if (length > bytes.length - offset) {
       length = bytes.length - offset;
     }
 

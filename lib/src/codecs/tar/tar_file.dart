@@ -6,8 +6,10 @@ import 'package:archive/src/util/output_memory_stream.dart';
 
 import '../../util/archive_exception.dart';
 import '../../util/file_content.dart';
+import '../../util/input_memory_stream.dart';
 import '../../util/input_stream.dart';
 import '../../util/output_stream.dart';
+import 'tar_sparse.dart';
 
 /*  File Header (512 bytes)
  *  Offset Size Field
@@ -52,6 +54,7 @@ class TarFile {
   // (POSIX.1-2001)
   static const String exHeader = 'x';
   static const String exHeader2 = 'X';
+  static const String gnuSparse = 'S';
 
   /// The widest magnitude a base-256 numeric header field is written or read
   /// with: 2^53-1, the largest integer exact on every platform. A tar field
@@ -78,13 +81,21 @@ class TarFile {
   String filenamePrefix = ''; // 155 bytes
   InputStream? _rawContent;
   FileContent? _content;
+  TarSparse? sparse;
+  var _ustarMagic = false;
+  var _gnuMagic = false;
+  int? _gnuRealSize;
+  var _headerSize = 0;
 
   TarFile();
 
   /// Reads an entry from [input]. [size] is the size given by a preceding
   /// PAX header, which overrides the one in this entry's own header.
   TarFile.read(InputStream input,
-      {bool storeData = true, Encoding? encoding, int? size}) {
+      {bool storeData = true,
+      Encoding? encoding,
+      int? size,
+      bool pax = false}) {
     final header = input.readBytes(512);
 
     // The name, linkname, magic, uname, and gname are null-terminated
@@ -107,6 +118,9 @@ class TarFile {
         header.readByte() == 0x20 &&
         header.readByte() == 0;
     header.setPosition(at);
+    _ustarMagic =
+        String.fromCharCodes(header.peekBytes(5).toUint8List()) == 'ustar';
+    _gnuMagic = _ustarMagic && gnu;
     ustarIndicator = _parseString(header, 6);
     if (ustarIndicator == 'ustar') {
       ustarVersion = _parseString(header, 2);
@@ -133,12 +147,28 @@ class TarFile {
     // A pax size record describes the entry it precedes, not the metadata
     // headers that may sit in between. Applying it to one of those would read
     // the wrong number of bytes and leave the stream mid-header.
+    _headerSize = fileSize;
     if (size != null && !isMetadata) {
       fileSize = size;
     }
     // A size field can hold a negative number, which no entry can have.
     if (fileSize < 0) {
       throw ArchiveException('Invalid tar file size: $fileSize');
+    }
+    if ((typeFlag == hardLink &&
+            fileSize > 0 &&
+            (!_ustarMagic ||
+                _gnuMagic ||
+                (!pax && _passesUstarBid(header, at - 257)))) ||
+        typeFlag == symbolicLink ||
+        typeFlag == charSpec ||
+        typeFlag == blockSpec ||
+        typeFlag == directory ||
+        typeFlag == fifo) {
+      fileSize = 0;
+    }
+    if (_gnuMagic && !isMetadata && typeFlag != 'A' && typeFlag != 'V') {
+      _readGnuSparse(header, input);
     }
 
     // The decoder needs the content of the headers that carry the next
@@ -162,6 +192,152 @@ class TarFile {
         input.skip(skiplen);
       }
     }
+  }
+
+  static bool _passesUstarBid(InputStream header, int start) {
+    final at = header.position;
+    header.setPosition(start);
+    final block = header.readBytes(512).toUint8List();
+    header.setPosition(at);
+    if (!tarHeaderChecksumMatches(block) ||
+        String.fromCharCodes(block, 257, 265) != 'ustar\u000000') {
+      return false;
+    }
+    for (final (offset, length) in const [
+      (100, 8),
+      (108, 8),
+      (116, 8),
+      (136, 12),
+      (124, 12),
+      (329, 8),
+      (337, 8),
+    ]) {
+      if (!_validNumberField(block, offset, length)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _validNumberField(Uint8List block, int offset, int length) {
+    final marker = block[offset];
+    if (marker == 0x80 || marker == 0xff || marker == 0) {
+      return true;
+    }
+    final end = offset + length;
+    var i = offset;
+    while (i < end && block[i] == 0x20) {
+      i++;
+    }
+    while (i < end && block[i] >= 0x30 && block[i] <= 0x37) {
+      i++;
+    }
+    for (; i < end; i++) {
+      if (block[i] != 0x20 && block[i] != 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void _readGnuSparse(InputStream header, InputStream input) {
+    header.setPosition(483);
+    final realSize = header.readBytes(12).toUint8List();
+    if (realSize[0] != 0) {
+      _gnuRealSize = _tarAtol(realSize);
+    }
+    header.setPosition(386);
+    if (header.peekBytes(1).readByte() == 0) {
+      return;
+    }
+    final sparse = TarSparse();
+    this.sparse = sparse;
+    sparse.extended = _readSparseRegions(header, 4, sparse);
+    while (sparse.extended && input.length >= 512) {
+      readSparseExtension(input.readBytes(512));
+    }
+  }
+
+  void readSparseExtension(InputStream block) {
+    final sparse = this.sparse!;
+    sparse.extensionBlocks++;
+    sparse.extended = _readSparseRegions(block, 21, sparse);
+  }
+
+  bool _readSparseRegions(InputStream block, int count, TarSparse sparse) {
+    var end = false;
+    for (var i = 0; i < count; i++) {
+      final entry = block.readBytes(24).toUint8List();
+      end = end || entry[0] == 0;
+      if (!end) {
+        sparse.add(_tarAtol(Uint8List.sublistView(entry, 0, 12)),
+            _tarAtol(Uint8List.sublistView(entry, 12, 24)));
+      }
+    }
+    return block.readByte() != 0;
+  }
+
+  int _tarAtol(Uint8List field) {
+    if (field[0] & 0x80 == 0) {
+      return _atol(field, 0, field.length, 8);
+    }
+    try {
+      return _parseInt(InputMemoryStream(field), field.length);
+    } on ArchiveException {
+      return field[0] & 0x40 == 0 ? maxNumericField : -maxNumericField;
+    }
+  }
+
+  static int _atol(List<int> bytes, int start, int end, int base) {
+    var i = start;
+    while (i < end && (bytes[i] == 0x20 || bytes[i] == 0x09)) {
+      i++;
+    }
+    var sign = 1;
+    if (i < end && bytes[i] == 0x2d) {
+      sign = -1;
+      i++;
+    }
+    var value = 0;
+    for (; i < end; i++) {
+      final digit = bytes[i] - 0x30;
+      if (digit < 0 || digit >= base) {
+        break;
+      }
+      if (value > (maxNumericField - digit) ~/ base) {
+        return sign * maxNumericField;
+      }
+      value = value * base + digit;
+    }
+    return sign * value;
+  }
+
+  bool resolveSparse(InputStream data) {
+    final sparse = this.sparse;
+    if (sparse != null && sparse.mapInData) {
+      var at = 0;
+      for (var n = 512; at < fileSize; n *= 2) {
+        final length = n < fileSize - at ? n : fileSize - at;
+        final chunk = data.subset(position: at, length: length).toUint8List();
+        at += length;
+        if (sparse.readMap(chunk) != null) {
+          break;
+        }
+      }
+    }
+    return applySparse();
+  }
+
+  bool applySparse() {
+    final sparse = this.sparse;
+    if (sparse == null) {
+      return true;
+    }
+    if (!sparse.fits(fileSize)) {
+      this.sparse = null;
+      return false;
+    }
+    return true;
   }
 
   bool get isFile => typeFlag != TarFile.directory;
@@ -402,6 +578,21 @@ class TarMetadata {
   /// A PAX size record that overrides the size of the upcoming entry
   int? size;
 
+  bool pax = false;
+
+  var _sparseSeen = false;
+  String? _sparseName;
+  int? _sparseSize;
+  int? _sparseRealSize;
+  TarSparse? _sparse;
+  var _sparseMajor = 0;
+  var _sparseMinor = 0;
+  var _sparseOffset = -1;
+  var _sparseLength = -1;
+
+  int? get dataSize =>
+      _sparseMajor == 1 && _sparseSize != null ? _sparseSize : size;
+
   TarFile? _legacy;
   String? _legacyName;
   Uint8List? _legacyNameStart;
@@ -456,6 +647,19 @@ class TarMetadata {
       file.typeFlag == TarFile.gExHeader2 ||
       file.typeFlag == TarFile.exHeader ||
       file.typeFlag == TarFile.exHeader2;
+
+  void sawHeader(TarFile file) {
+    switch (file.typeFlag) {
+      case 'A' || TarFile.gExHeader || TarFile.exHeader2 || TarFile.exHeader:
+        pax = true;
+      case TarFile.longLinkName || TarFile.longName || 'V':
+        pax = false;
+      default:
+        if (!file._ustarMagic || file._gnuMagic) {
+          pax = false;
+        }
+    }
+  }
 
   /// Takes what such a header carries, its content already in `rawContent`
   bool take(TarFile file, [Encoding? encoding]) {
@@ -515,6 +719,7 @@ class TarMetadata {
   /// Applies the parsed metadata to the entry it describes and clears the
   /// state, ensuring it only affects a single entry
   void applyTo(TarFile file) {
+    final paxSize = size;
     size = null;
     final legacyNameStart = _legacyNameStart;
     if (legacyNameStart != null &&
@@ -543,6 +748,96 @@ class TarMetadata {
       file.groupId = groupId!;
       groupId = null;
     }
+    _applySparse(file, paxSize);
+  }
+
+  void _applySparse(TarFile file, int? paxSize) {
+    final name = _sparseName;
+    if (name != null && name.isNotEmpty) {
+      file.filename = name;
+    }
+    final readMap = _sparseSeen &&
+        (file.typeFlag == TarFile.normalFile ||
+            file.typeFlag == TarFile.gnuSparse) &&
+        _sparseMajor == 1 &&
+        _sparseMinor == 0;
+    final realSize = file._gnuRealSize ??
+        _sparseRealSize ??
+        (_sparseMajor == 0 ? _sparseSize : null);
+    var sparse = file.sparse;
+    final records = _sparse;
+    if (records != null) {
+      if (sparse == null) {
+        sparse = records;
+      } else {
+        sparse.regions.insertAll(0, records.regions);
+        sparse.broken |= records.broken;
+      }
+    }
+    if (readMap) {
+      sparse ??= TarSparse();
+      sparse.mapInData = true;
+    }
+    const noData = [
+      TarFile.hardLink,
+      TarFile.symbolicLink,
+      TarFile.charSpec,
+      TarFile.blockSpec,
+      TarFile.directory,
+      TarFile.fifo,
+    ];
+    if ((sparse == null && realSize == null) ||
+        noData.contains(file.typeFlag)) {
+      file.sparse = null;
+    } else {
+      file.sparse = (sparse ?? TarSparse())
+        ..realSize = realSize ?? paxSize ?? file._headerSize;
+    }
+    _sparseSeen = false;
+    _sparseName = null;
+    _sparseSize = null;
+    _sparseRealSize = null;
+    _sparse = null;
+  }
+
+  void _addSparse() {
+    (_sparse ??= TarSparse()).add(_sparseOffset, _sparseLength);
+    _sparseOffset = -1;
+    _sparseLength = -1;
+  }
+
+  static void _parseSparseMap(
+      List<int> records, int start, int end, TarSparse sparse) {
+    var offset = -1;
+    var i = start;
+    while (true) {
+      var e = i;
+      while (e < end && records[e] != 0x2c) {
+        if (records[e] < 0x30 || records[e] > 0x39) {
+          return;
+        }
+        e++;
+      }
+      final value = TarFile._atol(records, i, e, 10);
+      if (offset < 0) {
+        offset = value;
+      } else {
+        sparse.add(offset, value);
+        offset = -1;
+      }
+      if (e == end) {
+        return;
+      }
+      i = e + 1;
+    }
+  }
+
+  static int? _paxNumber(List<int> records, int start, int end) {
+    if (end - start > 64) {
+      return -1;
+    }
+    final value = TarFile._atol(records, start, end, 10);
+    return value < 0 || value == TarFile.maxNumericField ? null : value;
   }
 
   /// Records are "%d %s=%s\n", the length covering the whole record. Walked by
@@ -585,7 +880,9 @@ class TarMetadata {
           keyword != 'size' &&
           keyword != 'mtime' &&
           keyword != 'uid' &&
-          keyword != 'gid') {
+          keyword != 'gid' &&
+          keyword != 'GNU.sparse' &&
+          !keyword.startsWith('GNU.sparse.')) {
         // TODO: support other pax headers.
         continue;
       }
@@ -609,7 +906,11 @@ class TarMetadata {
         case 'size':
           // A pax size record overrides the header's own field. A file of 8GB
           // or more is stored that way in this format.
-          size = int.tryParse(value);
+          final number = _paxNumber(records, eq + 1, valueEnd);
+          if (number == null || number < 0) {
+            throw ArchiveException('Invalid tar pax size');
+          }
+          size = number;
           break;
         case 'mtime':
           // Stored as seconds, with an optional fractional part that the
@@ -625,6 +926,58 @@ class TarMetadata {
         case 'gid':
           groupId = int.tryParse(value);
           break;
+        case 'GNU.sparse.name':
+          _sparseName = value;
+          break;
+        case 'GNU.sparse.numblocks':
+          _sparseOffset = -1;
+          _sparseLength = -1;
+          _sparseMajor = 0;
+          _sparseMinor = 0;
+          break;
+        case 'GNU.sparse.map':
+          _sparseMajor = 0;
+          _sparseMinor = 1;
+          if (valueEnd - eq - 1 <= 8 << 20) {
+            _parseSparseMap(records, eq + 1, valueEnd, _sparse ??= TarSparse());
+          }
+          break;
+        case 'GNU.sparse.offset' ||
+              'GNU.sparse.numbytes' ||
+              'GNU.sparse.size' ||
+              'GNU.sparse.realsize' ||
+              'GNU.sparse.major' ||
+              'GNU.sparse.minor':
+          final number = _paxNumber(records, eq + 1, valueEnd);
+          if (number == -1) {
+            (_sparse ??= TarSparse()).broken = true;
+          } else if (number != null) {
+            switch (keyword) {
+              case 'GNU.sparse.offset':
+                _sparseOffset = number;
+                if (_sparseLength != -1) {
+                  _addSparse();
+                }
+              case 'GNU.sparse.numbytes':
+                _sparseLength = number;
+                if (_sparseOffset != -1) {
+                  _addSparse();
+                }
+              case 'GNU.sparse.size':
+                _sparseSize = number;
+              case 'GNU.sparse.realsize':
+                _sparseRealSize = number;
+              case 'GNU.sparse.major' when number <= 10:
+                _sparseMajor = number;
+              case 'GNU.sparse.minor' when number <= 10:
+                _sparseMinor = number;
+            }
+          }
+          break;
+      }
+      if (keyword == 'GNU.sparse' ||
+          (keyword.length > 11 && keyword.startsWith('GNU.sparse.'))) {
+        _sparseSeen = true;
       }
     }
   }

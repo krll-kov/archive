@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 import '../../util/archive_exception.dart';
 import '../../util/input_memory_stream.dart';
@@ -26,7 +27,8 @@ class ZipDirectory {
   String zipFileComment = '';
   final fileHeaders = <ZipFileHeader>[];
 
-  void read(InputStream input, {String? password, bool verify = false}) {
+  void read(InputStream input,
+      {String? password, bool verify = false, Encoding? filenameEncoding}) {
     filePosition = _findSignature(input);
     if (filePosition < 0) {
       return;
@@ -94,7 +96,8 @@ class ZipDirectory {
             fileBytes: fileBytes,
             password: password,
             verify: verify,
-            prefix: prefix);
+            prefix: prefix,
+            filenameEncoding: filenameEncoding);
       fileHeaders.add(header);
     }
     if (verify &&

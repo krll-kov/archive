@@ -7,6 +7,7 @@ import '../util/decode_guard.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import 'tar/tar_file.dart';
+import 'tar/tar_sparse.dart';
 
 /// Decode a tar formatted buffer into an [Archive] object.
 /// A hard link is decoded as [ArchiveFile.symbolicLink] with target relative
@@ -100,11 +101,15 @@ class TarDecoder {
       }
 
       final available = input.length;
+      final start = input.position;
       final tf = TarFile.read(input,
           storeData: storeData,
           encoding: filenameEncoding,
-          size: metadata.size);
-      if (verify && available < 512 + tf.fileSize + tf.padding) {
+          size: metadata.dataSize,
+          pax: metadata.pax);
+      metadata.sawHeader(tf);
+      final blocks = 1 + (tf.sparse?.extensionBlocks ?? 0);
+      if (verify && available < 512 * blocks + tf.fileSize + tf.padding) {
         throw ArchiveException('Unexpected end of tar data');
       }
       // A header that carries the next entry's name or its PAX records is not
@@ -117,6 +122,12 @@ class TarDecoder {
         continue;
       }
       metadata.applyTo(tf);
+      if (tf.sparse != null &&
+          !tf.resolveSparse(tf.rawContent ??
+              input.subset(position: start + 512, length: tf.fileSize)) &&
+          verify) {
+        throw ArchiveException('Invalid tar sparse map');
+      }
       final orphan = metadata.takeOrphan();
       if (orphan != null) {
         add(orphan);
@@ -140,9 +151,20 @@ class TarDecoder {
             tf.typeFlag == '\u0000') &&
         filename.endsWith('/');
     if (tf.isFile && !v7Directory && tf.typeFlag != 'D') {
-      final file = storeData
-          ? ArchiveFile.stream(filename, tf.rawContent!)
-          : ArchiveFile.noData(filename);
+      final sparse = tf.sparse;
+      final file = !storeData
+          ? ArchiveFile.noData(filename)
+          : sparse != null
+              ? ArchiveFile.file(
+                  filename,
+                  sparse.realSize,
+                  FileContentSparse(
+                      tf.rawContent!.subset(
+                          position: sparse.mapLength,
+                          length: tf.fileSize - sparse.mapLength),
+                      sparse.regions,
+                      sparse.realSize))
+              : ArchiveFile.stream(filename, tf.rawContent!);
 
       file.mode = tf.mode;
       file.ownerId = tf.ownerId;

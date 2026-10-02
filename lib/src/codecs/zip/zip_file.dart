@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../../archive/compression_type.dart';
+import '../../util/_zip_name.dart';
 import '../../util/aes.dart';
 import '../../util/archive_exception.dart';
 import '../../util/chunked_sink.dart';
@@ -15,7 +16,9 @@ import '../../util/output_stream.dart';
 import '../../util/sha1.dart';
 import '../bzip2_decoder.dart';
 import '../lzma/lzma_decoder.dart';
+import '../xz_decoder.dart';
 import '../zlib_decoder.dart';
+import '../zstd_decoder.dart';
 import 'zip_file_header.dart';
 
 /// Internal class used by [ZipDecoder].
@@ -37,7 +40,9 @@ const _compressionTypes = <int, CompressionType>{
   0: CompressionType.none,
   8: CompressionType.deflate,
   12: CompressionType.bzip2,
-  14: CompressionType.lzma
+  14: CompressionType.lzma,
+  93: CompressionType.zstd,
+  95: CompressionType.xz
 };
 
 /// A file object used by [ZipDecoder].
@@ -47,6 +52,8 @@ class ZipFile extends FileContent {
   static const zipCompressionDeflate = 8;
   static const zipCompressionBZip2 = 12;
   static const zipCompressionLzma = 14;
+  static const zipCompressionZstd = 93;
+  static const zipCompressionXz = 95;
   static const zipCompressionAexEncryption = 99;
 
   int version = 0;
@@ -86,7 +93,8 @@ class ZipFile extends FileContent {
 
   bool get hasCrc32 => _aesHeader?.vendorVersion != 2;
 
-  void read(InputStream input, {String? password, bool verify = false}) {
+  void read(InputStream input,
+      {String? password, bool verify = false, Encoding? filenameEncoding}) {
     final sig =
         input.position >= 0 && input.length >= 30 ? input.readUint32() : 0;
     if (sig != zipSignature) {
@@ -112,7 +120,8 @@ class ZipFile extends FileContent {
       throw ArchiveException(
           'zip: local header of ${header?.filename} is damaged');
     }
-    filename = input.readString(size: fnLen);
+    filename =
+        zipName(input.readBytes(fnLen).toUint8List(), flags, filenameEncoding);
     if (verify && header != null && filename != header!.filename) {
       throw ArchiveException(
           'zip: local header of ${header?.filename} is damaged');
@@ -320,10 +329,27 @@ class ZipFile extends FileContent {
       }
     } else if (compressionMethod == CompressionType.lzma) {
       _decodeLzma(output);
+    } else if (compressionMethod == CompressionType.zstd ||
+        compressionMethod == CompressionType.xz) {
+      _decodeZstdOrXz(output);
     } else {
       final savePos = _rawContent!.position;
       output.writeStream(_rawContent!);
       _rawContent!.setPosition(savePos);
+    }
+  }
+
+  void _decodeZstdOrXz(OutputStream output) {
+    final input = _rawContent!;
+    final savePos = input.position;
+    try {
+      if (compressionMethod == CompressionType.zstd) {
+        ZstdDecoder().decodeStream(input, output, throwOnError: true);
+      } else {
+        XZDecoder().decodeStream(input, output, throwOnError: true);
+      }
+    } finally {
+      input.setPosition(savePos);
     }
   }
 
@@ -435,6 +461,11 @@ class ZipFile extends FileContent {
     } else if (compressionMethod == CompressionType.lzma) {
       final output = OutputMemoryStream();
       _decodeLzma(output);
+      return InputMemoryStream(output.getBytes());
+    } else if (compressionMethod == CompressionType.zstd ||
+        compressionMethod == CompressionType.xz) {
+      final output = OutputMemoryStream();
+      _decodeZstdOrXz(output);
       return InputMemoryStream(output.getBytes());
     } else {
       // Copying stored entry took 1.3 GB of RAM for 1 GB entry, so we read file

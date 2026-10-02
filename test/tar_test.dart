@@ -312,6 +312,724 @@ void main() {
       }
     });
 
+    test('a hard link from an old tar has no data whatever its size', () async {
+      for (final magic in ['', 'ustar  \u0000']) {
+        final bytes = Uint8List.fromList([
+          ..._tarHeader('docs/README', '0', 321, magic: magic),
+          ..._tarBlocks(List.filled(321, 0x72)),
+          ..._tarHeader('README', '1', 321, link: 'docs/README', magic: magic),
+          ..._tarHeader('after', '0', 1, magic: magic),
+          ..._tarBlocks([0x61]),
+          ...Uint8List(1024),
+        ]);
+        for (final (verify, throwOnError) in [
+          (false, false),
+          (true, false),
+          (false, true)
+        ]) {
+          final files = TarDecoder()
+              .decodeBytes(bytes, verify: verify, throwOnError: throwOnError)
+              .files;
+          final reason = 'magic ${magic.length}, verify $verify, '
+              'throwOnError $throwOnError';
+          expect(files.map((f) => f.name), ['docs/README', 'README', 'after'],
+              reason: reason);
+          expect(files[1].isHardLink, isTrue, reason: reason);
+          expect(files[1].symbolicLink, 'docs/README', reason: reason);
+          expect(files[2].content, [0x61], reason: reason);
+        }
+        final streamed = await Stream<List<int>>.value(bytes)
+            .transform(tarCodec.decoder)
+            .asyncMap((e) async =>
+                '${e.name}=${(await e.content.expand((b) => b).toList()).length}')
+            .toList();
+        expect(streamed, ['docs/README=321', 'README=0', 'after=1'],
+            reason: 'magic ${magic.length}');
+      }
+    });
+
+    test('a hard link in a pax archive keeps its data', () async {
+      final records = utf8.encode(_paxRecord('mtime', '1'));
+      for (final type in ['x', 'g']) {
+        final bytes = Uint8List.fromList([
+          ..._tarHeader('PaxHeaders/README', type, records.length,
+              magic: 'ustar\u000000'),
+          ..._tarBlocks(records),
+          ..._tarHeader('docs/README', '0', 3, magic: 'ustar\u000000'),
+          ..._tarBlocks([0x72, 0x72, 0x72]),
+          ..._tarHeader('README', '1', 3,
+              link: 'docs/README', magic: 'ustar\u000000'),
+          ..._tarBlocks([0x6c, 0x6c, 0x6c]),
+          ..._tarHeader('after', '0', 1, magic: 'ustar\u000000'),
+          ..._tarBlocks([0x61]),
+          ...Uint8List(1024),
+        ]);
+        for (final (verify, throwOnError) in [
+          (false, false),
+          (true, false),
+          (false, true)
+        ]) {
+          final files = TarDecoder()
+              .decodeBytes(bytes, verify: verify, throwOnError: throwOnError)
+              .files;
+          final reason = 'type $type, verify $verify, '
+              'throwOnError $throwOnError';
+          expect(files.map((f) => f.name), ['docs/README', 'README', 'after'],
+              reason: reason);
+          expect(files[1].isHardLink, isTrue, reason: reason);
+          expect(files[1].content, [0x6c, 0x6c, 0x6c], reason: reason);
+          expect(files[2].content, [0x61], reason: reason);
+        }
+        final streamed = await Stream<List<int>>.value(bytes)
+            .transform(tarCodec.decoder)
+            .asyncMap((e) async =>
+                '${e.name}=${(await e.content.expand((b) => b).toList()).length}')
+            .toList();
+        expect(streamed, ['docs/README=3', 'README=3', 'after=1'],
+            reason: 'type $type');
+      }
+    });
+
+    test('a hard link has data only where libarchive reads it', () async {
+      const ustar = 'ustar\u000000';
+      const gnu = 'ustar  \u0000';
+      final records = utf8.encode(_paxRecord('mtime', '1'));
+      final pax = [
+        ..._tarHeader('PaxHeaders/p', 'x', records.length, magic: ustar),
+        ..._tarBlocks(records),
+        ..._tarHeader('p', '0', 0, magic: ustar),
+      ];
+      final longName = utf8.encode('long');
+      final cases = [
+        (
+          'gnu link after pax',
+          [
+            ...pax,
+            ..._tarHeader('link', '1', 3, link: 'p', magic: gnu),
+          ],
+          0
+        ),
+        (
+          'ustar link after gnu entry',
+          [
+            ...pax,
+            ..._tarHeader('q', '0', 0, magic: gnu),
+            ..._tarHeader('link', '1', 3, link: 'p', magic: ustar),
+          ],
+          0
+        ),
+        (
+          'ustar link after gnu long name',
+          [
+            ...pax,
+            ..._tarHeader('././@LongLink', 'L', longName.length, magic: gnu),
+            ..._tarBlocks(longName),
+            ..._tarHeader('link', '1', 3, link: 'p', magic: ustar),
+          ],
+          0
+        ),
+        (
+          'ustar link without version 00',
+          [
+            ..._tarHeader('p', '0', 0, magic: ustar),
+            ..._tarHeader('link', '1', 3, link: 'p', magic: 'ustar\u0000'),
+            ..._tarBlocks([0x6c, 0x6c, 0x6c]),
+          ],
+          3
+        ),
+      ];
+      for (final (name, entries, linkSize) in cases) {
+        final bytes = Uint8List.fromList([
+          ...entries,
+          ..._tarHeader('after', '0', 1, magic: ustar),
+          ..._tarBlocks([0x61]),
+          ...Uint8List(1024)
+        ]);
+        for (final (verify, throwOnError) in [
+          (false, false),
+          (true, false),
+          (false, true)
+        ]) {
+          final files = TarDecoder()
+              .decodeBytes(bytes, verify: verify, throwOnError: throwOnError)
+              .files;
+          final reason = '$name, verify $verify, throwOnError $throwOnError';
+          expect(files.last.name, 'after', reason: reason);
+          expect(files.last.content, [0x61], reason: reason);
+          expect(files[files.length - 2].isHardLink, isTrue, reason: reason);
+          expect(files[files.length - 2].size, linkSize, reason: reason);
+        }
+        final streamed = await Stream<List<int>>.value(bytes)
+            .transform(tarCodec.decoder)
+            .asyncMap(
+                (e) async => (await e.content.expand((b) => b).toList()).length)
+            .toList();
+        expect(streamed.sublist(streamed.length - 2), [linkSize, 1],
+            reason: name);
+      }
+    });
+
+    test('a hard link whose header fails the libarchive bid keeps its data',
+        () {
+      const ustar = 'ustar\u000000';
+      final badSum = _tarHeader('link', '1', 3, link: 'p', magic: ustar);
+      badSum[148] = 0x37;
+      for (final (name, link) in [
+        ('checksum', badSum),
+        (
+          'uid',
+          _tarHeader('link', '1', 3,
+              link: 'p', magic: ustar, fields: {108: '00000x0\u0000'})
+        ),
+      ]) {
+        final bytes = Uint8List.fromList([
+          ..._tarHeader('p', '0', 0, magic: ustar),
+          ...link,
+          ..._tarBlocks([0x6c, 0x6c, 0x6c]),
+          ..._tarHeader('after', '0', 1, magic: ustar),
+          ..._tarBlocks([0x61]),
+          ...Uint8List(1024),
+        ]);
+        final files = TarDecoder().decodeBytes(bytes).files;
+        expect(files.map((f) => f.name), ['p', 'link', 'after'], reason: name);
+        expect(files[1].content, [0x6c, 0x6c, 0x6c], reason: name);
+        expect(files[2].content, [0x61], reason: name);
+      }
+    });
+
+    test('a directory, link, device or fifo has no data whatever its size',
+        () async {
+      final records = utf8.encode(_paxRecord('mtime', '1'));
+      for (final (name, type) in [
+        ('dir/', '5'),
+        ('symlink', '2'),
+        ('null', '3'),
+        ('sda', '4'),
+        ('fifo', '6'),
+      ]) {
+        for (final pax in [false, true]) {
+          final bytes = Uint8List.fromList([
+            if (pax) ...[
+              ..._tarHeader('PaxHeaders/$name', 'x', records.length,
+                  magic: 'ustar\u000000'),
+              ..._tarBlocks(records),
+            ],
+            ..._tarHeader(name, type, 255,
+                link: type == '2' ? 'after' : '', magic: 'ustar\u000000'),
+            ..._tarHeader('after', '0', 1, magic: 'ustar\u000000'),
+            ..._tarBlocks([0x61]),
+            ...Uint8List(1024),
+          ]);
+          for (final (verify, throwOnError) in [
+            (false, false),
+            (true, false),
+            (false, true)
+          ]) {
+            final files = TarDecoder()
+                .decodeBytes(bytes, verify: verify, throwOnError: throwOnError)
+                .files;
+            final reason = 'type $type, pax $pax, verify $verify, '
+                'throwOnError $throwOnError';
+            expect(files.map((f) => f.name), [name, 'after'], reason: reason);
+            expect(files[1].content, [0x61], reason: reason);
+          }
+          final streamed = await Stream<List<int>>.value(bytes)
+              .transform(tarCodec.decoder)
+              .asyncMap((e) async =>
+                  '${e.name}=${(await e.content.expand((b) => b).toList()).length}')
+              .toList();
+          expect(streamed, ['$name=0', 'after=1'],
+              reason: 'type $type, pax $pax');
+        }
+      }
+    });
+
+    test('a sparse file is read with its holes', () async {
+      final data = [...List.filled(512, 0x61), ...List.filled(512, 0x62)];
+      final expanded = [
+        ...List.filled(512, 0x61),
+        ...Uint8List(1024),
+        ...List.filled(512, 0x62)
+      ];
+      final gnu = Uint8List.fromList([
+        ..._tarHeader('gnu.bin', 'S', 1024, magic: 'ustar  \u0000', fields: {
+          386: '00000000000\u0000',
+          398: '00000001000\u0000',
+          410: '00000003000\u0000',
+          422: '00000001000\u0000',
+          483: '00000004000\u0000',
+        }),
+        ...data,
+        ...Uint8List(1024),
+      ]);
+      final records = utf8.encode(_paxRecord('GNU.sparse.major', '1') +
+          _paxRecord('GNU.sparse.minor', '0') +
+          _paxRecord('GNU.sparse.name', 'pax.bin') +
+          _paxRecord('GNU.sparse.realsize', '2048'));
+      final pax = Uint8List.fromList([
+        ..._tarHeader('PaxHeaders/pax.bin', 'x', records.length,
+            magic: 'ustar\u000000'),
+        ..._tarBlocks(records),
+        ..._tarHeader('GNUSparseFile.0/pax.bin', '0', 512 + data.length,
+            magic: 'ustar\u000000'),
+        ..._tarBlocks(ascii.encode('2\n0\n512\n1536\n512\n')),
+        ...data,
+        ...Uint8List(1024),
+      ]);
+      for (final (name, bytes) in [('gnu.bin', gnu), ('pax.bin', pax)]) {
+        for (final (verify, throwOnError) in [
+          (false, false),
+          (true, false),
+          (false, true)
+        ]) {
+          final file = TarDecoder()
+              .decodeBytes(bytes, verify: verify, throwOnError: throwOnError)
+              .single;
+          final reason = '$name, verify $verify, throwOnError $throwOnError';
+          expect(file.name, name, reason: reason);
+          expect(file.size, expanded.length, reason: reason);
+          expect(file.content, expanded, reason: reason);
+        }
+        final streamed = await Stream<List<int>>.value(bytes)
+            .transform(tarCodec.decoder)
+            .asyncMap((e) async =>
+                (e.name, await e.content.expand((b) => b).toList()))
+            .toList();
+        expect(streamed.single.$1, name);
+        expect(streamed.single.$2, expanded, reason: name);
+      }
+    });
+
+    test('a sparse map that does not fit leaves the entry as stored', () async {
+      final data = [...List.filled(512, 0x61), ...List.filled(512, 0x62)];
+      List<int> pax(String type, Map<String, String> records) {
+        final bytes = utf8.encode(
+            records.entries.map((r) => _paxRecord(r.key, r.value)).join());
+        return [
+          ..._tarHeader('PaxHeaders/x', type, bytes.length,
+              magic: 'ustar\u000000'),
+          ..._tarBlocks(bytes),
+        ];
+      }
+
+      List<int> pax10(String map) {
+        final stored = [..._tarBlocks(ascii.encode(map)), ...data];
+        return [
+          ...pax('x', {
+            'GNU.sparse.major': '1',
+            'GNU.sparse.minor': '0',
+            'GNU.sparse.name': 'pax.bin',
+            'GNU.sparse.realsize': '2048',
+          }),
+          ..._tarHeader('GNUSparseFile.0/pax.bin', '0', stored.length,
+              magic: 'ustar\u000000'),
+          ...stored,
+        ];
+      }
+
+      final cases = {
+        'regions shorter than the data': (
+          pax10('2\n0\n512\n1536\n500\n'),
+          'pax.bin',
+          [..._tarBlocks(ascii.encode('2\n0\n512\n1536\n500\n')), ...data],
+        ),
+        'a map that is not decimal': (
+          pax10('2\n0\n512\n15x6\n512\n'),
+          'pax.bin',
+          [..._tarBlocks(ascii.encode('2\n0\n512\n15x6\n512\n')), ...data],
+        ),
+        'overlapping regions': (
+          [
+            ..._tarHeader('gnu.bin', 'S', 1024,
+                magic: 'ustar  \u0000',
+                fields: {
+                  386: '00000000000\u0000',
+                  398: '00000001000\u0000',
+                  410: '00000000400\u0000',
+                  422: '00000001000\u0000',
+                  483: '00000004000\u0000',
+                }),
+            ...data,
+          ],
+          'gnu.bin',
+          data,
+        ),
+        'a region past the real size': (
+          [
+            ...pax('x', {
+              'GNU.sparse.size': '2048',
+              'GNU.sparse.map': '0,512,1800,512',
+              'GNU.sparse.name': 'real.bin',
+            }),
+            ..._tarHeader('stored.bin', '0', 1024, magic: 'ustar\u000000'),
+            ...data,
+          ],
+          'real.bin',
+          data,
+        ),
+      };
+      for (final MapEntry(key: what, value: (entries, name, stored))
+          in cases.entries) {
+        final bytes = Uint8List.fromList([...entries, ...Uint8List(1024)]);
+        final file = TarDecoder().decodeBytes(bytes).single;
+        expect(file.name, name, reason: what);
+        expect(file.content, stored, reason: what);
+        for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+          expect(
+              () => TarDecoder().decodeBytes(bytes,
+                  verify: verify, throwOnError: throwOnError),
+              throwsA(isA<ArchiveException>()),
+              reason: '$what, verify $verify, throwOnError $throwOnError');
+        }
+        final streamed = await Stream<List<int>>.value(bytes)
+            .transform(tarCodec.decoder)
+            .asyncMap((e) async =>
+                (e.name, await e.content.expand((b) => b).toList()))
+            .toList();
+        expect(streamed.single.$1, name, reason: what);
+        expect(streamed.single.$2, stored, reason: what);
+      }
+    });
+
+    test('a GNU sparse header cut before its extension is read as stored', () {
+      final bytes =
+          _tarHeader('gnu.bin', 'S', 1024, magic: 'ustar  \u0000', fields: {
+        386: '00000000000\u0000',
+        398: '00000001000\u0000',
+        410: '00000002000\u0000',
+        422: '00000001000\u0000',
+        482: '\u0001',
+        483: '00000004000\u0000',
+      });
+      final file = TarDecoder().decodeBytes(bytes).single;
+      expect(file.name, 'gnu.bin');
+      expect(file.content, isEmpty);
+      expect(() => TarDecoder().decodeBytes(bytes, verify: true),
+          throwsA(isA<ArchiveException>()));
+    });
+
+    test('a sparse map is read the way libarchive reads it', () async {
+      const ustar = 'ustar\u000000';
+      final data = [...List.filled(512, 0x61), ...List.filled(512, 0x62)];
+      final expanded = [
+        ...List.filled(512, 0x61),
+        ...Uint8List(1024),
+        ...List.filled(512, 0x62)
+      ];
+      List<int> pax(List<(String, String)> records) {
+        final bytes =
+            utf8.encode(records.map((r) => _paxRecord(r.$1, r.$2)).join());
+        return [
+          ..._tarHeader('PaxHeaders/x', 'x', bytes.length, magic: ustar),
+          ..._tarBlocks(bytes),
+        ];
+      }
+
+      List<int> pax10(String name, String map,
+          {List<(String, String)> records = const [], int? headerSize}) {
+        final stored = [..._tarBlocks(ascii.encode(map)), ...data];
+        return [
+          ...pax(records),
+          ..._tarHeader(
+              'GNUSparseFile.0/$name', '0', headerSize ?? stored.length,
+              magic: ustar),
+          ...stored,
+        ];
+      }
+
+      const v10 = [
+        ('GNU.sparse.major', '1'),
+        ('GNU.sparse.minor', '0'),
+        ('GNU.sparse.realsize', '2048'),
+      ];
+      List<int> gnu(String type, Map<int, String> fields) => [
+            ..._tarHeader('gnu.bin', type, 1024,
+                magic: 'ustar  \u0000', fields: fields),
+            ...data,
+          ];
+
+      final cases = <String, (List<int>, List<(String, List<int>)>)>{
+        '1.0 comments, empty lines and a 100-byte line': (
+          pax10('m.bin', '#a\n3\n${'0' * 99}\n#b\n512\n\n\n1536\n#c\n512\n',
+              records: [
+                ...v10,
+                ('GNU.sparse.major', '11'),
+                ('GNU.sparse.name', 'm.bin')
+              ]),
+          [('m.bin', expanded)]
+        ),
+        '1.0 data size from GNU.sparse.size': (
+          pax10('m.bin', '2\n0\n512\n1536\n512\n', headerSize: 0, records: [
+            ...v10,
+            ('GNU.sparse.size', '1536'),
+            ('GNU.sparse.name', 'm.bin')
+          ]),
+          [('m.bin', expanded)]
+        ),
+        '0.1 dangling offset, empty number and empty region': (
+          [
+            ...pax([
+              ('GNU.sparse.size', '2048'),
+              ('GNU.sparse.map', '0,512,,0,1536,512,100,0,4096'),
+            ]),
+            ..._tarHeader('m.bin', '0', 1024, magic: ustar),
+            ...data,
+          ],
+          [('m.bin', expanded)]
+        ),
+        '0.0 pairs in arrival order, realsize over size': (
+          [
+            ...pax([
+              ('GNU.sparse.size', '4096'),
+              ('GNU.sparse.realsize', '2048'),
+              ('GNU.sparse.numbytes', '512'),
+              ('GNU.sparse.offset', '0'),
+              ('GNU.sparse.offset', '1536'),
+              ('GNU.sparse.numbytes', '512'),
+            ]),
+            ..._tarHeader('m.bin', '0', 1024, magic: ustar),
+            ...data,
+          ],
+          [('m.bin', expanded)]
+        ),
+        'old GNU map on a regular GNU header': (
+          gnu('0', {
+            386: '00000000000\u0000',
+            398: '00000001000\u0000',
+            410: '00000003000\u0000',
+            422: '00000001000\u0000',
+            483: '00000004000\u0000',
+          }),
+          [('gnu.bin', expanded)]
+        ),
+        'old GNU numbers up to the first non-digit': (
+          gnu('0', {
+            386: '00000000000\u0000',
+            398: '00000001000x',
+            410: '00000003000\u0000',
+            422: '00000001000\u0000',
+            483: '00000004000\u0000',
+          }),
+          [('gnu.bin', expanded)]
+        ),
+        '1.0 map replaces a 0.1 map': (
+          pax10('m.bin', '2\n0\n512\n1536\n512\n', records: [
+            ('GNU.sparse.map', '0,1'),
+            ...v10,
+            ('GNU.sparse.name', 'm.bin')
+          ]),
+          [('m.bin', expanded)]
+        ),
+        '1.0 attributes on a non-regular type': (
+          [
+            ...pax(v10),
+            ..._tarHeader('m.bin', '\u0000', 1536, magic: ustar),
+            ..._tarBlocks(ascii.encode('2\n0\n512\n1536\n512\n')),
+            ...data,
+          ],
+          [
+            (
+              'm.bin',
+              [
+                ..._tarBlocks(ascii.encode('2\n0\n512\n1536\n512\n')),
+                ...data,
+                ...Uint8List(512)
+              ]
+            )
+          ]
+        ),
+        'isextended without a first region': (
+          gnu('0', {482: '\u0001'}),
+          [('gnu.bin', data)]
+        ),
+        'sparse version kept for the next entry': (
+          [
+            ...pax10('a.bin', '2\n0\n512\n1536\n512\n',
+                records: [...v10, ('GNU.sparse.name', 'a.bin')]),
+            ...pax10('b.bin', '2\n0\n512\n1536\n512\n', records: [
+              ('GNU.sparse.realsize', '2048'),
+              ('GNU.sparse.name', 'b.bin')
+            ]),
+          ],
+          [('a.bin', expanded), ('b.bin', expanded)]
+        ),
+        'GNU.sparse alone marks the entry, GNU.sparse. does not': (
+          [
+            ...pax10('a.bin', '2\n0\n512\n1536\n512\n',
+                records: [...v10, ('GNU.sparse.name', 'a.bin')]),
+            ...pax10('c.bin', '2\n0\n512\n512\n512\n',
+                records: [('GNU.sparse', '1')]),
+            ...pax10('d.bin', '2\n0\n512\n512\n512\n',
+                records: [('GNU.sparse.', '1')]),
+          ],
+          [
+            ('a.bin', expanded),
+            ('GNUSparseFile.0/c.bin', [...data, ...Uint8List(512)]),
+            (
+              'GNUSparseFile.0/d.bin',
+              [..._tarBlocks(ascii.encode('2\n0\n512\n512\n512\n')), ...data]
+            ),
+          ]
+        ),
+      };
+      for (final MapEntry(key: what, value: (entries, expected))
+          in cases.entries) {
+        final bytes = Uint8List.fromList([...entries, ...Uint8List(1024)]);
+        for (final verify in [false, true]) {
+          final files = TarDecoder().decodeBytes(bytes, verify: verify).files;
+          expect(files.map((f) => f.name), expected.map((e) => e.$1),
+              reason: '$what, verify $verify');
+          expect(files.map((f) => f.content), expected.map((e) => e.$2),
+              reason: '$what, verify $verify');
+        }
+        final streamed = await Stream<List<int>>.value(bytes)
+            .transform(tarCodec.decoder)
+            .asyncMap((e) async =>
+                (e.name, await e.content.expand((b) => b).toList()))
+            .toList();
+        expect(streamed.map((e) => e.$1), expected.map((e) => e.$1),
+            reason: what);
+        expect(streamed.map((e) => e.$2), expected.map((e) => e.$2),
+            reason: what);
+      }
+
+      for (final (what, map, records) in [
+        ('a 101-byte line', '2\n${'0' * 100}\n512\n1536\n512\n', v10),
+        ('a length past int64', '2\n0\n18446744073709552128\n1536\n512\n', v10),
+        (
+          'a realsize longer than 64 bytes',
+          '2\n0\n512\n1536\n512\n',
+          [...v10, ('GNU.sparse.realsize', '${'0' * 61}2048')]
+        ),
+      ]) {
+        final broken = pax10('m.bin', map,
+            records: [...records, ('GNU.sparse.name', 'm.bin')]);
+        final bytes = Uint8List.fromList([...broken, ...Uint8List(1024)]);
+        final file = TarDecoder().decodeBytes(bytes).single;
+        expect(file.name, 'm.bin', reason: what);
+        expect(file.content, broken.sublist(broken.length - 1536),
+            reason: what);
+        expect(() => TarDecoder().decodeBytes(bytes, verify: true),
+            throwsA(isA<ArchiveException>()),
+            reason: what);
+      }
+    });
+
+    test('a sparse map applies only to a regular file', () async {
+      final records = utf8.encode(_paxRecord('GNU.sparse.size', '2048') +
+          _paxRecord('GNU.sparse.map', '0,512,1536,512') +
+          _paxRecord('GNU.sparse.name', 'real.bin'));
+      final data = [...List.filled(512, 0x61), ...List.filled(512, 0x62)];
+      final bytes = Uint8List.fromList([
+        ..._tarHeader('PaxHeaders/link', 'x', records.length,
+            magic: 'ustar\u000000'),
+        ..._tarBlocks(records),
+        ..._tarHeader('link', '2', 0, link: 'target', magic: 'ustar\u000000'),
+        ..._tarHeader('posix.bin', 'S', 1024, magic: 'ustar\u000000', fields: {
+          386: '00000000000\u0000',
+          398: '00000001000\u0000',
+          410: '00000003000\u0000',
+          422: '00000001000\u0000',
+          483: '00000004000\u0000',
+        }),
+        ...data,
+        ...Uint8List(1024),
+      ]);
+      for (final (verify, throwOnError) in [
+        (false, false),
+        (true, false),
+        (false, true)
+      ]) {
+        final files = TarDecoder()
+            .decodeBytes(bytes, verify: verify, throwOnError: throwOnError)
+            .files;
+        final reason = 'verify $verify, throwOnError $throwOnError';
+        expect(files.map((f) => f.name), ['real.bin', 'posix.bin'],
+            reason: reason);
+        expect(files[0].symbolicLink, 'target', reason: reason);
+        expect(files[1].content, data, reason: reason);
+      }
+      final streamed = await Stream<List<int>>.value(bytes)
+          .transform(tarCodec.decoder)
+          .asyncMap((e) async => (
+                e.name,
+                e.symbolicLink,
+                await e.content.expand((b) => b).toList()
+              ))
+          .toList();
+      expect(streamed.map((e) => e.$1), ['real.bin', 'posix.bin']);
+      expect(streamed[0].$2, 'target');
+      expect(streamed[1].$3, data);
+    });
+
+    test('sparse files from GNU tar read as Go and libarchive read them',
+        () async {
+      final cases = {
+        'sparse-formats.tar': [
+          ('sparse-gnu', 200, 0x5375e1d2),
+          ('sparse-posix-0.0', 200, 0x5375e1d2),
+          ('sparse-posix-0.1', 200, 0x5375e1d2),
+          ('sparse-posix-1.0', 200, 0x5375e1d2),
+          ('end', 4, 0x8eb179ba),
+        ],
+        'gtar_sparse_1_17_posix10_modified.tar': [
+          ('sparse', 3145728, 0x0f443b49),
+          ('sparse2', 99000001, 0x4dd9ae72),
+          ('non-sparse', 0, 0),
+        ],
+      };
+      for (final MapEntry(key: name, value: expected) in cases.entries) {
+        final bytes = File('test/_data/tar/$name').readAsBytesSync();
+        for (final (verify, throwOnError) in [
+          (false, false),
+          (true, false),
+          (false, true)
+        ]) {
+          final files = TarDecoder()
+              .decodeBytes(bytes, verify: verify, throwOnError: throwOnError)
+              .files
+              .where((f) => f.isFile);
+          expect([for (final f in files) (f.name, f.size, getCrc32(f.content))],
+              expected,
+              reason: '$name, verify $verify, throwOnError $throwOnError');
+        }
+        expect(
+            TarDecoder()
+                .decodeBytes(bytes, storeData: false)
+                .files
+                .where((f) => f.isFile)
+                .map((f) => f.name),
+            expected.map((e) => e.$1),
+            reason: name);
+        final written = <(String, int, int)>[];
+        for (final f in TarDecoder().decodeBytes(bytes).files) {
+          if (f.isFile) {
+            final out = OutputMemoryStream();
+            f.writeContent(out);
+            written.add((f.name, f.size, getCrc32(out.getBytes())));
+          }
+        }
+        expect(written, expected, reason: name);
+        final streamed = <(String, int, int)>[];
+        await for (final entry
+            in Stream<List<int>>.value(bytes).transform(tarCodec.decoder)) {
+          var crc = 0;
+          await for (final piece in entry.content) {
+            crc = getCrc32(piece, crc);
+          }
+          if (entry.isFile) {
+            streamed.add((entry.name, entry.size, crc));
+          }
+        }
+        expect(streamed, expected, reason: name);
+      }
+      final truncated = File('test/_data/tar/sparse-formats.tar')
+          .readAsBytesSync()
+          .sublist(0, 3122);
+      expect(() => TarDecoder().decodeBytes(truncated, verify: true),
+          throwsA(isA<ArchiveException>()));
+    });
+
     test('invalid archive', () {
       final bytes = Uint8List.fromList([1, 2, 3]);
       expect(TarDecoder().decodeBytes(bytes), isEmpty);
@@ -657,6 +1375,56 @@ void main() {
       expect(archive[0].lastModTime, equals(1600000000));
       expect(archive[0].ownerId, equals(4242));
       expect(archive[0].groupId, equals(1717));
+    });
+
+    test('a pax size is read the way libarchive reads it', () async {
+      Uint8List archive(String size) {
+        final records = utf8.encode(_paxRecord('size', size));
+        return Uint8List.fromList([
+          ..._tarHeader('PaxHeaders/a', 'x', records.length,
+              magic: 'ustar\u000000'),
+          ..._tarBlocks(records),
+          ..._tarHeader('a', '0', 0, magic: 'ustar\u000000'),
+          ..._tarBlocks([0x61, 0x61, 0x61]),
+          ...Uint8List(1024),
+        ]);
+      }
+
+      for (final size in [' 3', '\t3xyz', '3 ']) {
+        final bytes = archive(size);
+        expect(TarDecoder().decodeBytes(bytes, verify: true)[0].content,
+            [0x61, 0x61, 0x61],
+            reason: size);
+        final streamed = await Stream<List<int>>.value(bytes)
+            .transform(tarCodec.decoder)
+            .asyncMap((e) async => await e.content.expand((b) => b).toList())
+            .toList();
+        expect(
+            streamed,
+            [
+              [0x61, 0x61, 0x61]
+            ],
+            reason: size);
+      }
+      for (final size in [
+        '-19769411113659727436',
+        '-3',
+        '99999999999999999999',
+        '${'0' * 64}3',
+      ]) {
+        final bytes = archive(size);
+        expect(TarDecoder().decodeBytes(bytes).files, isEmpty, reason: size);
+        expect(() => TarDecoder().decodeBytes(bytes, verify: true),
+            throwsA(isA<ArchiveException>()),
+            reason: size);
+        expect(() => TarDecoder().decodeBytes(bytes, throwOnError: true),
+            throwsA(isA<ArchiveException>()),
+            reason: size);
+        expect(
+            Stream<List<int>>.value(bytes).transform(tarCodec.decoder).toList(),
+            throwsA(isA<ArchiveException>()),
+            reason: size);
+      }
     });
 
     test('pax size record survives a second metadata header', () {
@@ -1200,6 +1968,39 @@ void main() {
 }
 
 // A stream that can be read a piece at a time but never all at once
+Uint8List _tarHeader(String name, String type, int size,
+    {String link = '', String magic = '', Map<int, String> fields = const {}}) {
+  final header = Uint8List(512);
+  void put(int at, String value) =>
+      header.setRange(at, at + value.length, latin1.encode(value));
+  put(0, name);
+  put(100, '0000644\u0000');
+  put(108, '0000000\u0000');
+  put(116, '0000000\u0000');
+  put(124, '${size.toRadixString(8).padLeft(11, '0')}\u0000');
+  put(136, '00000000000\u0000');
+  put(156, type);
+  put(157, link);
+  put(257, magic);
+  fields.forEach(put);
+  put(148, '        ');
+  final sum = header.fold<int>(0, (a, b) => a + b);
+  put(148, '${sum.toRadixString(8).padLeft(6, '0')}\u0000 ');
+  return header;
+}
+
+Uint8List _tarBlocks(List<int> data) =>
+    Uint8List((data.length + 511) & ~511)..setRange(0, data.length, data);
+
+String _paxRecord(String key, String value) {
+  final line = ' $key=$value\n';
+  var length = line.length + 1;
+  while ('$length$line'.length != length) {
+    length++;
+  }
+  return '$length$line';
+}
+
 class _RefusesBulkRead extends InputMemoryStream {
   _RefusesBulkRead(super.bytes);
 

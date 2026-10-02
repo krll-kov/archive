@@ -11,6 +11,7 @@ import '../../util/decode_guard.dart';
 import '../../util/input_memory_stream.dart';
 import '../tar_encoder.dart';
 import 'tar_file.dart';
+import 'tar_sparse.dart';
 
 /// {@macro archive.codecs.not_converter}
 ///
@@ -230,13 +231,15 @@ class TarEntry {
   final String typeFlag;
   final String? symbolicLink;
 
-  TarEntry._(TarFile file, this._reader)
+  TarEntry._(TarFile file, this._reader, {Uint8List? head, int read = 0})
       : name = file.filename,
-        type = TarEntryType.of(file.typeFlag) == TarEntryType.file &&
-                file.filename.endsWith('/')
-            ? TarEntryType.directory
-            : TarEntryType.of(file.typeFlag),
-        size = file.fileSize,
+        type = file.sparse != null
+            ? TarEntryType.file
+            : TarEntryType.of(file.typeFlag) == TarEntryType.file &&
+                    file.filename.endsWith('/')
+                ? TarEntryType.directory
+                : TarEntryType.of(file.typeFlag),
+        size = file.sparse?.realSize ?? file.fileSize,
         mode = file.mode,
         ownerId = file.ownerId,
         groupId = file.groupId,
@@ -245,9 +248,15 @@ class TarEntry {
         symbolicLink = (file.nameOfLinkedFile?.isNotEmpty ?? false)
             ? file.nameOfLinkedFile
             : null,
-        _left = file.fileSize;
+        _sparse = file.sparse,
+        _stored = file.fileSize,
+        _head = head,
+        _left = file.fileSize - read;
 
   final _Reader _reader;
+  final TarSparse? _sparse;
+  final int _stored;
+  Uint8List? _head;
   int _left;
   var _taken = false;
   var _done = false;
@@ -320,13 +329,44 @@ class TarEntry {
       throw StateError(
           'tar: the archive has moved past $name, its content is gone');
     }
-    while (_left > 0) {
-      final piece = await _reader.some(_left);
+    final head = _head;
+    if (head != null && head.isNotEmpty) {
+      _head = null;
+      yield head;
+    }
+    final sparse = _sparse;
+    if (sparse == null) {
+      yield* _stream(_left);
+      return;
+    }
+    var end = 0;
+    for (final (offset, length) in sparse.regions) {
+      yield* _holes(offset - end);
+      yield* _stream(length);
+      end = offset + length;
+    }
+    yield* _holes(sparse.realSize - end);
+  }
+
+  Stream<Uint8List> _stream(int count) async* {
+    var need = count;
+    while (need > 0) {
+      final piece = await _reader.some(need);
       if (piece.isEmpty) {
         throw ArchiveException('tar: unexpected end of archive $name');
       }
       _left -= piece.length;
+      need -= piece.length;
       yield piece;
+    }
+  }
+
+  static Stream<Uint8List> _holes(int count) async* {
+    var need = count;
+    while (need > 0) {
+      final n = need < 1 << 16 ? need : 1 << 16;
+      need -= n;
+      yield Uint8List(n);
     }
   }
 }
@@ -353,7 +393,11 @@ Stream<TarEntry> _read(
       // The header is read again, followed immediately by its content,
       // exactly where `TarMetadata` expects to find it
       var file = TarFile.read(InputMemoryStream(header),
-          storeData: false, encoding: encoding, size: metadata.size);
+          storeData: false,
+          encoding: encoding,
+          size: metadata.dataSize,
+          pax: metadata.pax);
+      metadata.sawHeader(file);
       if (TarMetadata.describesNext(file)) {
         final body = await reader.exact(_padded(file.fileSize));
         if (body == null) {
@@ -371,6 +415,9 @@ Stream<TarEntry> _read(
         }
         if (!taken) {
           metadata.applyTo(file);
+          if (file.sparse != null) {
+            file.resolveSparse(file.rawContent ?? InputMemoryStream.empty());
+          }
           final orphan = metadata.takeOrphan();
           if (orphan != null) {
             yield* _held(orphan, signal);
@@ -383,6 +430,36 @@ Stream<TarEntry> _read(
         continue;
       }
       metadata.applyTo(file);
+      final sparse = file.sparse;
+      Uint8List? head;
+      if (sparse != null) {
+        while (sparse.extended) {
+          final block = await reader.exact(512);
+          if (block == null) {
+            throw ArchiveException('tar: unexpected end of archive');
+          }
+          file.readSparseExtension(InputMemoryStream(block));
+        }
+        if (sparse.mapInData) {
+          final taken = BytesBuilder(copy: false);
+          while (taken.length < file.fileSize) {
+            final left = file.fileSize - taken.length;
+            final block = await reader.exact(left < 512 ? left : 512);
+            if (block == null) {
+              throw ArchiveException('tar: unexpected end of archive');
+            }
+            taken.add(block);
+            if (sparse.readMap(block) != null) {
+              break;
+            }
+          }
+          head = taken.takeBytes();
+        }
+      }
+      final read = head?.length ?? 0;
+      if (file.applySparse()) {
+        head = null;
+      }
       final orphan = metadata.takeOrphan();
       if (orphan != null) {
         yield* _held(orphan, signal);
@@ -391,7 +468,7 @@ Stream<TarEntry> _read(
         }
       }
 
-      final entry = TarEntry._(file, reader);
+      final entry = TarEntry._(file, reader, head: head, read: read);
       yield entry;
       entry._done = true;
       // A paused content read never completes on its own, so a cancel has to
@@ -404,7 +481,7 @@ Stream<TarEntry> _read(
         return;
       }
       entry._gone = entry._left > 0;
-      await reader.skip(entry._left + _padding(entry.size));
+      await reader.skip(entry._left + _padding(entry._stored));
       entry._left = 0;
     }
     final orphan = metadata.takeOrphan(true);
@@ -418,8 +495,12 @@ Stream<TarEntry> _read(
 
 Stream<TarEntry> _held(TarFile file, CancelSignal signal) async* {
   final bytes = file.rawContent?.toUint8List() ?? Uint8List(0);
-  final entry =
-      TarEntry._(file, _Reader(StreamIterator(Stream<List<int>>.value(bytes))));
+  final read = file.sparse?.mapLength ?? 0;
+  final entry = TarEntry._(
+      file,
+      _Reader(StreamIterator(
+          Stream<List<int>>.value(Uint8List.sublistView(bytes, read)))),
+      read: read);
   yield entry;
   entry._done = true;
   signal.onCancel = () => entry._finish?.call();

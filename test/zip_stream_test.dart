@@ -146,10 +146,11 @@ void main() {
         return ByteData.sublistView(output.getBytes());
       }
 
+      const utField = 9;
       final plain = written(4293656835);
       expect(plain.getUint16(4, Endian.little), 20);
       expect(plain.getUint32(18, Endian.little), 0);
-      expect(plain.getUint16(28, Endian.little), 0);
+      expect(plain.getUint16(28, Endian.little), utField);
       final plainEnd = plain.lengthInBytes;
       expect(plain.getUint32(plainEnd - 16, Endian.little), 0x08074b50);
       expect(plain.getUint32(plainEnd - 4, Endian.little), 4293656835);
@@ -158,7 +159,7 @@ void main() {
       expect(wide.getUint16(4, Endian.little), 45);
       expect(wide.getUint32(18, Endian.little), 0xFFFFFFFF);
       expect(wide.getUint32(22, Endian.little), 0xFFFFFFFF);
-      expect(wide.getUint16(28, Endian.little), 20);
+      expect(wide.getUint16(28, Endian.little), 20 + utField);
       expect(wide.getUint16(31, Endian.little), 1);
       final wideEnd = wide.lengthInBytes;
       expect(wide.getUint32(wideEnd - 24, Endian.little), 0x08074b50);
@@ -175,9 +176,10 @@ void main() {
       body!.finish();
       encoder.endEncode();
       final view = ByteData.sublistView(output.getBytes());
+      const utField = 9;
       expect(view.getUint16(4, Endian.little), 45);
       expect(view.getUint32(22, Endian.little), 0xFFFFFFFF);
-      expect(view.getUint16(28, Endian.little), 20);
+      expect(view.getUint16(28, Endian.little), 20 + utField);
 
       var central = 0;
       while (view.getUint32(central, Endian.little) != 0x02014b50) {
@@ -505,9 +507,10 @@ void main() {
 
       // Java takes the descriptor width from the real sizes. A small entry
       // gets a plain local header and 4 byte sizes behind its data
+      const utField = 9;
       expect(view.getUint16(4, Endian.little), 20);
       expect(view.getUint32(18, Endian.little), 0);
-      expect(view.getUint16(28, Endian.little), 0);
+      expect(view.getUint16(28, Endian.little), utField);
       final at = _find(bytes, [0x50, 0x4b, 0x07, 0x08]);
       expect(at, greaterThan(0));
       expect(view.getUint32(at + 8, Endian.little), 13);

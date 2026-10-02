@@ -45,6 +45,7 @@ try {
 * `verify: true` now throws instead of returning `false` or partial data and does work for all decoders when specified.
 * A wrong or missing zip password throws `ArchivePasswordException` regardless of flags.
 * `lastModTime` of zip entries is now in seconds since epoch, as in tar, instead of the DOS date and time format.
+* `CompressionType` has new values `lzma`, `zstd` and `xz`, so a switch over it needs a case for each of them.
 * Classes that implement `InputStream` or `OutputStream` must add `readInto`, `viewBytes`, `writeRange` and
   `reserve`. Classes that extend them need no change.
 * `AesDecrypt` is removed, use `AesCtr`: `AesDecrypt(key).decryptCrt(data)` becomes
@@ -77,7 +78,7 @@ A Dart library to encode and decode various archive and compression formats.
 The archive library currently supports the following codecs:
 
 - Zip
-- Tar
+- Tar (including GNU and PAX sparse files)
 - ZLib
 - GZip
 - BZip2

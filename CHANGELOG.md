@@ -38,7 +38,8 @@
   `extractArchiveToDiskSync` accept `throwOnError`. Without them a damaged or cut archive no longer throws: Complete 
   entries are extracted, and damaged ones leave no partial files on disk. If these flags are set, the function throws
   an exception upon encountering the first corrupted entry.
-* *BREAKING CHANGE*: `CompressionType` has a new value, `lzma`, so a switch over it needs a case for it.
+* *BREAKING CHANGE*: `CompressionType` has new values, `lzma`, `zstd` and `xz`, so a switch over it needs a case
+  for each of them.
 * *BREAKING CHANGE*: `TarEncoder` now writes a tar hard link read by `TarDecoder` back as a hard link. It used to
   write it as a symlink, which pointed to a missing file.
 * *BREAKING CHANGE*: Removed `AesDecrypt`, use the exported `AesCtr` instead. `Sha1`, `HmacSha1`, `pbkdf2HmacSha1`
@@ -82,6 +83,11 @@
 * Fixed `XZEncoder` (without compression) writing broken archives for inputs over 104 bytes.
 * Fixed(added) LZMA decoding for `ZipDecoder` and encoding for `ZipEncoder` with `CompressionType.lzma`. Encoder
   still falls back to DEFLATE, but decoder properly reads lzma data.
+* `ZipDecoder` now reads zstd (method 93) and xz (method 95) zip entries as `CompressionType.zstd` and
+  `CompressionType.xz`, and `ZipEncoder` writes them with `ZstdEncoder` and `XZEncoder`. `XZEncoder` stores data
+  uncompressed, so an xz entry is not smaller than its data.
+* `TarDecoder` and `tarCodec.decoder` now read sparse files the way libarchive does: old GNU sparse headers with
+  extension blocks and PAX sparse formats 0.0, 0.1 and 1.0. Holes are expanded when the content is read.
 * Fixed `mode` 0 file rights for `ArchiveFile` from `ZipDecoder` created on Windows.
 * Fixed SHA-256 checks for XZDecoder with `verify: true`.
 * Fixed symlinks encoding in `ZipEncoder` and decoding non-ASCII names with macos unzip from archives of this package.

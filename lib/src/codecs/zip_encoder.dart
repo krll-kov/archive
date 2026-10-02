@@ -16,11 +16,13 @@ import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
 import '../util/output_stream.dart';
 import 'bzip2_encoder.dart';
+import 'xz_encoder.dart';
 import 'zip/zip_directory.dart';
 import 'zip/zip_file.dart';
 import 'zip/zip_file_header.dart';
 import 'zlib/_zlib_encoder.dart';
 import 'zlib/deflate.dart';
+import 'zstd_encoder.dart';
 
 class _Crc32Sink implements Sink<List<int>> {
   var value = 0;
@@ -36,6 +38,7 @@ class _ZipFileData {
   late String name;
   int time = 0;
   int date = 0;
+  int modified = 0;
   int crc32 = 0;
   int compressedSize = 0;
   int uncompressedSize = 0;
@@ -70,12 +73,19 @@ class _ZipFileData {
   bool unixHost = false;
 }
 
+DateTime _dosRange(DateTime t) => t.year < 1980
+    ? DateTime(1980)
+    : t.year > 2107
+        ? DateTime(2107, 12, 31, 23, 59, 58)
+        : t;
+
 int? _getTime(DateTime? dateTime) {
   if (dateTime == null) {
     return null;
   }
-  final t1 = ((dateTime.minute & 0x7) << 5) | (dateTime.second ~/ 2);
-  final t2 = (dateTime.hour << 3) | (dateTime.minute >> 3);
+  final t = _dosRange(dateTime);
+  final t1 = ((t.minute & 0x7) << 5) | (t.second ~/ 2);
+  final t2 = (t.hour << 3) | (t.minute >> 3);
   return ((t2 & 0xff) << 8) | (t1 & 0xff);
 }
 
@@ -83,8 +93,9 @@ int? _getDate(DateTime? dateTime) {
   if (dateTime == null) {
     return null;
   }
-  final d1 = ((dateTime.month & 0x7) << 5) | dateTime.day;
-  final d2 = (((dateTime.year - 1980) & 0x7f) << 1) | (dateTime.month >> 3);
+  final t = _dosRange(dateTime);
+  final d1 = ((t.month & 0x7) << 5) | t.day;
+  final d2 = (((t.year - 1980) & 0x7f) << 1) | (t.month >> 3);
   return ((d2 & 0xff) << 8) | (d1 & 0xff);
 }
 
@@ -92,11 +103,14 @@ class _ZipEncoderData {
   int? level;
   late final int? time;
   late final int? date;
+  late final int? seconds;
   List<_ZipFileData> files = [];
 
   _ZipEncoderData(this.level, [DateTime? dateTime]) {
     time = _getTime(dateTime);
     date = _getDate(dateTime);
+    seconds =
+        dateTime == null ? null : dateTime.millisecondsSinceEpoch ~/ 1000;
   }
 }
 
@@ -294,6 +308,7 @@ class ZipEncoder {
     // use the lastModTime from the file.
     fileData.time = _data.time ?? _getTime(lastModTime)!;
     fileData.date = _data.date ?? _getDate(lastModTime)!;
+    fileData.modified = _data.seconds ?? entry.lastModTime;
     fileData.mode = entry.mode;
     fileData.isFile = entry.isFile;
 
@@ -420,6 +435,24 @@ class ZipEncoder {
           }
           compressedData = InputMemoryStream(output.getBytes());
           ownsData = true;
+        } else if (compressionType == CompressionType.zstd ||
+            compressionType == CompressionType.xz) {
+          final requested = level ?? file.compressionLevel ?? _data.level;
+          final output = OutputMemoryStream();
+          final source = file.rawContent!.getStream(decompress: false);
+          final at = source.position;
+          try {
+            if (compressionType == CompressionType.zstd) {
+              ZstdEncoder().encodeStream(source, output,
+                  level: requested == null || requested < 1 ? null : requested);
+            } else {
+              XZEncoder().encodeStream(source, output);
+            }
+          } finally {
+            source.setPosition(at);
+          }
+          compressedData = InputMemoryStream(output.getBytes());
+          ownsData = true;
         } else {
           // no compression
           compressedData = file.rawContent?.getStream(decompress: false);
@@ -529,7 +562,26 @@ class ZipEncoder {
               ? ZipFile.zipCompressionBZip2
               : fileData.compression == CompressionType.lzma
                   ? ZipFile.zipCompressionLzma
-                  : ZipFile.zipCompressionStore);
+                  : fileData.compression == CompressionType.zstd
+                      ? ZipFile.zipCompressionZstd
+                      : fileData.compression == CompressionType.xz
+                          ? ZipFile.zipCompressionXz
+                          : ZipFile.zipCompressionStore);
+
+  List<int> _getUtExtraData(_ZipFileData fileData) {
+    final seconds = fileData.modified % 0x100000000;
+    return [
+      0x55,
+      0x54,
+      5,
+      0,
+      1,
+      seconds % 256,
+      seconds ~/ 0x100 % 256,
+      seconds ~/ 0x10000 % 256,
+      seconds ~/ 0x1000000,
+    ];
+  }
 
   List<int> _getAexExtraData(_ZipFileData fileData) {
     // https://www.winzip.com/en/support/aes-encryption/#zip-format
@@ -598,6 +650,7 @@ class ZipEncoder {
     if (password != null) {
       extra.addAll(_getAexExtraData(fileData));
     }
+    extra.addAll(_getUtExtraData(fileData));
 
     final compressedData = fileData.compressedData;
 
@@ -729,6 +782,7 @@ class ZipEncoder {
       if (password != null) {
         extraField.addAll(_getAexExtraData(fileData));
       }
+      extraField.addAll(_getUtExtraData(fileData));
 
       final fileComment = fileData.comment ?? '';
 

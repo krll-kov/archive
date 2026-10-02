@@ -320,6 +320,103 @@ void main() async {
       }
     });
 
+    test('an MS-DOS directory without a trailing slash is a directory',
+        () async {
+      final bytes = _rawZip([
+        _RawEntry('def'.codeUnits, 0x0014, 0x10),
+        _RawEntry('def/foo'.codeUnits, 0x0014, 0x20, content: 'foo'.codeUnits),
+        _RawEntry('bar'.codeUnits, 0x0314, 0x81a40010,
+            content: 'bar'.codeUnits),
+        _RawEntry('ghi'.codeUnits, 0x0314, 0x41ed0000),
+        _RawEntry('ghi/baz'.codeUnits, 0x0314, 0x81a40000,
+            content: 'baz'.codeUnits),
+        _RawEntry('dev'.codeUnits, 0x0314, 0x61a40000,
+            content: 'dev'.codeUnits),
+      ]);
+      for (final (verify, throwOnError) in [
+        (false, false),
+        (true, false),
+        (false, true)
+      ]) {
+        final archive = ZipDecoder()
+            .decodeBytes(bytes, verify: verify, throwOnError: throwOnError);
+        expect(archive.find('def')!.isDirectory, isTrue,
+            reason: 'verify $verify, throwOnError $throwOnError');
+        expect(archive.find('def/foo')!.content, 'foo'.codeUnits);
+        expect(archive.find('bar')!.content, 'bar'.codeUnits);
+        expect(archive.find('ghi')!.isDirectory, isTrue);
+        expect(archive.find('dev')!.isDirectory, isFalse);
+      }
+      final dir = Directory.systemTemp.createTempSync('archive-dos-dir-');
+      try {
+        await extractArchiveToDisk(ZipDecoder().decodeBytes(bytes), dir.path);
+        expect(File(p.join(dir.path, 'def', 'foo')).readAsStringSync(), 'foo');
+        expect(File(p.join(dir.path, 'ghi', 'baz')).readAsStringSync(), 'baz');
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('a name without the UTF-8 flag is CP437 unless it is valid UTF-8', () {
+      List<int> unicodePath(List<int> header, String name,
+          {int crc = 0, int version = 1}) {
+        final utf = utf8.encode(name);
+        return (ByteData(9)
+                  ..setUint16(0, 0x7075, Endian.little)
+                  ..setUint16(2, 5 + utf.length, Endian.little)
+                  ..setUint8(4, version)
+                  ..setUint32(5, crc ^ getCrc32(header), Endian.little))
+                .buffer
+                .asUint8List() +
+            utf;
+      }
+
+      final bytes = _rawZip([
+        _RawEntry(
+            [0x99, ...'lf'.codeUnits, 0x84, ...'sser.txt'.codeUnits], 0, 0x20),
+        _RawEntry('?lf?sser2.txt'.codeUnits, 0, 0x20,
+            extra: unicodePath('?lf?sser2.txt'.codeUnits, 'Ölfässer2.txt')),
+        _RawEntry('?lf?sser3.txt'.codeUnits, 0, 0x20,
+            extra: unicodePath('?lf?sser3.txt'.codeUnits, 'Ölfässer3.txt',
+                crc: 1)),
+        _RawEntry(utf8.encode('Ölfässer4.txt'), 0x0314, 0x81a40000),
+        _RawEntry('?lf?sser5.txt'.codeUnits, 0, 0x20,
+            extra: unicodePath('?lf?sser5.txt'.codeUnits, 'Ölfässer5.txt',
+                version: 2)),
+      ]);
+      for (final (verify, throwOnError) in [
+        (false, false),
+        (true, false),
+        (false, true)
+      ]) {
+        expect(
+            ZipDecoder()
+                .decodeBytes(bytes, verify: verify, throwOnError: throwOnError)
+                .map((f) => f.name),
+            [
+              'Ölfässer.txt',
+              'Ölfässer2.txt',
+              '?lf?sser3.txt',
+              'Ölfässer4.txt',
+              '?lf?sser5.txt'
+            ],
+            reason: 'verify $verify, throwOnError $throwOnError');
+      }
+      expect(
+          ZipDecoder(filenameEncoding: latin1)
+              .decodeBytes(bytes)
+              .map((f) => f.name)
+              .first,
+          '\u0099lf\u0084sser.txt');
+      final flagged = ZipEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.string('café.txt', 'x')));
+      expect(
+          ZipDecoder(filenameEncoding: latin1)
+              .decodeBytes(flagged)
+              .map((f) => f.name),
+          ['café.txt']);
+    });
+
     test('EOCD remains covered when approaching the first chunk', () {
       final dir = Directory.systemTemp.createTempSync('archive-first-chunk-');
       addTearDown(() => dir.deleteSync(recursive: true));
@@ -2199,6 +2296,146 @@ void main() async {
       }
     });
 
+    test('an entry that claims 2^63 bytes is re-encoded from the bytes it has',
+        () {
+      const hex = '504b03042d00080000000000000000000000ffffffffffffffff0100140041'
+          '01001000ebffffffffffff7febffffffffffff7f58504b070800000000ffffff'
+          'ffffffffff504b01022d002d00080000000000000000000000ffffffffffffff'
+          'ff0100140000000000000000000000000000004101001000ebffffffffffff7f'
+          'ebffffffffffff7f504b0506000000000100010043000000440000000000';
+      final bytes = Uint8List.fromList([
+        for (var i = 0; i < hex.length; i += 2)
+          int.parse(hex.substring(i, i + 2), radix: 16)
+      ]);
+      final archive = ZipDecoder().decodeBytes(bytes);
+      expect(archive.files.single.content.length, 106);
+      expect(() => ZipEncoder().encodeBytes(archive), returnsNormally);
+    }, testOn: 'vm');
+
+    test('a time outside the DOS range is clamped as libarchive writes it',
+        () async {
+      int seconds(DateTime t) => t.millisecondsSinceEpoch ~/ 1000;
+      final cases = [
+        (-86399, 0x0021, 0x0000),
+        (0, 0x0021, 0x0000),
+        (seconds(DateTime(1979, 12, 31, 23, 59, 59)), 0x0021, 0x0000),
+        (seconds(DateTime(1980)), 0x0021, 0x0000),
+        (seconds(DateTime(1980, 1, 1, 0, 0, 2)), 0x0021, 0x0001),
+        (seconds(DateTime(2107, 12, 31, 23, 59, 59)), 0xff9f, 0xbf7d),
+        (seconds(DateTime(2108)), 0xff9f, 0xbf7d),
+        (seconds(DateTime(2200, 6, 1)), 0xff9f, 0xbf7d),
+      ];
+      final archive = Archive();
+      for (final (i, (time, _, _)) in cases.indexed) {
+        archive.add(ArchiveFile.bytes('$i.txt', [i])..lastModTime = time);
+      }
+      final encoded = {
+        'encodeBytes': ZipEncoder().encodeBytes(archive),
+        'converter': Uint8List.fromList(await Stream.fromIterable(archive.files)
+            .transform(zipCodec.encoder)
+            .expand((b) => b)
+            .toList()),
+      };
+      int? ut(Uint8List? extra) {
+        final view = ByteData.sublistView(extra ?? Uint8List(0));
+        for (var at = 0; at + 4 <= view.lengthInBytes;) {
+          final size = view.getUint16(at + 2, Endian.little);
+          if (view.getUint16(at, Endian.little) == 0x5455) {
+            expect((size, view.getUint8(at + 4)), (5, 1));
+            return view.getUint32(at + 5, Endian.little);
+          }
+          at += 4 + size;
+        }
+        return null;
+      }
+
+      for (final MapEntry(key: how, value: bytes) in encoded.entries) {
+        final files = ZipDecoder().decodeBytes(bytes, verify: true).files;
+        for (final (i, (seconds, date, time)) in cases.indexed) {
+          final zipFile = files[i].rawContent! as ZipFile;
+          expect(
+              (zipFile.lastModFileDate, zipFile.lastModFileTime), (date, time),
+              reason: '$how case $i');
+          expect(ut(zipFile.extraField), seconds % 0x100000000,
+              reason: '$how case $i local');
+          expect(ut(zipFile.header!.extraField), seconds % 0x100000000,
+              reason: '$how case $i central');
+        }
+      }
+      final modified = DateTime(1975, 5, 5);
+      final overridden = ZipDecoder()
+          .decodeBytes(ZipEncoder().encodeBytes(archive, modified: modified))
+          .files
+          .first
+          .rawContent! as ZipFile;
+      expect(ut(overridden.header!.extraField),
+          modified.millisecondsSinceEpoch ~/ 1000);
+      expect((overridden.lastModFileDate, overridden.lastModFileTime),
+          (0x0021, 0x0000));
+    });
+
+    test('zstd and xz entries are decoded and kept by the encoder', () {
+      final a =
+          utf8.encode('The quick brown fox jumps over the lazy dog\n' * 30);
+      final b = List.generate(70000, (i) => (i * 7 + i ~/ 13) & 0xff);
+      for (final (name, type, password) in [
+        ('zstd.zip', CompressionType.zstd, null),
+        ('xz.zip', CompressionType.xz, null),
+        ('xz_aes.zip', CompressionType.xz, 'secret'),
+      ]) {
+        final bytes = File('test/_data/zip/$name').readAsBytesSync();
+        for (final verify in [false, true]) {
+          final archive = ZipDecoder()
+              .decodeBytes(bytes, password: password, verify: verify);
+          expect(archive.files.map((f) => f.name), ['a.txt', 'b.bin'],
+              reason: name);
+          expect(archive.files.map((f) => f.compression), [type, type],
+              reason: name);
+          expect(archive.files.map((f) => f.content), [a, b], reason: name);
+          final out = OutputMemoryStream();
+          ZipDecoder()
+              .decodeBytes(bytes, password: password, verify: verify)
+              .files[1]
+              .writeContent(out);
+          expect(out.getBytes(), b, reason: name);
+        }
+        if (password != null) {
+          continue;
+        }
+        final again = ZipDecoder().decodeBytes(
+            ZipEncoder().encodeBytes(ZipDecoder().decodeBytes(bytes)),
+            verify: true);
+        expect(again.files.map((f) => f.compression), [type, type],
+            reason: name);
+        expect(again.files.map((f) => f.content), [a, b], reason: name);
+      }
+      for (final type in [CompressionType.zstd, CompressionType.xz]) {
+        final archive = Archive()
+          ..add(ArchiveFile.bytes('a.txt', a)..compression = type);
+        final back = ZipDecoder()
+            .decodeBytes(ZipEncoder().encodeBytes(archive), verify: true);
+        expect(back.single.compression, type, reason: '$type');
+        expect(back.single.content, a, reason: '$type');
+        if (type == CompressionType.zstd) {
+          expect((back.single.rawContent! as ZipFile).compressedSize,
+              lessThan(a.length ~/ 4));
+          final sizes = [
+            for (final level in [-1, 1, 9])
+              (ZipDecoder()
+                      .decodeBytes(ZipEncoder().encodeBytes(
+                          Archive()
+                            ..add(ArchiveFile.bytes('b.bin', b)
+                              ..compression = type),
+                          level: level))
+                      .single
+                      .rawContent! as ZipFile)
+                  .compressedSize
+          ];
+          expect(sizes[1], isNot(sizes[2]));
+        }
+      }
+    });
+
     test('encode password', () {
       final archive = Archive();
       final bdata = 'hello world';
@@ -2449,7 +2686,8 @@ void main() async {
         final archive = Archive()
           ..add(ArchiveFile.string('plain.txt', 'x'))
           ..add(ArchiveFile.string('café.txt', 'x'));
-        final decoder = ZipDecoder()..decodeBytes(encoder.encodeBytes(archive));
+        final decoder = ZipDecoder(filenameEncoding: encoder.filenameEncoding)
+          ..decodeBytes(encoder.encodeBytes(archive));
         return {
           for (final h in decoder.directory.fileHeaders)
             h.filename: h.versionMadeBy
@@ -2495,6 +2733,68 @@ List<String> _walkLocalHeaders(Uint8List bytes) {
     at += 30 + nameLength + extraLength + compressed;
   }
   return names;
+}
+
+class _RawEntry {
+  _RawEntry(this.name, this.madeBy, this.attributes,
+      {this.content = const [], this.extra = const []});
+
+  final List<int> name;
+  final int madeBy;
+  final int attributes;
+  final List<int> content;
+  final List<int> extra;
+}
+
+Uint8List _rawZip(List<_RawEntry> entries) {
+  final out = BytesBuilder();
+  final central = BytesBuilder();
+  for (final e in entries) {
+    final crc = getCrc32(e.content);
+    central
+      ..add((ByteData(46)
+            ..setUint32(0, 0x02014b50, Endian.little)
+            ..setUint16(4, e.madeBy, Endian.little)
+            ..setUint16(6, 10, Endian.little)
+            ..setUint32(16, crc, Endian.little)
+            ..setUint32(20, e.content.length, Endian.little)
+            ..setUint32(24, e.content.length, Endian.little)
+            ..setUint16(28, e.name.length, Endian.little)
+            ..setUint16(30, e.extra.length, Endian.little)
+            ..setUint32(38, e.attributes, Endian.little)
+            ..setUint32(42, out.length, Endian.little))
+          .buffer
+          .asUint8List())
+      ..add(e.name)
+      ..add(e.extra);
+    out
+      ..add((ByteData(30)
+            ..setUint32(0, 0x04034b50, Endian.little)
+            ..setUint16(4, 10, Endian.little)
+            ..setUint32(14, crc, Endian.little)
+            ..setUint32(18, e.content.length, Endian.little)
+            ..setUint32(22, e.content.length, Endian.little)
+            ..setUint16(26, e.name.length, Endian.little)
+            ..setUint16(28, e.extra.length, Endian.little))
+          .buffer
+          .asUint8List())
+      ..add(e.name)
+      ..add(e.extra)
+      ..add(e.content);
+  }
+  final centralOffset = out.length;
+  final centralLength = central.length;
+  out
+    ..add(central.takeBytes())
+    ..add((ByteData(22)
+          ..setUint32(0, 0x06054b50, Endian.little)
+          ..setUint16(8, entries.length, Endian.little)
+          ..setUint16(10, entries.length, Endian.little)
+          ..setUint32(12, centralLength, Endian.little)
+          ..setUint32(16, centralOffset, Endian.little))
+        .buffer
+        .asUint8List());
+  return out.takeBytes();
 }
 
 int _centralDirectoryOffset(Uint8List bytes) {

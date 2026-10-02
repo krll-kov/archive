@@ -67,15 +67,31 @@ Future<List<List<Object>>> _stream(Uint8List archive, int piece) async {
   await for (final entry
       in _pieces(archive, piece).transform(tarCodec.decoder)) {
     final bytes = <int>[];
+    var length = 0;
+    var crc = 0;
     await for (final part in entry.content) {
-      bytes.addAll(part);
+      length += part.length;
+      crc = getCrc32(part, crc);
+      if (length <= _heldContent) {
+        bytes.addAll(part);
+      }
     }
     held.add(entry.isDirectory
         ? [entry.name, 0, <int>[]]
-        : [entry.name, entry.size, bytes]);
+        : [
+            entry.name,
+            entry.size,
+            length <= _heldContent ? bytes : '$length bytes, CRC32 $crc'
+          ]);
   }
   return held;
 }
+
+const _heldContent = 1 << 20;
+
+Object _bytes(List<int> bytes) => bytes.length <= _heldContent
+    ? bytes.toList()
+    : '${bytes.length} bytes, CRC32 ${getCrc32(bytes)}';
 
 List<List<Object>> _whole(Uint8List archive) => TarDecoder()
     .decodeBytes(archive)
@@ -83,7 +99,7 @@ List<List<Object>> _whole(Uint8List archive) => TarDecoder()
     .map((f) => <Object>[
           f.name,
           f.size,
-          f.isFile ? (f.content as List<int>).toList() : <int>[],
+          f.isFile ? _bytes(f.content) : <int>[],
         ])
     .toList();
 

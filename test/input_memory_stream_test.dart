@@ -1,8 +1,18 @@
+import 'dart:typed_data';
+
 import 'package:archive/archive.dart';
 import 'package:test/test.dart';
 
 void main() {
   group('InputStreamMemory', () {
+    test('a length past the buffer is cut to the buffer near 2^63', () {
+      final input = InputMemoryStream(Uint8List(10),
+          offset: 2, length: 0x7fffffffffffffff);
+      expect(input.length, 8);
+      final whole = InputMemoryStream(Uint8List(10))..skip(3);
+      expect(whole.readBytes(0x7fffffffffffffff).length, 7);
+    }, testOn: 'vm');
+
     test('empty', () {
       final input = InputMemoryStream.empty();
       expect(input.length, equals(0));
