@@ -382,6 +382,10 @@ class ZipEncoder {
         if (compressionType == CompressionType.lzma) {
           compressionType = CompressionType.deflate;
         }
+        if (compressionType == CompressionType.xz &&
+            (file.rawContent?.length ?? 0) == 0) {
+          compressionType = CompressionType.none;
+        }
         final streamedDeflate = streamed &&
             compressionType == CompressionType.deflate &&
             password == null;

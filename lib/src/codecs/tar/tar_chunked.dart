@@ -10,6 +10,7 @@ import '../../util/chunked_sink.dart';
 import '../../util/decode_guard.dart';
 import '../../util/input_memory_stream.dart';
 import '../tar_encoder.dart';
+import '_tar_entry_file.dart';
 import 'tar_file.dart';
 import 'tar_sparse.dart';
 
@@ -233,7 +234,7 @@ class TarEntry {
 
   TarEntry._(TarFile file, this._reader, {Uint8List? head, int read = 0})
       : name = file.filename,
-        type = file.sparse != null
+        type = file.sparse != null || file.typeFlag == TarFile.gnuSparse
             ? TarEntryType.file
             : TarEntryType.of(file.typeFlag) == TarEntryType.file &&
                     file.filename.endsWith('/')
@@ -286,6 +287,29 @@ class TarEntry {
     }
     _taken = true;
     return _detached(_pieces());
+  }
+
+  Future<void> writeToFile(String path) async {
+    if (_done) {
+      throw StateError(
+          'tar: the archive has moved past $name, its content is gone');
+    }
+    if (_taken) {
+      throw StateError('tar: the content of $name was already read');
+    }
+    _taken = true;
+    final settled = Completer<void>();
+    _settled = settled.future;
+    _finish = () {
+      if (!settled.isCompleted) {
+        settled.complete();
+      }
+    };
+    try {
+      await writeTarEntryFile(path, _parts());
+    } finally {
+      _finish!();
+    }
   }
 
   /// Canceling [pieces] is synchronous so you can easily time out on a
@@ -346,6 +370,30 @@ class TarEntry {
       end = offset + length;
     }
     yield* _holes(sparse.realSize - end);
+  }
+
+  Stream<Object> _parts() async* {
+    if (_gone) {
+      throw StateError(
+          'tar: the archive has moved past $name, its content is gone');
+    }
+    final head = _head;
+    if (head != null && head.isNotEmpty) {
+      _head = null;
+      yield head;
+    }
+    final sparse = _sparse;
+    if (sparse == null) {
+      yield* _stream(_left);
+      return;
+    }
+    var end = 0;
+    for (final (offset, length) in sparse.regions) {
+      yield offset - end;
+      yield* _stream(length);
+      end = offset + length;
+    }
+    yield sparse.realSize - end;
   }
 
   Stream<Uint8List> _stream(int count) async* {

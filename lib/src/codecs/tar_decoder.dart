@@ -152,18 +152,18 @@ class TarDecoder {
         filename.endsWith('/');
     if (tf.isFile && !v7Directory && tf.typeFlag != 'D') {
       final sparse = tf.sparse;
+      final sparseContent = storeData && sparse != null
+          ? FileContentSparse(
+              tf.rawContent!.subset(
+                  position: sparse.mapLength,
+                  length: tf.fileSize - sparse.mapLength),
+              sparse.regions,
+              sparse.realSize)
+          : null;
       final file = !storeData
           ? ArchiveFile.noData(filename)
-          : sparse != null
-              ? ArchiveFile.file(
-                  filename,
-                  sparse.realSize,
-                  FileContentSparse(
-                      tf.rawContent!.subset(
-                          position: sparse.mapLength,
-                          length: tf.fileSize - sparse.mapLength),
-                      sparse.regions,
-                      sparse.realSize))
+          : sparseContent != null
+              ? ArchiveFile.file(filename, sparseContent.length, sparseContent)
               : ArchiveFile.stream(filename, tf.rawContent!);
 
       file.mode = tf.mode;

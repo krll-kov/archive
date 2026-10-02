@@ -295,10 +295,16 @@ class ZipFile extends FileContent {
       if (_rawContent!.length <= 0) {
         _encryptionType = ZipEncryptionMode.none;
       } else {
-        if (_encryptionType == ZipEncryptionMode.zipCrypto) {
-          _rawContent = _decodeZipCrypto(_rawContent!);
-        } else if (_encryptionType == ZipEncryptionMode.aes) {
-          _rawContent = _decodeAes(_rawContent!);
+        final start = _rawContent!.position;
+        try {
+          if (_encryptionType == ZipEncryptionMode.zipCrypto) {
+            _rawContent = _decodeZipCrypto(_rawContent!);
+          } else if (_encryptionType == ZipEncryptionMode.aes) {
+            _rawContent = _decodeAes(_rawContent!);
+          }
+        } catch (_) {
+          _rawContent!.setPosition(start);
+          rethrow;
         }
         _encryptionType = ZipEncryptionMode.none;
       }

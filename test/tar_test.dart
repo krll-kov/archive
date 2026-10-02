@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -312,6 +312,46 @@ void main() {
       }
     });
 
+    test('an entry whose stream was read from is tarred as for memory',
+        testOn: 'vm', () async {
+      final directory = Directory.systemTemp.createTempSync('archive-tar-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final data = Uint8List.fromList(List.generate(3000, (i) => i * 7 % 251));
+      final source = File(p.join(directory.path, 'source.bin'))
+        ..writeAsBytesSync(data);
+      final contents = <String, List<int>>{};
+      for (final input in [
+        InputFileStream(source.path),
+        InputMemoryStream(data),
+      ]) {
+        addTearDown(input.closeSync);
+        final kind = input is InputFileStream ? 'file' : 'memory';
+        final entry = ArchiveFile.stream('entry', input);
+        input.readBytes(4);
+        final streamed = await tarCodec.encoder
+            .bind(
+                Stream.fromIterable([entry, ArchiveFile.string('after', 'a')]))
+            .expand((piece) => piece)
+            .toList();
+        for (final (name, tar) in [
+          (
+            'encodeBytes',
+            TarEncoder().encodeBytes(Archive()
+              ..add(entry)
+              ..add(ArchiveFile.string('after', 'a')))
+          ),
+          ('tarCodec', streamed),
+        ]) {
+          final files = TarDecoder().decodeBytes(tar, verify: true).files;
+          expect(files.map((f) => f.name), ['entry', 'after'],
+              reason: '$kind, $name');
+          contents['$kind $name'] = files.first.content;
+        }
+      }
+      expect(contents['file encodeBytes'], contents['memory encodeBytes']);
+      expect(contents['file tarCodec'], contents['memory tarCodec']);
+    });
+
     test('a hard link from an old tar has no data whatever its size', () async {
       for (final magic in ['', 'ustar  \u0000']) {
         final bytes = Uint8List.fromList([
@@ -600,6 +640,44 @@ void main() {
       }
     });
 
+    test('a cut sparse file gives the regions that arrived', () {
+      final data = [...List.filled(512, 0x61), ...List.filled(512, 0x62)];
+      final expanded = [
+        ...List.filled(512, 0x61),
+        ...Uint8List(1024),
+        ...List.filled(512, 0x62)
+      ];
+      final gnu = [
+        ..._tarHeader('gnu.bin', 'S', 1024, magic: 'ustar  \u0000', fields: {
+          386: '00000000000\u0000',
+          398: '00000001000\u0000',
+          410: '00000003000\u0000',
+          422: '00000001000\u0000',
+          483: '00000004000\u0000',
+        }),
+        ...data,
+      ];
+      for (final (arrived, prefix) in [
+        (0, 0),
+        (100, 100),
+        (512, 1536),
+        (600, 1624)
+      ]) {
+        final bytes = Uint8List.fromList(gnu.sublist(0, 512 + arrived));
+        final file = TarDecoder().decodeBytes(bytes).single;
+        final reason = '$arrived bytes of data';
+        final written = OutputMemoryStream();
+        file.writeContent(written);
+        final content = file.content;
+        expect(file.size, prefix, reason: reason);
+        expect(content, expanded.take(prefix), reason: reason);
+        expect(written.getBytes(), content, reason: reason);
+        expect(() => TarDecoder().decodeBytes(bytes, throwOnError: true),
+            throwsA(isA<ArchiveException>()),
+            reason: reason);
+      }
+    });
+
     test('a sparse map that does not fit leaves the entry as stored', () async {
       final data = [...List.filled(512, 0x61), ...List.filled(512, 0x62)];
       List<int> pax(String type, Map<String, String> records) {
@@ -706,6 +784,28 @@ void main() {
       expect(file.content, isEmpty);
       expect(() => TarDecoder().decodeBytes(bytes, verify: true),
           throwsA(isA<ArchiveException>()));
+    });
+
+    test('a GNU sparse entry stored as is streams as a file', () async {
+      final bytes = Uint8List.fromList([
+        ..._tarHeader('gnu.bin', 'S', 1024, magic: 'ustar  \u0000', fields: {
+          386: '00000000000\u0000',
+          398: '00000001000\u0000',
+          410: '00000000400\u0000',
+          422: '00000001000\u0000',
+          483: '00000004000\u0000',
+        }),
+        ...List.filled(1024, 0x61),
+        ...Uint8List(1024),
+      ]);
+      expect(TarDecoder().decodeBytes(bytes).single.isFile, isTrue);
+      final types = await Stream<List<int>>.value(bytes)
+          .transform(tarCodec.decoder)
+          .asyncMap((e) async {
+        await e.content.drain<void>();
+        return e.type;
+      }).toList();
+      expect(types, [TarEntryType.file]);
     });
 
     test('a sparse map is read the way libarchive reads it', () async {
@@ -1028,6 +1128,132 @@ void main() {
           .sublist(0, 3122);
       expect(() => TarDecoder().decodeBytes(truncated, verify: true),
           throwsA(isA<ArchiveException>()));
+    });
+
+    test('a sparse entry streams in pieces what its content holds',
+        testOn: 'vm', () async {
+      final data = List.generate(950, (i) => (i * 7 + 3) % 251);
+      final expanded = Uint8List(3000)
+        ..setRange(100, 400, data)
+        ..setRange(1000, 1600, data, 300)
+        ..setRange(2500, 2550, data, 900);
+      final bytes = Uint8List.fromList([
+        ..._tarHeader('gnu.bin', 'S', 950, magic: 'ustar  \u0000', fields: {
+          386: '00000000144\u0000',
+          398: '00000000454\u0000',
+          410: '00000001750\u0000',
+          422: '00000001130\u0000',
+          434: '00000004704\u0000',
+          446: '00000000062\u0000',
+          483: '00000005670\u0000',
+        }),
+        ..._tarBlocks(data),
+        ...Uint8List(1024),
+      ]);
+      final directory = Directory.systemTemp.createTempSync('archive-tar-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final path = p.join(directory.path, 'sparse.tar');
+      File(path).writeAsBytesSync(bytes);
+      final input = InputFileStream(path);
+      addTearDown(input.closeSync);
+      for (final (kind, archive) in [
+        ('memory', TarDecoder().decodeBytes(bytes)),
+        ('file', TarDecoder().decodeStream(input)),
+      ]) {
+        final file = archive.single;
+        final written = p.join(directory.path, '$kind.bin');
+        final output = OutputFileStream(written);
+        file.writeContent(output, freeMemory: false);
+        expect(output.length, expanded.length, reason: '$kind file');
+        output.closeSync();
+        expect(File(written).readAsBytesSync(), expanded, reason: '$kind file');
+        final ram = RamFileHandle.asWritableRamBuffer();
+        final toRam = OutputFileStream.toRamFile(ram);
+        file.writeContent(toRam, freeMemory: false);
+        toRam.flush();
+        final back = Uint8List(ram.length);
+        ram.readInto(back);
+        expect(back, expanded, reason: '$kind ram');
+        expect(file.content, expanded, reason: kind);
+        for (final piece in [1, 7, 100, 1000, 4096]) {
+          final stream = file.rawContent!.getStream();
+          final read = BytesBuilder();
+          final chunk = Uint8List(piece);
+          while (true) {
+            final got = stream.readInto(chunk, 0, piece);
+            if (got <= 0) {
+              break;
+            }
+            read.add(Uint8List.sublistView(chunk, 0, got));
+          }
+          expect(read.takeBytes(), expanded, reason: '$kind, $piece');
+        }
+        final stream = file.rawContent!.getStream();
+        for (final at in [0, 99, 101, 399, 999, 1003, 1599, 2499, 2549, 2995]) {
+          expect(stream.subset(position: at, length: 7).toUint8List(),
+              expanded.sublist(at, at + 7 > 3000 ? 3000 : at + 7),
+              reason: '$kind, subset $at');
+          stream.setPosition(at);
+          expect(stream.readBytes(7).toUint8List(),
+              expanded.sublist(at, at + 7 > 3000 ? 3000 : at + 7),
+              reason: '$kind, readBytes $at');
+          stream.setPosition(at);
+          expect(stream.readByte(), expanded[at], reason: '$kind, byte $at');
+        }
+        expect(
+            stream
+                .subset(position: 900, length: 1000)
+                .subset(position: 50, length: 300)
+                .toUint8List(),
+            expanded.sublist(950, 1250),
+            reason: kind);
+        stream.setPosition(500);
+        expect(stream.toUint8List(), expanded.sublist(500), reason: kind);
+        expect(stream.position, 500, reason: kind);
+        final zipped =
+            ZipDecoder().decodeBytes(ZipEncoder().encodeBytes(archive));
+        expect(zipped.single.content, expanded, reason: '$kind zip');
+      }
+      final out = p.join(directory.path, 'out');
+      await extractFileToDisk(path, out);
+      expect(File(p.join(out, 'gnu.bin')).readAsBytesSync(), expanded);
+      final two = Uint8List.fromList([
+        ...bytes.sublist(0, bytes.length - 1024),
+        ...TarEncoder().encodeBytes(
+            Archive()..add(ArchiveFile.string('after.txt', 'after'))),
+      ]);
+      final names = <String>[];
+      await for (final entry in Stream<List<int>>.fromIterable(
+              [two.sublist(0, 700), two.sublist(700, 1500), two.sublist(1500)])
+          .transform(tarCodec.decoder)) {
+        await entry.writeToFile(p.join(directory.path, 'codec_${entry.name}'));
+        expect(() => entry.content, throwsA(isA<StateError>()));
+        names.add(entry.name);
+      }
+      expect(names, ['gnu.bin', 'after.txt']);
+      expect(File(p.join(directory.path, 'codec_gnu.bin')).readAsBytesSync(),
+          expanded);
+      expect(File(p.join(directory.path, 'codec_after.txt')).readAsStringSync(),
+          'after');
+      final pending = <Future<void>>[];
+      await for (final entry in Stream<List<int>>.fromIterable(
+              [two.sublist(0, 700), two.sublist(700, 1500), two.sublist(1500)])
+          .transform(tarCodec.decoder)) {
+        pending.add(
+            entry.writeToFile(p.join(directory.path, 'later_${entry.name}')));
+      }
+      await Future.wait(pending);
+      expect(File(p.join(directory.path, 'later_gnu.bin')).readAsBytesSync(),
+          expanded);
+      expect(File(p.join(directory.path, 'later_after.txt')).readAsStringSync(),
+          'after');
+      final cut = two.sublist(0, 512 + 600);
+      await expectLater(() async {
+        await for (final entry
+            in Stream<List<int>>.value(cut).transform(tarCodec.decoder)) {
+          await entry.writeToFile(p.join(directory.path, 'cut.bin'));
+        }
+      }, throwsA(isA<ArchiveException>()));
     });
 
     test('invalid archive', () {

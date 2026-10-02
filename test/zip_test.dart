@@ -1598,6 +1598,88 @@ void main() async {
       }
     });
 
+    test('a ZipCrypto entry read again with a wrong password throws again',
+        testOn: 'vm', () {
+      final bytes = File('test/_data/zip/zipCrypto.zip').readAsBytesSync();
+      for (final (verify, throwOnError) in [
+        (false, false),
+        (false, true),
+        (true, false)
+      ]) {
+        final entry = ZipDecoder()
+            .decodeBytes(bytes,
+                password: 'wrong', verify: verify, throwOnError: throwOnError)
+            .findFile('hello.txt')!;
+        for (var read = 0; read < 3; read++) {
+          final reason =
+              'verify $verify, throwOnError $throwOnError, read $read';
+          expect(entry.readBytes, throwsA(isA<ArchivePasswordException>()),
+              reason: reason);
+          expect(() => entry.writeContent(OutputMemoryStream()),
+              throwsA(isA<ArchivePasswordException>()),
+              reason: reason);
+        }
+      }
+    });
+
+    test('an empty entry asked for xz is stored as 7-Zip stores it',
+        testOn: 'vm', () async {
+      Archive archive() => Archive()
+        ..add(ArchiveFile.bytes('empty.bin', [])
+          ..compression = CompressionType.xz)
+        ..add(ArchiveFile.stream('stream.bin', InputMemoryStream(Uint8List(0)))
+          ..compression = CompressionType.xz)
+        ..add(ArchiveFile.bytes('one.bin', [0x61])
+          ..compression = CompressionType.xz);
+      final encoded = {
+        'encodeBytes': ZipEncoder().encodeBytes(archive()),
+        'streamed': ZipEncoder(streamed: true).encodeBytes(archive()),
+        'password': ZipEncoder(password: 'pw').encodeBytes(archive()),
+        'converter': Uint8List.fromList(
+            await Stream.fromIterable(archive().files)
+                .transform(zipCodec.encoder)
+                .expand((b) => b)
+                .toList()),
+      };
+      for (final MapEntry(key: name, value: bytes) in encoded.entries) {
+        final decoder = ZipDecoder();
+        final files = decoder.decodeBytes(bytes, password: 'pw', verify: true);
+        final methods = [
+          for (final header in decoder.directory.fileHeaders)
+            header.file!.compressionMethod
+        ];
+        expect(methods,
+            [CompressionType.none, CompressionType.none, CompressionType.xz],
+            reason: name);
+        expect(files.map((f) => f.content.length), [0, 0, 1], reason: name);
+      }
+    });
+
+    test('an AES entry too short for its header throws on every read',
+        testOn: 'vm', () {
+      final bytes = ZipEncoder(password: 'pw').encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('a.txt', [0x41])
+          ..compression = CompressionType.none));
+      final data = ByteData.sublistView(bytes);
+      final central = data.getUint32(bytes.length - 6, Endian.little);
+      data
+        ..setUint32(18, 20, Endian.little)
+        ..setUint32(central + 20, 20, Endian.little);
+      for (final (verify, throwOnError) in [(false, true), (true, false)]) {
+        final archive = ZipDecoder().decodeBytes(bytes,
+            password: 'pw', verify: verify, throwOnError: throwOnError);
+        for (var read = 0; read < 3; read++) {
+          final reason =
+              'verify $verify, throwOnError $throwOnError, read $read';
+          expect(archive.first.readBytes, throwsA(isA<ArchiveException>()),
+              reason: reason);
+          expect(() => ZipEncoder().encodeBytes(archive),
+              throwsA(isA<ArchiveException>()),
+              reason: reason);
+        }
+      }
+    });
+
     test('empty directory', () {
       final archive = Archive();
       archive.add(ArchiveFile.directory('empty'));

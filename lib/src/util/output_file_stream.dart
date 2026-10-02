@@ -147,6 +147,28 @@ class OutputFileStream extends OutputStream {
     _length += length;
   }
 
+  /// Writing sparse holes as zeros filled disk, 8 GiB from 2 KB tar. On disk
+  /// we seek past them, so sparse file systems allocate no blocks
+  void writeZeros(int count) {
+    if (count <= 0) {
+      return;
+    }
+    final handle = _fileHandle;
+    if (handle is FileHandle && handle.isOpen) {
+      flush();
+      handle.position += count - 1;
+      _length += count - 1;
+      writeByte(0);
+      return;
+    }
+    final zeros = Uint8List(count < 1 << 16 ? count : 1 << 16);
+    while (count > 0) {
+      final n = count < zeros.length ? count : zeros.length;
+      writeBytes(zeros, length: n);
+      count -= n;
+    }
+  }
+
   @override
   void writeStream(InputStream stream) {
     final held = stream.position;

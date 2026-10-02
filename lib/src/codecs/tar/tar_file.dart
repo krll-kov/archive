@@ -440,7 +440,8 @@ class TarFile {
   /// altering the read position of the original input
   InputStream? get contentStream {
     if (_content != null) {
-      return _content!.getStream().subset();
+      final stream = _content!.getStream();
+      return stream.subset(position: stream.position);
     }
     return _rawContent?.subset();
   }
