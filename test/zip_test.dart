@@ -2554,6 +2554,68 @@ void main() async {
       }
     });
 
+    test('a zstd entry takes the zstd levels above 9', () {
+      final b = List.generate(70000, (i) => (i * 7 + i ~/ 13) & 0xff);
+      for (final level in [19, 22]) {
+        final expected = ZstdEncoder().encodeBytes(b, level: level).length;
+        final byArgument = ZipDecoder().decodeBytes(
+            ZipEncoder().encodeBytes(
+                Archive()
+                  ..add(ArchiveFile.bytes('b.bin', b)
+                    ..compression = CompressionType.zstd),
+                level: level),
+            verify: true);
+        final byFile = ZipDecoder().decodeBytes(
+            ZipEncoder().encodeBytes(Archive()
+              ..add(ArchiveFile.bytes('b.bin', b)
+                ..compression = CompressionType.zstd
+                ..compressionLevel = level)),
+            verify: true);
+        for (final back in [byArgument, byFile]) {
+          expect(back.single.content, b, reason: '$level');
+          expect((back.single.rawContent! as ZipFile).compressedSize, expected,
+              reason: '$level');
+        }
+      }
+      expect(
+          () => ZipEncoder().encodeBytes(
+              Archive()
+                ..add(ArchiveFile.bytes('b.bin', b)
+                  ..compression = CompressionType.zstd),
+              level: 23),
+          throwsArgumentError);
+      expect(
+          () => ZipEncoder().encodeBytes(
+              Archive()..add(ArchiveFile.bytes('b.bin', b)),
+              level: 19),
+          throwsArgumentError);
+    });
+
+    test('a small entry does not hold the output buffer', () {
+      final data = utf8.encode('alpha beta gamma');
+      for (final type in [
+        CompressionType.zstd,
+        CompressionType.xz,
+        CompressionType.bzip2
+      ]) {
+        final zip = ZipEncoder().encodeBytes(
+            Archive()..add(ArchiveFile.bytes('a.txt', data)..compression = type));
+        final entry = ZipDecoder().decodeBytes(zip).single;
+        expect(entry.compression, type);
+        final out = entry.readBytes()!;
+        expect(out, data, reason: '$type');
+        expect(out.buffer.lengthInBytes, data.length, reason: '$type');
+      }
+      final lzma = ZipDecoder()
+          .decodeBytes(File('test/_data/zip/lzma_near.zip').readAsBytesSync())
+          .files
+          .firstWhere((file) => file.isFile);
+      expect(lzma.compression, CompressionType.lzma);
+      final out = lzma.readBytes()!;
+      expect(out.length, 1024);
+      expect(out.buffer.lengthInBytes, out.length);
+    });
+
     test('encode password', () {
       final archive = Archive();
       final bdata = 'hello world';

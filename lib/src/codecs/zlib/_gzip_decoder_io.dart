@@ -98,7 +98,7 @@ class _GZipDecoder extends ZLibDecoderBase {
     if (partial.length > 0) {
       out = partial.getBytes();
     }
-    if (out.length < declared) {
+    if (out.length < declared || out.length < out.buffer.lengthInBytes >> 1) {
       out = Uint8List.fromList(out);
     }
     return out;

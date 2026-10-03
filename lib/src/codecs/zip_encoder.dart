@@ -22,6 +22,7 @@ import 'zip/zip_file.dart';
 import 'zip/zip_file_header.dart';
 import 'zlib/_zlib_encoder.dart';
 import 'zlib/deflate.dart';
+import 'zstd/zstd_level_params.dart';
 import 'zstd_encoder.dart';
 
 class _Crc32Sink implements Sink<List<int>> {
@@ -394,8 +395,10 @@ class ZipEncoder {
         }
 
         final chosen = level ?? file.compressionLevel ?? _data.level ?? 6;
-        if (chosen < -1 || chosen > 9) {
-          throw ArgumentError.value(chosen, 'level', 'Must be -1 to 9');
+        final maxLevel =
+            compressionType == CompressionType.zstd ? zstdMaxLevel : 9;
+        if (chosen < -1 || chosen > maxLevel) {
+          throw ArgumentError.value(chosen, 'level', 'Must be -1 to $maxLevel');
         }
         // An entry with no content at all cannot be deflated: a zero length
         // deflate stream is two bytes, not none, and a reader given neither

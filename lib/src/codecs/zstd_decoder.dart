@@ -49,15 +49,20 @@ class ZstdDecoder {
         _decode(bytes, verify, sink, null);
         return true;
       });
-      return sink.getBytes();
+      return _exact(sink.getBytes());
     }
     final parts = <Uint8List>[];
     guardDecode('zstd', verify, throwOnError, () {
       _decode(bytes, verify, null, parts);
       return true;
     });
-    return parts.isEmpty ? Uint8List(0) : parts[0];
+    return parts.isEmpty ? Uint8List(0) : _exact(parts[0]);
   }
+
+  static Uint8List _exact(Uint8List bytes) =>
+      bytes.length < bytes.buffer.lengthInBytes >> 1
+          ? Uint8List.fromList(bytes)
+          : bytes;
 
   /// How many frames have content, without decoding any of them. Anything the
   /// scan cannot parse counts as one, which keeps the decode itself the

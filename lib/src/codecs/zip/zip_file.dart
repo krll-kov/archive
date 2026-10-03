@@ -467,7 +467,7 @@ class ZipFile extends FileContent {
       final output = OutputMemoryStream();
       final savePos = _rawContent!.position;
       final ok = BZip2Decoder().decodeStream(_rawContent!, output);
-      final content = output.getBytes();
+      final content = _exact(output.getBytes());
       _rawContent!.setPosition(savePos);
       if (!ok) {
         throw ArchiveException('Invalid bzip2 data for $filename');
@@ -476,12 +476,12 @@ class ZipFile extends FileContent {
     } else if (compressionMethod == CompressionType.lzma) {
       final output = OutputMemoryStream();
       _decodeLzma(output);
-      return InputMemoryStream(output.getBytes());
+      return InputMemoryStream(_exact(output.getBytes()));
     } else if (compressionMethod == CompressionType.zstd ||
         compressionMethod == CompressionType.xz) {
       final output = OutputMemoryStream();
       _decodeZstdOrXz(output);
-      return InputMemoryStream(output.getBytes());
+      return InputMemoryStream(_exact(output.getBytes()));
     } else {
       // Copying stored entry took 1.3 GB of RAM for 1 GB entry, so we read file
       // on demand and verify buffers at most 1 MB. InputFileStream.subset()
@@ -491,6 +491,11 @@ class ZipFile extends FileContent {
   }
 
   static const _maxVerifyBufferSize = 1 << 20;
+
+  static Uint8List _exact(Uint8List bytes) =>
+      bytes.length < bytes.buffer.lengthInBytes >> 1
+          ? Uint8List.fromList(bytes)
+          : bytes;
 
   static int _crc32Of(InputStream stream) {
     if (stream is InputMemoryStream) {

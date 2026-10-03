@@ -71,6 +71,9 @@ class _ZLibDecoder extends ZLibDecoderBase {
     if (partial.length > 0) {
       out = partial.getBytes();
     }
+    if (out.length < out.buffer.lengthInBytes >> 1) {
+      out = Uint8List.fromList(out);
+    }
     return out;
   }
 

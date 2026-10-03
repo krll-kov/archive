@@ -165,6 +165,23 @@ void main() {
               .decodeBytes(bytes, throwOnError: true),
           throwsA(isA<ArchiveException>()));
     });
+
+    test('a small decodeBytes result does not hold the output buffer', () {
+      final data = Uint8List.fromList('alpha beta gamma'.codeUnits);
+      final sized = ZstdEncoder().encodeBytes(data);
+      final unsized = const ZstdEncoderConverter().convert(data);
+      expect(ZstdDecoder().uncompressedSize(sized), data.length);
+      expect(ZstdDecoder().uncompressedSize(unsized), isNull);
+      for (final (name, frames) in [
+        ('sized', sized),
+        ('unsized', unsized),
+        ('two frames', Uint8List.fromList([...sized, ...sized])),
+      ]) {
+        final out = ZstdDecoder().decodeBytes(frames);
+        expect(out.length, name == 'two frames' ? 32 : 16, reason: name);
+        expect(out.buffer.lengthInBytes, out.length, reason: name);
+      }
+    });
   });
 
   // A frame is rejected by whichever part of it stops making sense first, and

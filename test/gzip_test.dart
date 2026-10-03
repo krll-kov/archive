@@ -1158,5 +1158,21 @@ void main() {
       sink.sink.close();
       expect(chunks!.expand((c) => c).toList(), want);
     });
+
+    test('a small decodeBytes result does not hold the output buffer', () {
+      final data = [1, 2, 3, 4, 5];
+      final packed = const GZipEncoder().encodeBytes(data);
+      for (final (verify, throwOnError) in [
+        (false, false),
+        (false, true),
+        (true, false)
+      ]) {
+        final out = GZipDecoder()
+            .decodeBytes(packed, verify: verify, throwOnError: throwOnError);
+        expect(out, data);
+        expect(out.buffer.lengthInBytes, data.length,
+            reason: 'verify $verify, throwOnError $throwOnError');
+      }
+    });
   });
 }

@@ -1637,6 +1637,46 @@ void main() {
       expect(seen, ['a.bin', 'link', 'c.bin']);
     });
 
+    test(
+        'the callback gets each entry once when a duplicate name comes before '
+        'a zip link that cannot be read', () async {
+      final directory = Directory.systemTemp.createTempSync('archive-extract-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final output = OutputMemoryStream();
+      final encoder = ZipEncoder()..startEncode(output);
+      encoder
+        ..add(ArchiveFile.bytes('a.bin', content()))
+        ..add(ArchiveFile.bytes('a.bin', content()))
+        ..add(ArchiveFile.string('link', 'a.bin' * 600))
+        ..add(ArchiveFile.bytes('c.bin', content()))
+        ..endEncode();
+      final zip = output.getBytes();
+      final damaged = Uint8List.fromList(zip);
+      final view = ByteData.sublistView(damaged);
+      final link = (ZipDecoder()..decodeBytes(zip)).directory.fileHeaders[2];
+      final data = link.localHeaderOffset +
+          30 +
+          view.getUint16(link.localHeaderOffset + 26, Endian.little) +
+          view.getUint16(link.localHeaderOffset + 28, Endian.little);
+      damaged.fillRange(data, data + 4, 0xff);
+      var at = view.getUint32(zip.length - 6, Endian.little);
+      for (var skipped = 0; skipped < 2; skipped++) {
+        at += 46 +
+            view.getUint16(at + 28, Endian.little) +
+            view.getUint16(at + 30, Endian.little) +
+            view.getUint16(at + 32, Endian.little);
+      }
+      view.setUint8(at + 5, 3);
+      view.setUint32(at + 38, 0xa1ff << 16, Endian.little);
+      final input = File(p.join(directory.path, 'duplicate.zip'))
+        ..writeAsBytesSync(damaged);
+      final seen = <String>[];
+      await extractFileToDisk(input.path, p.join(directory.path, 'out'),
+          callback: (file) => seen.add(file.name));
+      expect(File(p.join(directory.path, 'out', 'c.bin')).existsSync(), isTrue);
+      expect(seen, ['a.bin', 'a.bin', 'link', 'c.bin']);
+    });
+
     test('verify checks the checksum of the tar container', () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));

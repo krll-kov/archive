@@ -53,5 +53,25 @@ void main() async {
         }
       }
     });
+
+    test('a small decodeBytes result does not hold the output buffer', () {
+      final data = [1, 2, 3, 4, 5];
+      for (final raw in [false, true]) {
+        final packed = raw
+            ? Deflate(data).getBytes()
+            : const ZLibEncoder().encodeBytes(data);
+        for (final (verify, throwOnError) in [
+          (false, false),
+          (false, true),
+          (true, false)
+        ]) {
+          final out = ZLibDecoder().decodeBytes(packed,
+              raw: raw, verify: verify, throwOnError: throwOnError);
+          expect(out, data);
+          expect(out.buffer.lengthInBytes, data.length,
+              reason: 'raw $raw, verify $verify, throwOnError $throwOnError');
+        }
+      }
+    });
   });
 }

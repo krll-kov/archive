@@ -647,31 +647,11 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
     } else if (recognized == ArchiveFormat.zip) {
       final input = InputFileStream(archivePath);
       toClose = input;
-      try {
-        archive = ZipDecoder().decodeStream(input,
-            verify: verify,
-            throwOnError: true,
-            password: password,
-            callback: collect);
-      } catch (error) {
-        if (strict ||
-            !isDecodeDataError(error) ||
-            identical(error, callbackError)) {
-          rethrow;
-        }
-        await input.close();
-        final again = InputFileStream(archivePath);
-        toClose = again;
-        var skip = whole.length;
-        archive = ZipDecoder().decodeStream(again, password: password,
-            callback: (file) {
-          if (skip > 0) {
-            skip--;
-            return;
-          }
-          collect(file);
-        });
-      }
+      archive = ZipDecoder().decodeStream(input,
+          verify: verify,
+          throwOnError: strict,
+          password: password,
+          callback: collect);
     } else {
       throw ArgumentError.value(
           inputPath, 'inputPath', 'Must end $extensionMsg');
