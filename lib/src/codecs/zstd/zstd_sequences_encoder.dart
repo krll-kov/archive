@@ -87,7 +87,7 @@ class ZstdSequenceStore {
   /// Four words a sequence: the literal run, the match length above the
   /// format's floor, the stored offset, and the codes the encoder packs into
   /// the fourth. One array rather than four keeps a single base pointer and a
-  /// single length live through the loops that walk them
+  /// single length live through the loops over them
   final Uint32List seq;
   int count = 0;
 
@@ -191,8 +191,8 @@ const _ofShift = 12;
 const _llBitsShift = 18;
 const _mlBitsShift = 23;
 
-/// Stands in for the reference's error return, which its unsigned comparisons
-/// read as a cost nothing can beat
+/// Replaces the reference's error return, which its unsigned comparisons
+/// treat as a cost above any other
 const _costError = 1099511627776;
 
 const _modePredefined = 0;
@@ -211,7 +211,7 @@ class _TableSlot {
   bool ready = false;
   bool nextReady = false;
 
-  /// `FSE_repeat_valid` rather than `FSE_repeat_check`: only a dictionary hands
+  /// `FSE_repeat_valid` rather than `FSE_repeat_check`: only a dictionary gives
   /// the decoder a table trusted without weighing it first
   bool trusted = false;
   bool nextTrusted = false;
@@ -297,8 +297,8 @@ class ZstdSequencesEncoder {
     return _writeBitstream(out, write, store, from, last) - at;
   }
 
-  /// `ZSTD_estimateBlockSize_sequences`: what this section would cost, tables
-  /// and all, without writing the bitstream. The splitter weighs partitions
+  /// `ZSTD_estimateBlockSize_sequences`: the cost of this section, tables
+  /// and all, without writing the bitstream. The splitter compares partitions
   /// with this, so it has to be the reference's estimate rather than the real
   /// encode. It decides where the block is cut
   int estimate(Uint8List scratch, ZstdSequenceStore store, int from, int to) {
@@ -334,7 +334,7 @@ class ZstdSequencesEncoder {
   }
 
   /// `ZSTD_estimateBlockSize_symbolType`, in bytes: the codes through whichever
-  /// table was chosen for them, plus the extra bits they carry. An offset code
+  /// table was chosen for them, plus their extra bits. An offset code
   /// is itself the count of its extra bits, so [extraBits] may be null
   static int _symbolCost(
       int mode,
@@ -375,7 +375,7 @@ class ZstdSequencesEncoder {
   /// A block with no sequences describes no table, so committing it must leave
   /// the ones the decoder holds exactly as they are.
   /// `ZSTD_entropyCompressSeqStore` copies the whole of `prevEntropy->fse` over
-  /// on `nbSeq == 0`, which carries the repeat mode of each table and not only
+  /// on `nbSeq == 0`, which includes the repeat mode of each table and not only
   /// whether one is there
   void _holdSlots() {
     for (final slot in [_llSlot, _ofSlot, _mlSlot]) {
@@ -413,8 +413,8 @@ class ZstdSequencesEncoder {
           (of << _ofShift) |
           (llBitsTable[ll] << _llBitsShift) |
           (mlBitsTable[ml] << _mlBitsShift);
-      // A code cannot reach the mask, so it costs one instruction to say so
-      // and saves the bound check the counter would otherwise carry
+      // A code cannot reach the mask, so the mask costs one instruction and
+      // removes the bound check the counter would otherwise need
       _llCounts[ll & 63]++;
       _ofCounts[of & 31]++;
       _mlCounts[ml & 63]++;
@@ -520,7 +520,7 @@ class ZstdSequencesEncoder {
     }
 
     if (strategy < zstdStrategyLazy) {
-      // Only a table a dictionary handed over is taken unweighed here. That is
+      // Only a table from a dictionary is taken unweighed here. That is
       // what `FSE_repeat_valid` means
       if (allowed && slot.trusted && count < _staticRepeatMax) {
         slot.nextReady = true;
@@ -594,7 +594,7 @@ class ZstdSequencesEncoder {
   }
 
   /// `ZSTD_entropyCost`, in bits: the bound a table of its own would reach,
-  /// which stands in for building one and weighing it
+  /// used instead of building one and measuring it
   static int _entropyCost(Uint32List counts, int top, int total) {
     var cost = 0;
     for (var s = 0; s <= top; s++) {
@@ -657,7 +657,7 @@ class ZstdSequencesEncoder {
 
   /// Keeps the tables this block described, which only a block that is written
   /// out may do
-  /// `ZSTD_loadCEntropy`: the three tables a dictionary carries become the ones
+  /// `ZSTD_loadCEntropy`: the three tables in a dictionary become the ones
   /// the decoder already holds, so a first block can repeat rather than
   /// describe them. The offset table is built over every code the format has,
   /// since a table that stops short cannot price the codes above it
@@ -678,7 +678,7 @@ class ZstdSequencesEncoder {
         dictionary.maxSymbols[zstdSlotMatchLength]);
   }
 
-  /// The three tables a dictionary handed over, for the optimal parse to price
+  /// The three tables from a dictionary, for the optimal parse to price
   /// its first block from. Null once nothing trusted is left
   ZstdFseCTable? get dictionaryLitLengths =>
       _llSlot.trusted ? _llSlot.live : null;

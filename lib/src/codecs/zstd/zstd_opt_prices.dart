@@ -44,12 +44,12 @@ class ZstdOptPrices {
   int _matchLengthBase = 0;
   int _offCodeBase = 0;
 
-  /// Zero weighs a symbol in whole bits, the way `btopt` does. One and
+  /// Zero prices a symbol in whole bits, the way `btopt` does. One and
   /// above interpolate between them, for `btultra` and `btultra2`
   int level = 0;
   bool _predef = false;
 
-  /// The tables a dictionary handed the decoder. A first block prices from
+  /// The tables a dictionary gave the decoder. A first block prices from
   /// what they say a symbol costs rather than from its own bytes
   ZstdHuffmanEncoder? dictionaryTree;
   ZstdFseCTable? dictionaryLitLengths;
@@ -195,7 +195,7 @@ class ZstdOptPrices {
     return _downscale(table, zstdHighestBit(factor), guaranteed: true);
   }
 
-  /// The literals themselves, without the symbol that says how many
+  /// The literals themselves, without the symbol for their count
   int literalsPrice(Uint8List src, int at, int length) {
     if (length == 0) {
       return 0;

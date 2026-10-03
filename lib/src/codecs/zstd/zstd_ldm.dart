@@ -15,8 +15,8 @@ const _hashLogMax = 30;
 const _minMatchBase = 64;
 
 /// `ZSTD_strategy` as the reference numbers it, one to nine.
-/// [ZstdLevelParams.refStrategy] carries that number. The six the parse has are
-/// not these
+/// [ZstdLevelParams.refStrategy] holds that number. The six strategies of the
+/// parse are not these
 const _btopt = 7;
 const _btultra = 8;
 
@@ -81,7 +81,7 @@ class ZstdOptLdm {
   int _offset = 0;
 
   /// Points the cursor at a block's matches, which each pass over the block
-  /// walks from the beginning. The reference takes its first match here rather
+  /// reads from the beginning. The reference takes its first match here rather
   /// than on the first candidate, which moves the cursor one sequence on before
   /// the parse starts and so keeps a block's last match out of the parse
   void begin(ZstdLdmSequences? store, int size) {
@@ -180,7 +180,7 @@ class ZstdOptLdm {
 
 /// Matches far enough back that the level's own tables cannot reach them, found
 /// by hashing every position where a rolling hash of the last [minMatch] bytes
-/// lands on a mask. `zstd_ldm.c`
+/// matches a mask. `zstd_ldm.c`
 class ZstdLdm {
   final int minMatch;
   final int bucketLog;
@@ -202,8 +202,8 @@ class ZstdLdm {
   final Uint32List _splitSum = Uint32List(_batch);
   int _found = 0;
 
-  /// What the rolling hash has to land on for a position to be hashed, and the
-  /// state it carries between passes
+  /// The mask a rolling hash must match for a position to be hashed, and the
+  /// state kept between passes
   final int _stopMask;
   int _stopMaskHigh = 0;
   int _rolling = 0;
@@ -295,7 +295,7 @@ class ZstdLdm {
   void generate(
       Uint8List src, ByteData view, int start, int end, ZstdLdmSequences out) {
     out.reset();
-    // `ZSTD_ldm_generateSequences` walks a megabyte at a time, bounding the
+    // `ZSTD_ldm_generateSequences` processes a megabyte at a time, bounding the
     // window at each chunk's end rather than once over the whole span. A block
     // never reaches that, a threaded job does
     const chunkMax = 1 << 20;
@@ -410,7 +410,7 @@ class ZstdLdm {
     return end - anchor < 0 ? 0 : end - anchor;
   }
 
-  /// `ZSTD_ldm_gear_feed`: records where the hash lands on the mask, and stops
+  /// `ZSTD_ldm_gear_feed`: records where the hash matches the mask, and stops
   /// once a batch is full. Returns how many bytes it read
   static int _webMask(int minMatch, int rateLog, int half) {
     final width = minMatch < 64 ? minMatch : 64;
@@ -490,7 +490,7 @@ class ZstdLdm {
     return length;
   }
 
-  /// `ZSTD_ldm_countBackwardsMatch`, which may not walk before the block's
+  /// `ZSTD_ldm_countBackwardsMatch`, which may not count back past the block's
   /// anchor or before the lowest position the window still holds
   static int _countBack(
       Uint8List src, int at, int anchor, int match, int floor) {

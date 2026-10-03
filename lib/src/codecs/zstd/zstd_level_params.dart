@@ -22,14 +22,14 @@ class ZstdLevelParams {
   final int searchLog;
 
   /// The reference's `TL` column, the step for the fast parse and the
-  /// length that satisfies the optimal one. The greedy and lazy rows carry
+  /// length that satisfies the optimal one. The greedy and lazy rows hold
   /// instead a length that ends their search at once, which the reference does
   /// not do: measured byte identical on 312 MB and 1% faster
   final int targetLength;
 
   /// Positions past a match to look at for a longer one. The optimal parse
-  /// reads it as how hard it weighs a symbol, and three asks for the extra
-  /// pass over the first block that seeds its statistics
+  /// uses it as its price precision, and three turns on the extra pass over
+  /// the first block that seeds its statistics
   final int depth;
 
   /// How many bytes the table is keyed on. A match still only has to agree on
@@ -191,7 +191,8 @@ const zstdMaxLevel = 22;
 
 /// `ZSTD_c_compressionLevel`: zero is the reference's own default and a level
 /// above the table is clamped. Below zero selects the `--fast` parse, a match
-/// finder this does not carry, so it is refused rather than read as level one
+/// finder this port does not have, so it is refused rather than read as
+/// level one
 int zstdEffectiveLevel(int level) {
   if (level < 0) {
     throw ArgumentError.value(level, 'level',

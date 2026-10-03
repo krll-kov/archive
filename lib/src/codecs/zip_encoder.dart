@@ -317,8 +317,8 @@ class ZipEncoder {
     int crc32 = 0;
 
     var compressionType = entry.compression ?? CompressionType.deflate;
-    // A directory carries no data, and naming a compression for it leaves a
-    // reader inflating nothing
+    // A directory has no data, and a compression method on it makes a reader
+    // decompress an empty stream
     if (!entry.isFile) {
       compressionType = CompressionType.none;
     }
@@ -398,7 +398,7 @@ class ZipEncoder {
           throw ArgumentError.value(chosen, 'level', 'Must be -1 to 9');
         }
         // An entry with no content at all cannot be deflated: a zero length
-        // deflate stream is two bytes, not none, and a reader handed neither
+        // deflate stream is two bytes, not none, and a reader given neither
         // identifies the entry corrupt
         if (file.rawContent == null) {
           compressionType = CompressionType.none;

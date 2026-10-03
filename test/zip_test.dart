@@ -1622,6 +1622,42 @@ void main() async {
       }
     });
 
+    test('an entry with a damaged local header keeps its central name', () {
+      final bytes = ZipEncoder().encodeBytes(Archive()
+        ..add(ArchiveFile.bytes('one.txt', 'first'.codeUnits))
+        ..add(ArchiveFile.bytes('two.txt', 'second'.codeUnits))
+        ..add(ArchiveFile.bytes('three.txt', 'third'.codeUnits)));
+      final decoder = ZipDecoder()..decodeBytes(bytes);
+      bytes[decoder.directory.fileHeaders[1].localHeaderOffset] ^= 0xff;
+      final archive = ZipDecoder().decodeBytes(bytes);
+      expect(archive.files.map((f) => f.name),
+          ['one.txt', 'two.txt', 'three.txt']);
+      final two = archive.findFile('two.txt')!;
+      expect(two.size, 'second'.length);
+      expect(two.crc32, getCrc32('second'.codeUnits));
+      expect(archive.findFile('one.txt')!.content, 'first'.codeUnits);
+      expect(archive.findFile('three.txt')!.content, 'third'.codeUnits);
+    });
+
+    test('a duplicate name keeps the CRC of the content it holds', () {
+      final output = OutputMemoryStream();
+      ZipEncoder()
+        ..startEncode(output)
+        ..add(ArchiveFile.bytes('a.txt', 'first'.codeUnits))
+        ..add(ArchiveFile.bytes('a.txt', 'second and longer'.codeUnits))
+        ..endEncode();
+      final entry =
+          ZipDecoder().decodeBytes(output.getBytes()).findFile('a.txt')!;
+      final content = entry.readBytes()!;
+      expect(content, 'second and longer'.codeUnits);
+      expect(entry.size, content.length);
+      expect(entry.crc32, getCrc32(content));
+      final again = ZipDecoder().decodeBytes(
+          ZipEncoder().encodeBytes(ZipDecoder().decodeBytes(output.getBytes())),
+          verify: true);
+      expect(again.findFile('a.txt')!.readBytes(), content);
+    });
+
     test('an empty entry asked for xz is stored as 7-Zip stores it',
         testOn: 'vm', () async {
       Archive archive() => Archive()

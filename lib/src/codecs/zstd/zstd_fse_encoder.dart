@@ -110,7 +110,7 @@ bool zstdNormalizeCount(Int16List into, Uint32List counts, int total,
 
 /// `FSE_normalizeM2`, the fallback for when taking the remainder out of the
 /// largest symbol would take more than half of it. Symbols too rare to earn a
-/// point are settled first, the rest share what is left by a scaled walk
+/// point are settled first, the rest share the remainder by a scaled pass
 void _spreadRemainder(Int16List into, Uint32List counts, int total,
     int maxSymbol, int accuracyLog, int lowProb) {
   const notYet = -2;
@@ -401,8 +401,8 @@ class ZstdFseCTable {
 
   int get badCost => (accuracyLog + 1) << 8;
 
-  /// Writes the bits [state] owes and returns the state [symbol] leads to.
-  /// The counts are masked so the shifts carry no range guard
+  /// Writes the low bits of [state] and returns the state [symbol] leads to.
+  /// The counts are masked so the shifts compile without a range guard
   @pragma('vm:prefer-inline')
   int encode(ZstdBitWriter out, int state, int symbol) {
     if (!zstdUse64Bit) {

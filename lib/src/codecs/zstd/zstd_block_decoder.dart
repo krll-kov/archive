@@ -84,8 +84,8 @@ class ZstdBlockDecoder {
           _compressedBlockIsTruncated();
         }
         final blockEnd = at + size;
-        // Literals go past the room this block's output will need, so the
-        // sequence loop reads them and writes through one and the same view
+        // Literals are stored after the space reserved for this block's output,
+        // so the sequence loop reads and writes through one view
         window.reserve(blockSizeMax * 2 + zstdCopySlack * 2);
         final literalsSize = _literals.decode(src, at, blockEnd, blockSizeMax,
             window.buffer, window.position + blockSizeMax + zstdCopySlack);
@@ -99,7 +99,7 @@ class ZstdBlockDecoder {
   }
 }
 
-/// Every throw here lives out of line: inline, the exception's own
+/// Every throw here is moved out of line: inline, the exception's own
 /// construction puts an allocation and a call into a function that is
 /// otherwise straight-line work, and costs registers where nothing throws
 @pragma('vm:never-inline')

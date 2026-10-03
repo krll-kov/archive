@@ -1546,6 +1546,27 @@ void main() {
       }
     });
 
+    test('empty input is no archive, as one byte is not, with either flag',
+        () async {
+      for (final bytes in [<int>[], <int>[0]]) {
+        expect(TarDecoder().decodeBytes(bytes).files, isEmpty);
+        await expectLater(
+            Stream<List<int>>.value(bytes)
+                .transform(tarCodec.decoder)
+                .drain<void>(),
+            throwsA(isA<ArchiveException>()),
+            reason: '${bytes.length} bytes');
+        for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+          expect(
+              () => TarDecoder().decodeBytes(bytes,
+                  verify: verify, throwOnError: throwOnError),
+              throwsA(isA<ArchiveException>()),
+              reason: '${bytes.length} bytes, verify $verify, '
+                  'throwOnError $throwOnError');
+        }
+      }
+    });
+
     test('an error thrown by the callback reaches the caller unchanged', () {
       final tar = TarEncoder().encodeBytes(Archive()
         ..add(ArchiveFile.bytes('a.txt', Uint8List(100)))

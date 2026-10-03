@@ -57,7 +57,7 @@ class ZstdSeqSplitter {
   /// `ZSTD_buildEntropyStatisticsAndEstimateSubBlockSize` over one window
   int _estimate(int start, int end) {
     final from = _store.literalsIn(0, start);
-    // Only a window reaching the end of the block carries the trailing literals
+    // Only a window reaching the end of the block has the trailing literals
     final to = end == _store.count
         ? _store.literalsLength
         : from + _store.literalsIn(start, end);
@@ -67,7 +67,7 @@ class ZstdSeqSplitter {
   }
 }
 
-/// `ZSTD_updateRep`, where [noLiterals] says the literal run was empty
+/// `ZSTD_updateRep`, where [noLiterals] is true if the literal run was empty
 void zstdUpdateRep(Uint32List rep, int offBase, bool noLiterals) {
   if (offBase > 3) {
     rep[2] = rep[1];

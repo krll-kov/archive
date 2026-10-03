@@ -176,7 +176,7 @@ class XZEncoder {
 
     // Write block data.
     output.writeBytes(lzma2.getBytes());
-    var paddingLength = _writePadding(output);
+    var paddingLength = _writePadding(output, from: blockStart);
 
     // Write data checksum.
     var checkType = streamFlags & 0xf;
@@ -213,7 +213,7 @@ class XZEncoder {
   }
 
   // Write [data] to [output] in uncompressed LZMA2 format. A chunk holds its
-  // length in sixteen bits, so anything longer goes out in chunks that size
+  // length in 16 bits, so longer data is written in 64 KiB chunks
   void _writeLZMA2UncompressedData(OutputStream output, Uint8List data,
       {bool resetDictionary = true}) {
     var at = 0;
@@ -282,10 +282,10 @@ class XZEncoder {
     output.writeByte(left);
   }
 
-  // Add empty bytes to make [output] align to a 32 bit boundary.
-  int _writePadding(OutputStream output) {
+  // Add empty bytes to make [output] after [from] align to a 32 bit boundary.
+  int _writePadding(OutputStream output, {int from = 0}) {
     var length = 0;
-    while (output.length % 4 != 0) {
+    while ((output.length - from) % 4 != 0) {
       output.writeByte(0);
       length++;
     }

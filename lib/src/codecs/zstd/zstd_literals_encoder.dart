@@ -31,7 +31,7 @@ class ZstdLiteralsEncoder {
   bool _swap = false;
 
   /// `ZSTD_minLiteralsToCompress` and `ZSTD_minGain`'s shift for this level.
-  /// A tree a dictionary handed over lowers the floor to six, since reusing it
+  /// A tree from a dictionary lowers the floor to six, since reusing it
   /// costs the block nothing to describe
   int minSize = 64;
   bool _trusted = false;
@@ -142,8 +142,8 @@ class ZstdLiteralsEncoder {
       return _writeStored(out, at, src, start, size, zstdLiteralsRaw);
     }
 
-    // `singleStream`: a table the dictionary handed over and a three byte
-    // header put the whole section in one stream, whatever its size
+    // `singleStream`: a table from the dictionary and a three byte header
+    // put the whole section in one stream regardless of its size
     _spare.oneStream = _trusted && headerSize == 3;
     final streamsSize = _spare.encodeLiterals(
         out, at + headerSize + tableSize, src, start, end);
@@ -166,8 +166,8 @@ class ZstdLiteralsEncoder {
   }
 
   /// `ZSTD_buildBlockEntropyStats_literals` and
-  /// `ZSTD_estimateBlockSize_literal` together: what this run would take, tree
-  /// and all, without writing any of it. The block splitter weighs partitions
+  /// `ZSTD_estimateBlockSize_literal` together: the size of this run, tree
+  /// and all, without writing any of it. The block splitter compares partitions
   /// with this, and its rules are not [encode]'s: no probe, no minimum gain,
   /// and a floor of `COMPRESS_LITERALS_SIZE_MIN`, which a valid tree lowers as
   /// [encode]'s is
@@ -205,7 +205,7 @@ class ZstdLiteralsEncoder {
     return _sectionSize(fresh + described, size);
   }
 
-  /// Four streams carry a six byte jump table the single stream form does not
+  /// Four streams have a six byte jump table the single stream form does not
   static int _sectionSize(int coded, int size) =>
       coded +
       (size < zstdFourStreamsFrom ? 0 : 6) +

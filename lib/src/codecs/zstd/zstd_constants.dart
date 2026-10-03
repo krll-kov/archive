@@ -44,7 +44,7 @@ const zstdOffsetLogMax = 8;
 /// the literals it reads need this much room between and after them
 const zstdCopySlack = 64;
 
-/// The three sequence tables share one array, so a state value carries the base
+/// The three sequence tables share one array, so a state value has the base
 /// of its own table and the loop needs a single pointer for all three
 const zstdLiteralsLengthTableBase = 0;
 const zstdOffsetTableBase = 1 << zstdLiteralsLengthLogMax;
@@ -152,8 +152,8 @@ int zstdHighestBit(int value) => value.bitLength - 1;
 // Separate words keep the unused constant parseable on JavaScript
 const _deBruijn = (0x022fdd63 << 32) | 0xcc95386d;
 
-/// Where each de Bruijn slot lands. A `const` list so that reading it is a
-/// load, where a lazily built one costs a call to its initialiser guard on
+/// The bit index for each de Bruijn slot. A `const` list so that reading it is
+/// a load, where a lazily built one costs a call to its initialiser guard on
 /// every access
 const List<int> _deBruijnSlots = [
   0,
@@ -223,9 +223,9 @@ const List<int> _deBruijnSlots = [
 ];
 
 /// The same as [zstdHighestBit] without the call `int.bitLength` compiles to.
-/// A call clobbers every live register, so in a loop that carries state it
-/// costs far more than the dozen operations here: 8% at level 9 and 9% at level
-/// 12
+/// A call clobbers every live register, so in a loop that keeps state in
+/// registers it costs far more than the dozen operations here: 8% at level 9
+/// and 9% at level 12
 @pragma('vm:prefer-inline')
 int zstdHighestBitFast(int value) {
   if (!const bool.fromEnvironment('dart.library.isolate')) {

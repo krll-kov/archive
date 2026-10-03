@@ -8,7 +8,7 @@ class CancelSignal {
   set onCancel(void Function() wake) => _wake = wake;
 }
 
-/// The next piece of the input, fetched while the body hands on what finished
+/// The next piece of the input, fetched while the body forwards what finished
 /// elsewhere. One piece at a time, so the input still goes at the body's pace
 class InputAhead<S> {
   final StreamIterator<S> _iterator;

@@ -13,7 +13,8 @@ class ZstdBitWriter {
 
   ZstdBitWriter(this.view, [int start = 0]) : _at = start;
 
-  /// Counts are masked so the shift carries no range guard and no slow path
+  /// Counts are masked so the shift compiles without a range guard and slow
+  /// path
   @pragma('vm:prefer-inline')
   void add(int value, int count) {
     if (!zstdUse64Bit) {

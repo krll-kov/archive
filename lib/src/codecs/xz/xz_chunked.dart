@@ -381,7 +381,7 @@ class XzChunkedDecoder extends ChunkedSink {
     _stage = _Stage.blockOrIndex;
   }
 
-  /// False while waiting for the rest of a block to hand to a worker,
+  /// False while waiting for the rest of a block to send to a worker,
   /// or for workers to finish before decoding a block itself
   bool _readBlockHeader(int size) {
     _blockStart = _streamPosition;
@@ -400,7 +400,7 @@ class XzChunkedDecoder extends ChunkedSink {
       _waitingForIdle = false;
       final compressed = _declaredCompressedLength;
       final uncompressed = _declaredUncompressedLength;
-      // If a block claims more than the limit, handing it to a worker would
+      // If a block claims more than the limit, sending it to a worker would
       // mean buffering the whole thing first, so we decode it here as it
       // streams in
       final limit = dispatch.maxBlockBytes;
@@ -638,7 +638,7 @@ class _ByteReader {
   }
 
   /// Null when the bytes for it have not arrived. The index is read out of
-  /// whatever has been handed over so far
+  /// the bytes received so far
   int? tryMultibyte() {
     var value = 0;
     var multiplier = 1;

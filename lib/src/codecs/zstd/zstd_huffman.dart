@@ -130,8 +130,8 @@ int _readFseWeights(Uint8List data, int start, int length, Uint8List weights,
   return count;
 }
 
-/// The final symbol's weight is not stored, it is whatever brings the total to
-/// the next power of two
+/// The final symbol's weight is not stored: it brings the total to the next
+/// power of two
 void _buildFromWeights(ZstdHuffmanTable table, Uint8List weights,
     int weightCount, Uint32List rankStart) {
   if (weightCount < 1 || weightCount >= zstdHuffmanSymbolCount) {
@@ -210,8 +210,8 @@ void _buildFromWeights(ZstdHuffmanTable table, Uint8List weights,
   }
 }
 
-/// A stream that owes no symbol is still read: `BIT_initDStream` and
-/// `BIT_endOfDStream` run over it either way, so its bytes have to carry the
+/// A stream with no symbols is still read: `BIT_initDStream` and
+/// `BIT_endOfDStream` run over it either way, so its bytes have to hold the
 /// end marker and nothing above it
 void checkEmptyHuffmanStream(Uint8List src, int start, int length) {
   final reader = ZstdBitReader();
@@ -248,7 +248,7 @@ void decodeHuffmanStreamSlow(ZstdHuffmanTable table, Uint8List src, int start,
   }
 }
 
-/// Every throw here lives out of line: inline, the exception's own
+/// Every throw here is moved out of line: inline, the exception's own
 /// construction puts an allocation and a call into a function that is
 /// otherwise straight-line work, and costs registers where nothing throws
 @pragma('vm:never-inline')

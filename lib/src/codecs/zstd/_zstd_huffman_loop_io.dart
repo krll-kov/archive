@@ -379,7 +379,7 @@ int _firstBit(Uint8List src, int start, int length) {
   return 8 - zstdHighestBit(last);
 }
 
-/// Every throw of the literal loops lives out of line. Left inline, the
+/// Every throw of the literal loops is moved out of line. Left inline, the
 /// exception's construction puts an allocation and a call in a function that is
 /// otherwise all register work, and it costs registers on the path that never
 /// throws

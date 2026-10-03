@@ -68,6 +68,14 @@ void main() {
         expect(output.byteOrder, ByteOrder.bigEndian);
       });
     }
+
+    test('an archive written behind other bytes is the same archive', () {
+      final source = _sample(1001);
+      final expected = XZEncoder().encodeBytes(source);
+      final output = OutputMemoryStream()..writeBytes([1, 2, 3]);
+      XZEncoder().encodeStream(InputMemoryStream(source), output);
+      expect(Uint8List.sublistView(output.getBytes(), 3), expected);
+    });
   });
 
   group('xz chunked encoder', () {

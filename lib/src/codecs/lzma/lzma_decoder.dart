@@ -270,7 +270,7 @@ class LzmaDecoder {
   // Decode [input], which contains compressed LZMA data that unpacks to
   // [uncompressedLength] bytes, appending the result directly to [output].
   //
-  // This avoids the intermediate copy [decode] has to make. The range handed
+  // This avoids the intermediate copy [decode] has to make. The range passed
   // to [OutputStream.writeRange] is read before the call returns, so a later
   // [trimDictionary] cannot invalidate it.
   void decodeToOutput(

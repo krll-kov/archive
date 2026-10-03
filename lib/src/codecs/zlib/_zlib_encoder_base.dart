@@ -20,7 +20,7 @@ abstract class ZLibEncoderBase {
       null;
 }
 
-/// Hands every piece the codec produces straight to [output], where
+/// Sends every piece the codec produces straight to [output], where
 /// `ChunkedConversionSink.withCallback` would hold the whole of it to the end
 class ZLibOutputSink implements Sink<List<int>> {
   final OutputStream _output;

@@ -42,7 +42,7 @@ class ZstdBitReader {
       container = _view.getUint32(position, Endian.little);
       _bitLimit = 32;
     } else {
-      // Placed so the last byte lands in the top byte, matching getUint32 above
+      // The last byte goes to the top byte, as getUint32 above reads it
       position = start;
       var value = 0;
       for (var i = length - 1; i >= 0; i--) {

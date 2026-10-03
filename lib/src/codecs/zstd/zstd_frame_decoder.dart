@@ -106,9 +106,9 @@ ZstdFrameHeader readFrameHeader(
   if (singleSegment) {
     windowSize = contentSize!;
   }
-  // The declared window is what the frame may make a decoder hold, so it is
-  // refused on its own claim. A content size beside it is the writer's word,
-  // and taking it here would let a frame that lies allocate past the limit
+  // The declared window sets how much a decoder holds for the frame, so we
+  // check it alone against the limit. A frame can declare any content size,
+  // and using it here would let a false size allocate past the limit
   if (windowSize > windowSizeLimit) {
     throw ZstdFrameException(
         'Window of $windowSize bytes is above the $windowSizeLimit limit');
@@ -118,7 +118,7 @@ ZstdFrameHeader readFrameHeader(
       at - start, windowSize, contentSize, dictionaryId, hasChecksum);
 }
 
-/// Runs the blocks of one frame. The block decoder it holds carries the
+/// Runs the blocks of one frame. The block decoder it holds keeps the
 /// entropy tables from block to block, so one instance serves one frame
 class ZstdFrameDecoder {
   final ZstdBlockDecoder _blocks = ZstdBlockDecoder();
@@ -156,7 +156,7 @@ class ZstdFrameDecoder {
         throw ZstdFrameException('Block of $size bytes is above the '
             '$blockSizeMax its frame allows');
       }
-      // A stream holding its own bytes hands over a view of them, which saves
+      // A stream holding its own bytes returns a view of them, which saves
       // copying every block into a buffer only to read it once
       var body = input.viewBytes(payload);
       var at = 0;
@@ -198,7 +198,7 @@ class ZstdFrameDecoder {
     }
   }
 
-  /// The frame carries the low half of an XXH64 of everything it decoded to
+  /// The frame has the low half of an XXH64 of everything it decoded to
   void _checkDigest(int stored, bool checked) {
     if (checked && _hash.digestLow != stored) {
       throw ArchiveChecksumException('Content checksum does not match');

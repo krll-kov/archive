@@ -64,7 +64,7 @@ class ZstdSequences extends ZstdSequencesBase {
   ByteData _view = ByteData(0);
 
   /// Moves back to where the bits still to read start, so the next read of up
-  /// to 24 bits is in hand
+  /// to 24 bits is in the container
   void _reload() {
     final step = _consumed >> 3;
     if (_position - step < _floor) {
@@ -77,7 +77,7 @@ class ZstdSequences extends ZstdSequencesBase {
     _container = _view.getUint32(_position, Endian.little);
   }
 
-  /// [count] in 0 to 24, with at least that much in hand
+  /// [count] in 0 to 24, with at least that many bits in the container
   int _take(int count) {
     if (count == 0) {
       return 0;

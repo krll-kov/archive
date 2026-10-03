@@ -48,7 +48,7 @@ class ZstdFseException extends ArchiveException {
   String toString() => 'ZstdFseException: $message';
 }
 
-/// [end] bounds the input on hand, not the description, whose length is only
+/// [end] bounds the available input, not the description, whose length is only
 /// known once it has been read. [counts] is written in place over
 /// `0..maxSymbolValue`
 ZstdFseDistribution readFseDistribution(
@@ -192,7 +192,7 @@ int _peek(ByteData view, int start, int end, int bitPos, int count) {
 
 /// Places every symbol across the table's states, the format's own order:
 /// probabilities of less than one take one row each from the end, retreating,
-/// and each is a full state reset, then the rest walk the table by a fixed step
+/// and each is a full state reset, then the rest fill the table by a fixed step
 /// and skip what was taken
 void zstdSpreadSymbols(Int16List counts, int maxSymbol, int tableSize,
     Uint8List spread, Uint16List nextState) {

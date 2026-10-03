@@ -13,8 +13,8 @@ import 'zstd_level_params.dart';
 import 'zstd_mt_parallel.dart';
 
 /// `4*ZSTD_BLOCKSIZE_MAX`, the piece a job's input reaches the compressor in.
-/// Every piece ends a block. That is what makes a threaded frame differ from a
-/// single threaded one
+/// Every piece ends a block, so a threaded frame differs from a single
+/// threaded one
 const zstdMtChunkSize = 4 * zstdBlockMaximumSize;
 
 /// `ZSTDMT_JOBSIZE_MIN`: at or below this the reference drops its workers, so
@@ -108,7 +108,7 @@ class ZstdMtFrameEncoder {
     }
   }
 
-  /// One job, its input handed to the block loop in [zstdMtChunkSize] pieces.
+  /// One job, its input passed to the block loop in [zstdMtChunkSize] pieces.
   /// The splitter sees a piece as the whole of what is left. That cuts a block
   /// short at every piece boundary
   void _encodeJob(
@@ -171,8 +171,8 @@ class ZstdMtFrameEncoder {
       savings += take - (out.length - before);
       at += take;
       onBlock?.call(at - start);
-      // What the first block cost says what the rest will, near enough to take
-      // the room once instead of doubling into it. A job never exceeds its own
+      // The first block's cost predicts the rest, near enough to take the
+      // room once instead of doubling into it. A job never exceeds its own
       // bound, so neither does the estimate
       if (at - start == take && at < end) {
         final span = end - start;
@@ -229,7 +229,7 @@ class ZstdMtFrameEncoder {
   }
 
   /// `ZSTDMT_overlapLog_default`, by the reference's own strategy numbering,
-  /// which [ZstdLevelParams.refStrategy] carries
+  /// which [ZstdLevelParams.refStrategy] holds
   static int _overlapLogDefault(ZstdLevelParams params) {
     switch (params.refStrategy) {
       case 9:
@@ -298,7 +298,7 @@ class ZstdMtFrameEncoder {
   }
 
   /// The span of one job and the prefix before it. A caller cuts the input up
-  /// by these before handing the pieces out
+  /// by these before sending the pieces out
   static List<int> geometry(int level, int size,
       {int jobSize = 0, int overlapLog = 0}) {
     final params = zstdParamsForLevel(level, size);
@@ -310,7 +310,7 @@ class ZstdMtFrameEncoder {
     return [job, prefix];
   }
 
-  /// One job on its own, holding nothing between calls: [buffer] is its prefix
+  /// A single job that holds nothing between calls: [buffer] is its prefix
   /// followed by its own span, and [size] the whole frame's
   static void encodeJob(
       Uint8List buffer, int prefix, OutputStream out, int level, int size,
@@ -430,7 +430,7 @@ class ZstdMtLdmPass {
   }
 }
 
-/// Cuts a stream of arriving bytes into jobs. Each job carries the prefix the
+/// Cuts a stream of arriving bytes into jobs. Each job has the prefix the
 /// reference gives it, the tail of the job before, so a worker needs nothing
 /// else; the ring holds one job and one prefix at a time
 class ZstdMtRing {
@@ -534,7 +534,7 @@ int zstdMtPoolSize(int workers, int cores, int cap) {
   return pool < 1 ? 1 : pool;
 }
 
-/// How many workers a budget pays for, zero for no bound and never below one
+/// How many workers a budget allows, zero for no bound and never below one
 int zstdMtWorkerCap(int memoryBudget, int level, int size, List<int> geometry) {
   if (memoryBudget <= 0) {
     return 0;

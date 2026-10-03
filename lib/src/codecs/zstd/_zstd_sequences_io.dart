@@ -27,8 +27,8 @@ Uint64List _packValues(int slot) {
 /// Decodes and executes the sequences of one block, holding the bitstream in a
 /// 64 bit container.
 ///
-/// One packed row per state carries the value the symbol stands for as well as
-/// the transition, so the loop needs no second dependent load: next state
+/// One packed row per state holds the symbol's value as well as the
+/// transition, so the loop needs no second dependent load: next state
 /// including its table's base in bits 0 to 15, bits to read for it in 16 to 23,
 /// the value's extra bits in 24 to 29, its baseline in 30 to 61. The top two
 /// bits stay clear so every row is a Smi and no load allocates, and one array
@@ -338,7 +338,7 @@ int _wrapped(Uint8List dst, int out, int from, int length, int lap) {
   return out;
 }
 
-/// Every throw of the sequence loop lives out of line. Left inline, the
+/// Every throw of the sequence loop is moved out of line. Left inline, the
 /// exception's construction and its message's interpolation put an allocation,
 /// a call and the boxing of their operands in the loop body, which costs
 /// registers on the path that never throws

@@ -43,7 +43,7 @@ class ZstdBitReader {
       container = _view.getUint64(position, Endian.little);
       _bitLimit = 64;
     } else {
-      // Placed so the last byte lands in the top byte, matching getUint64 above
+      // The last byte goes to the top byte, as getUint64 above reads it
       position = start;
       var value = 0;
       for (var i = length - 1; i >= 0; i--) {
@@ -77,7 +77,7 @@ class ZstdBitReader {
     return value;
   }
 
-  /// Leaves at least 57 bits in hand
+  /// Leaves at least 57 bits in the container
   void reload() {
     if (consumed > _bitLimit) {
       _overrun = true;

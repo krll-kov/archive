@@ -857,7 +857,7 @@ Stream<Uint8List> _xzDecodeStream(
         parse(parser.close);
       }
     }
-    // What was handed over before a failure in the parse is still written out
+    // Blocks queued before a failure in the parse are still written out
     yield* drain();
     final thrown = failure ?? parseFailure;
     if (thrown != null) {
@@ -900,7 +900,7 @@ class _StreamDispatch implements XzBlockDispatch {
   @override
   int get maxBlockBytes => _next < 1 << (63 - _idShift) ? _maxBlockBytes : -1;
 
-  /// Handed over and not yet written out, in stream order
+  /// Queued and not yet written out, in stream order
   final records = ListQueue<_StreamBlock>();
   final unsent = ListQueue<_StreamBlock>();
   final byId = <int, _StreamBlock>{};
@@ -1108,7 +1108,7 @@ void _sendThrown(
   }
 }
 
-/// Decodes one job into pieces handed to [onPiece] and checks a block against
+/// Decodes one job into pieces passed to [onPiece] and checks a block against
 /// the field it ends with. A corrupt archive is not a throw!
 ({bool ok, String? reason}) xzDecodeJob({
   required int kind,

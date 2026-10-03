@@ -33,7 +33,7 @@ class ZstdFrameEncoder {
       {bool checksum = true,
       int level = zstdDefaultLevel,
       ZstdDictionary? dictionary}) {
-    // A stream over memory hands out its own buffer, which spares the frame
+    // A stream over memory returns its own buffer, which spares the frame
     // both the copy and the window
     final held = input.viewBytes(size);
     if (held != null) {
@@ -86,7 +86,7 @@ class ZstdFrameEncoder {
     // The parse works in one buffer of absolute positions, so the dictionary
     // has to sit directly before the content it is a dictionary for. A frame
     // read from a stream keeps the window and enough spare beside it that a
-    // slide, which walks every table, is paid for by the bytes it frees
+    // slide, which visits every table, is amortized over the bytes it frees
     var slack = blocks.slideCost;
     if (slack < matchWindow) {
       slack = matchWindow;
@@ -172,8 +172,8 @@ class ZstdFrameEncoder {
       savings += take - (out.length - before);
       at += take;
       coded += take;
-      // What the first block cost says what the rest will, near enough that a
-      // sink holding its data takes the room once instead of doubling into it.
+      // The first block's cost predicts the rest, near enough that a sink
+      // holding its data takes the room once instead of doubling into it.
       // A frame never exceeds its own bound, so neither does the estimate
       if (coded == take && coded < size) {
         final bound = size + (size >> 7) + 64;

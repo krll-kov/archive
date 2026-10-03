@@ -12,7 +12,7 @@ class ZstdDictionaryException extends ArchiveException {
   String toString() => 'ZstdDictionaryException: $message';
 }
 
-/// A parsed zstd dictionary, ready to be handed to a decoder.
+/// A parsed zstd dictionary, ready to be passed to a decoder.
 ///
 /// Parsing is done once here rather than once per frame. Anything that is not a
 /// formatted dictionary is taken as raw content, the way the reference decoder

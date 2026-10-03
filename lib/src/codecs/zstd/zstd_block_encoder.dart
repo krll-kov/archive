@@ -50,7 +50,7 @@ class ZstdBlockEncoder {
       : this._(blockSizeMax, params,
             ZstdLdm.forParams(params.refStrategy, params.windowLog), null);
 
-  /// The matcher is off here, [external] carries what it would have found
+  /// The matcher is off here, [external] holds the sequences it would find
   ZstdBlockEncoder.external(
       int blockSizeMax, ZstdLevelParams params, ZstdLdmSequences? external)
       : this._(blockSizeMax, params, null, external);
@@ -117,7 +117,7 @@ class ZstdBlockEncoder {
   /// to survive it
   int get slideStep => _finder.slideStep;
 
-  /// How many entries a slide walks, so a caller can buy back the cost with
+  /// How many entries a slide visits, so a caller can offset the cost with
   /// the bytes it holds spare
   int get slideCost => _finder.slideCost;
 
@@ -179,7 +179,7 @@ class ZstdBlockEncoder {
         _literals.commit();
         return;
       }
-      // A stored block carries no sequences, so its offsets never happened
+      // A stored block has no sequences, so the repeat offsets are restored
       rep[0] = held0;
       rep[1] = held1;
       rep[2] = held2;
@@ -192,7 +192,7 @@ class ZstdBlockEncoder {
   }
 
   /// `ZSTD_compressBlock_splitBlock_internal`: each partition of the sequence
-  /// store becomes its own block, and the offsets handed to the next block are
+  /// store becomes its own block, and the offsets passed to the next block are
   /// the ones the decoder will hold rather than the ones the sequences imply
   void _writeSplit(
       Uint8List src,
@@ -291,7 +291,7 @@ class ZstdBlockEncoder {
   }
 
   /// Eight bytes at a time: a block that is not one repeated byte usually
-  /// says so in its first word, and one that is has to be read whole
+  /// differs within its first word, and one that is has to be read whole
   static bool _isRepeated(Uint8List src, int start, int end) {
     final first = src[start];
     if (!zstdUse64Bit) {

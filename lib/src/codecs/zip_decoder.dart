@@ -95,16 +95,14 @@ class ZipDecoder {
 
       final filename = zf.filename;
 
-      var entry = archive.find(filename);
+      // Last duplicate name wins, as in 3.x and TarDecoder, since reusing the
+      // first entry kept its content but took CRC of the last one
+      final entry = isDirectory
+          ? ArchiveFile.directory(filename)
+          : ArchiveFile.file(filename, zf.uncompressedSize, zf);
+      entry.compression = zf.compressionMethod;
 
-      if (entry == null) {
-        entry = isDirectory
-            ? ArchiveFile.directory(filename)
-            : ArchiveFile.file(filename, zf.uncompressedSize, zf);
-        entry.compression = zf.compressionMethod;
-
-        archive.add(entry);
-      }
+      archive.add(entry);
 
       // Zips from Windows leave the Unix mode at 0, and extractFileToDisk then
       // chmod'ed every file to 000, so such entries keep the default mode

@@ -18,7 +18,7 @@ export 'zstd/zstd_multithread_options.dart';
 
 /// Compress data with the zstd format encoder
 class ZstdEncoder {
-  /// Whether the frame carries an XXH64 of its content
+  /// Whether the frame has an XXH64 of its content
   final bool checksum;
 
   final int level;

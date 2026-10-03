@@ -157,7 +157,7 @@ int _isolatedTrailingZeroBitCount(int low) {
 
 /// Finds the sequences of a block. A slot holds a position plus one, so zero
 /// means it was never filled, and the tables hold absolute positions so they
-/// carry across the blocks of a frame
+/// stay valid across the blocks of a frame
 class ZstdMatchFinder {
   final ZstdLevelParams params;
   final Uint32List _hashTable;
@@ -341,8 +341,8 @@ class ZstdMatchFinder {
       params.strategy >= zstdStrategyBinaryTree ||
       _usesChainSearch(params);
 
-  /// `ZSTD_resolveRowMatchFinderMode`: a window this narrow does not pay for a
-  /// row of tags, and the reference walks a hash chain instead
+  /// `ZSTD_resolveRowMatchFinderMode`: a window this narrow does not justify a
+  /// row of tags, and the reference searches a hash chain instead
   static bool _usesChainSearch(ZstdLevelParams params) =>
       (params.strategy == zstdStrategyGreedy ||
           params.strategy == zstdStrategyLazy) &&
@@ -399,8 +399,8 @@ class ZstdMatchFinder {
     return _usesChainSearch(params) ? 1 << params.chainLog : 1;
   }
 
-  /// How many entries a slide has to walk. The bytes it frees pay for that
-  /// walk
+  /// How many entries a slide has to visit. The cost is amortized over the
+  /// bytes it frees
   int get slideCost =>
       _hashTable.length + _chain.length + _rows.length + _short.length;
 
@@ -482,8 +482,8 @@ class ZstdMatchFinder {
       return;
     }
     final view = ByteData.sublistView(src);
-    // `ZSTD_dtlm_fast`, which one shot compression always asks for: a third of
-    // the positions carry the table, the rest are left out
+    // `ZSTD_dtlm_fast`, which one shot compression always uses: a third of
+    // the positions go into the table, the rest are left out
     const step = 3;
     if (params.strategy == zstdStrategyFast) {
       for (var at = from; at + step < limit + 2; at += step) {
@@ -522,14 +522,14 @@ class ZstdMatchFinder {
   }
 
   /// Fills [store] with the sequences covering `src[start...end]`, where a
-  /// match may reach back as far as [lowLimit]. [rep] carries the three repeat
-  /// offsets in and the ones the block leaves behind out
+  /// match may reach back as far as [lowLimit]. [rep] holds the three repeat
+  /// offsets on entry and the block's final ones on return
   void parse(Uint8List src, int start, int end, int lowLimit,
       ZstdSequenceStore store, Uint32List rep) {
     store.reset();
     _skipping = false;
     // `ZSTD_compress_frameChunk` raises the cursor to the window before the
-    // catch-up below weighs it, so a position the window has dropped never
+    // catch-up below reads it, so a position the window has dropped never
     // decides how far back the catch-up reaches
     if (_nextToUpdate < lowLimit) {
       _nextToUpdate = lowLimit;
@@ -542,7 +542,7 @@ class ZstdMatchFinder {
       _nextToUpdate = start - (gap < 192 ? gap : 192);
     }
     final view = ByteData.sublistView(src);
-    // `ZSTD_matchState_dictMode`, which weighs the window as the block starts
+    // `ZSTD_matchState_dictMode`, which checks the window at block start
     _ext = prefixStart > lowLimit;
     if (params.strategy == zstdStrategyOptimal) {
       _parseOptimal(src, view, start, end, lowLimit, store, rep);
@@ -586,7 +586,7 @@ class ZstdMatchFinder {
     var rep0 = rep[0];
     var rep1 = rep[1];
     // A repeat that reaches outside the window is not usable here, and zero
-    // says so without a bounds test in the loop. `ZSTD_getLowestPrefixIndex`
+    // marks it without a bounds test in the loop. `ZSTD_getLowestPrefixIndex`
     // measures from where the block starts, not from where it ends, and stops
     // at the segment the data is in rather than at the whole window
     final maxRep = ip0 - _prefixFrom(_lowestFrom(ip0, lowLimit, maxDistance));
@@ -1211,13 +1211,13 @@ class ZstdMatchFinder {
     var rep0 = rep[0];
     var rep1 = rep[1];
     // An offset reaching further back than this block can see is held aside
-    // rather than used, and handed on again if nothing displaces it
+    // rather than used, and passed on again if nothing displaces it
     final reach = 1 << params.windowLog;
     final maxRep = ip < reach ? ip : reach;
     var saved0 = 0;
     var saved1 = 0;
-    // The extDict loop has no equivalent: it weighs every repeat against the
-    // window as it goes rather than holding one aside at the start
+    // The extDict loop has no equivalent: it checks every repeat against the
+    // window in the loop instead of computing one bound at the start
     if (!_ext) {
       if (rep1 > maxRep) {
         saved1 = rep1;
@@ -1264,7 +1264,7 @@ class ZstdMatchFinder {
         }
 
         // A match further on has to gain more than the literals it leaves
-        // behind, weighed the way the reference weighs them
+        // behind, priced the way the reference prices them
         while (depth > 0 && ip < limit) {
           ip++;
           final ahead = ip - rep0;
@@ -1383,8 +1383,8 @@ class ZstdMatchFinder {
         : _best(src, view, ip, lowLimit, end);
   }
 
-  /// `ZSTD_HcFindBestMatch`, the hash chain walk. A slot holds a position plus
-  /// one and the chain is indexed by the position it belongs to
+  /// `ZSTD_HcFindBestMatch`, the hash chain search. A slot holds a position
+  /// plus one and the chain is indexed by the position it belongs to
   int _bestChain(Uint8List src, ByteData view, int ip, int lowLimit, int end) {
     final maxDistance = 1 << params.windowLog;
     final floor = _lowestFrom(ip, lowLimit, maxDistance);
@@ -1512,8 +1512,8 @@ class ZstdMatchFinder {
     mask = ~mask & _entryMask;
 
     final head = _tagBytes[(row << _rowLog) ^ _tagByteXor];
-    // The masks are literal so the shift counts are provably under sixty four,
-    // which is what keeps the guarded slow path out of the loop
+    // The masks are literal so the shift counts are provably under 64, which
+    // keeps the guarded slow path out of the loop
     var rest =
         ((mask >>> (head & 63)) | (mask << ((_rowEntries - head) & 63))) &
             _entryMask;
@@ -1559,7 +1559,7 @@ class ZstdMatchFinder {
 
   /// `ZSTD_BtFindBestMatch`: the longest match at [ip], with [_foundOffset] set
   /// to its distance. A position joins the front of its hash's list unsorted
-  /// and only takes its place in the tree when a later search walks over it
+  /// and only takes its place in the tree when a later search reaches it
   int _bestTree(Uint8List src, ByteData view, int ip, int lowLimit, int end) {
     _foundOffset = 0;
     if (ip < _nextToUpdate) {
@@ -1844,7 +1844,7 @@ class ZstdMatchFinder {
   /// [_matchLengths] and [_matchOffBases] and returned as a count.
   ///
   /// `ZSTD_insertBtAndGetAllMatches`: the repeat offsets first, then the tree
-  /// walk, which inserts [ip] as it descends exactly as [_insertTree] does
+  /// search, which inserts [ip] as it descends exactly as [_insertTree] does
   int _allMatches(Uint8List src, ByteData view, int ip, int lowLimit, int end,
       Uint32List rep, bool noLiterals, int longEnough) {
     // A position the tree deliberately skipped past has nothing to offer, and
@@ -1857,7 +1857,7 @@ class ZstdMatchFinder {
     final minMatch = _minMatch;
     var best = minMatch - 1;
     // `ZSTD_insertBtAndGetAllMatches` takes this at the position it is called
-    // for, and weighs both the repeats and the candidates against it. Where a
+    // for, and checks both the repeats and the candidates against it. Where a
     // dictionary has expired it is tighter than the bound the block began with
     final reach = 1 << params.windowLog;
     final windowLow = _lowestFrom(ip, lowLimit, reach);
@@ -2032,8 +2032,8 @@ class ZstdMatchFinder {
     _optimalPass(src, view, start, end, lowLimit, store, rep);
   }
 
-  /// The optimal parse. Walks forward filling a table of the cheapest way to
-  /// reach every byte of the lookahead, then walks the chain of predecessors
+  /// The optimal parse. Moves forward filling a table of the cheapest way to
+  /// reach every byte of the lookahead, then follows the chain of predecessors
   /// back and emits it. `ZSTD_compressBlock_opt_generic`
   void _optimalPass(Uint8List src, ByteData view, int start, int end,
       int lowLimit, ZstdSequenceStore store, Uint32List rep) {
@@ -2338,7 +2338,7 @@ class ZstdMatchFinder {
     _insertRun(view, at, ip);
   }
 
-  /// The walk itself, kept out of line so its loop does not make every value
+  /// The insert loop, kept out of line so it does not make every value
   /// the search holds call clobbered
   @pragma('vm:never-inline')
   void _insertRun(ByteData view, int from, int ip) {
@@ -2387,9 +2387,9 @@ class ZstdMatchFinder {
     return back;
   }
 
-  /// The same walk, inlined into the row search where it is most of the
-  /// work and the row search has registers to spare. Only there: pointing every
-  /// caller here was -0.10% and doubled `_parseChained`
+  /// The same match length count, inlined into the row search where it is most
+  /// of the work and the row search has registers to spare. Only there:
+  /// pointing every caller here was -0.10% and doubled `_parseChained`
   @pragma('vm:prefer-inline')
   int _extendRow(Uint8List src, ByteData view, int a, int b, int end) {
     if (!zstdUse64Bit) return zstdWebCount(src, view, a, b, end);

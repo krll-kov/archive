@@ -16,9 +16,9 @@ import 'bzip2.dart';
 /// {@macro archive.yield_codecs.decoder}
 /// {@macro archive.converters.encoder}
 class BZip2Codec extends Codec<List<int>, List<int>> {
-  /// Checks the CRC of every block and of the stream. On by default: a caller
-  /// reading a stream has handed the compressed bytes back by the time the
-  /// check would be made, so there is no second chance at it
+  /// Checks the CRC of every block and of the stream. On by default: a stream
+  /// reader releases the compressed bytes before the check runs, so it cannot
+  /// be run again later
   final bool verify;
 
   /// Hundreds of thousands of bytes a block, one to nine

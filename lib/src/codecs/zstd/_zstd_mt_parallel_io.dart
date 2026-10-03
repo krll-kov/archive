@@ -28,12 +28,12 @@ Future<Isolate> Function(SendPort replies, SendPort errors) zstdMtSpawnWorker =
         onError: errors, errorsAreFatal: true);
 
 /// Compresses every job on an isolate, at most [workers] at a time, and
-/// returns their output in job order. A job carries its own prefix, so nothing
+/// returns their output in job order. A job has its own prefix, so nothing
 /// is shared and the bytes do not depend on how many run at once.
 ///
-/// The workers are spawned once and fed job after job: a fresh isolate per job
-/// costs a heap and a set of tables each time. That made the memory grow with
-/// the job count rather than with the pool
+/// The workers are spawned once and reused for every job: a fresh isolate per
+/// job costs a heap and a set of tables each time. That made the memory grow
+/// with the job count rather than with the pool
 Future<List<Uint8List>> zstdMtCompressJobs(
     Uint8List src, List<int> starts, int prefixSize, int level,
     {required int jobSize,
@@ -188,10 +188,10 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
   Object? failure;
   StackTrace? failureStack;
 
-  /// Workers that get no job while [ahead] jobs are already handed out
+  /// Workers that get no job while [ahead] jobs are already sent out
   final parked = <SendPort>[];
 
-  /// How many jobs may be handed out beyond the part written next. A job that
+  /// How many jobs may be sent out beyond the part written next. A job that
   /// finishes early holds its part until its turn, so the pool holds up to
   /// this many parts above the job buffers. `ZSTDMT_createCompressionJob`
   /// stops at `nbWorkers + 2`, and stopping at the worker count would idle the
@@ -218,7 +218,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
       jobSize,
       overlapLog,
       // In job order, the order the one long distance pass over the frame
-      // needs. `give` hands the jobs out that way whatever finishes first
+      // needs. `give` sends the jobs in that order, whichever finishes first
       ldmFor?.call(start, end),
       onProgress != null,
     ]);
@@ -335,7 +335,7 @@ Future<List<Uint8List>> _compress(List<int> starts, int prefixSize, int size,
 }
 
 /// The compressed parts of [input], in job order, with the jobs cut out of the
-/// bytes as they arrive and handed to a pool of at most [workers]. The header
+/// bytes as they arrive and sent to a pool of at most [workers]. The header
 /// and the checksum are not included, as everywhere else here
 Stream<Uint8List> zstdMtCompressStream(Stream<List<int>> input, int level,
         {required int jobSize,
@@ -372,14 +372,14 @@ Stream<Uint8List> _zstdMtCompressStream(
       jobSize: jobSize, overlapLog: overlapLog);
   final ring = ZstdMtRing(geometry[0], geometry[1]);
   // One long distance pass over the whole frame, run here in job order, with
-  // its matches handed to each job. A job sees only its own prefix and cannot
+  // its matches passed to each job. A job sees only its own prefix and cannot
   // find them itself
   final ldmPass =
       ZstdMtLdmPass.forParams(zstdParamsForLevel(level, size), geometry[0]);
   final pool = zstdMtPoolSize(workers, Platform.numberOfProcessors, cap);
 
-  // The workers are spawned once and fed job after job, as everywhere else
-  // here: an isolate per job pays for a heap and a table set each time
+  // The workers are spawned once and reused for every job, as everywhere else
+  // here: an isolate per job costs a new heap and table set each time
   final receive = ReceivePort();
   final isolates = <Isolate>[];
   final idle = <SendPort>[];
@@ -404,7 +404,7 @@ Stream<Uint8List> _zstdMtCompressStream(
     reportStream();
   }
 
-  /// How many jobs may be handed out beyond the part written next. Counting
+  /// How many jobs may be sent out beyond the part written next. Counting
   /// the replies instead would hold the whole frame behind one slow job, so
   /// the gate below reads `written` and takes the reference's `nbWorkers + 2`
   final jobsAhead = pool + 2;
@@ -594,9 +594,9 @@ Stream<Uint8List> _zstdMtCompressStream(
         while (ready.isNotEmpty) {
           yield ready.removeAt(0);
         }
-        // No more jobs handed out than the pool may run ahead of the part
-        // written next: each one holds its own buffer, so a looser gate is
-        // paid for in memory
+        // No more jobs sent out than the pool may run ahead of the part
+        // written next: each one holds its own buffer, so a looser gate costs
+        // memory
         while (failure == null &&
             !signal.cancelled &&
             sent - written >= jobsAhead) {

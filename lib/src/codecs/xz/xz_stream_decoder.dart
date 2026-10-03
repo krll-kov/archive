@@ -791,7 +791,7 @@ class _XZBlockSize {
 // memcpy
 const xzStagingSize = 4 * 1024 * 1024;
 
-/// An [OutputStream] that hands what it is given to [_onPiece] in pieces.
+/// An [OutputStream] that passes its writes to [_onPiece] in pieces.
 class XzBlockSink extends OutputStream {
   final void Function(int offset, Uint8List piece) _onPiece;
   final int _outputOffset;

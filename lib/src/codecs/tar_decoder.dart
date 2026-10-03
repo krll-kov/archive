@@ -68,6 +68,9 @@ class TarDecoder {
     final metadata = TarMetadata();
     void add(TarFile tf) => _add(archive, tf, storeData, callback);
 
+    if (verify && input.isEOS) {
+      throw ArchiveException('Unexpected end of tar data');
+    }
     // TarFile paxHeader = null;
     while (!input.isEOS) {
       // The end of the archive is a block of zeros; two of them can't be told

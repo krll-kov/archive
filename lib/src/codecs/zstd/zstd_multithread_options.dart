@@ -25,7 +25,7 @@ class ZstdMultithreadOptions<T> {
 
   /// Called with the count of input bytes compressed so far, finished jobs and
   /// the part of running ones, as `Read:` of `zstd --progress`. Jobs are taken
-  /// ahead of that point, so the count of bytes handed over reaches the end
+  /// ahead of that point, so the count of bytes sent out reaches the end
   /// long before the work does.
   /// An exception it throws goes to the zone and the encode continues
   final void Function(int consumed)? onProgress;

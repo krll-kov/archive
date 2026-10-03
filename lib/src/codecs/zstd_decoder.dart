@@ -17,8 +17,9 @@ class ZstdDecoder {
   /// decoder's own ceiling
   final int windowSizeLimit;
 
-  /// Applied to every frame, whether or not the frame names a dictionary id.
-  /// A frame that names one is rejected unless this dictionary carries it
+  /// Applied to every frame, whether or not the frame has a dictionary id.
+  /// A frame with a dictionary id is rejected unless this dictionary has
+  /// that id
   final ZstdDictionary? dictionary;
 
   ZstdDecoder({int? windowSizeLimit, this.dictionary})
@@ -35,7 +36,7 @@ class ZstdDecoder {
   Uint8List decodeBytes(List<int> data,
       {bool verify = false, bool throwOnError = false}) {
     final bytes = data is Uint8List ? data : Uint8List.fromList(data);
-    // One frame decodes into its own buffer and is handed back as a view of it.
+    // One frame decodes into its own buffer and is returned as a view of it.
     // Several would have to be joined afterwards, holding every frame and the
     // join at once, so they go through one sink instead
     if (_frameCount(bytes) > 1) {
@@ -58,8 +59,8 @@ class ZstdDecoder {
     return parts.isEmpty ? Uint8List(0) : parts[0];
   }
 
-  /// How many frames carry content, without decoding any of them. Anything the
-  /// walk cannot make sense of reads as one, which keeps the decode itself the
+  /// How many frames have content, without decoding any of them. Anything the
+  /// scan cannot parse counts as one, which keeps the decode itself the
   /// only place that reports a malformed archive
   int _frameCount(Uint8List bytes) {
     var at = 0;
@@ -100,7 +101,7 @@ class ZstdDecoder {
     });
   }
 
-  /// Walks the frames of [input] a block at a time, so neither the compressed
+  /// Reads the frames of [input] a block at a time, so neither the compressed
   /// side nor the decoded one is ever held whole
   void _stream(InputStream input, OutputStream output, bool verify) {
     Uint8List? scratch;
@@ -185,8 +186,8 @@ class ZstdDecoder {
           return null;
         }
         total += size;
-        // Only the header was read, so the blocks have to be walked to find
-        // where the next frame starts
+        // Only the header was read, so the block headers have to be read to
+        // find where the next frame starts
         at = _skipFrame(bytes, at + 4 + header.size, header);
       }
     } catch (_) {
@@ -263,7 +264,7 @@ class ZstdDecoder {
     }
   }
 
-  /// Walks the block headers of a frame whose header ends at [start] and
+  /// Reads the block headers of a frame whose header ends at [start] and
   /// returns where the frame ends
   int _skipFrame(Uint8List bytes, int start, ZstdFrameHeader header) {
     var at = start;
@@ -282,11 +283,10 @@ class ZstdDecoder {
     return at + (header.hasChecksum ? 4 : 0);
   }
 
-  /// A declared content size is the writer's word and buys no memory on its
-  /// own. A block costs three bytes of header and yields at most
+  /// A frame can declare any content size, so the size alone reserves no
+  /// memory. A block costs three bytes of header and yields at most
   /// [blockSizeMax], so [remaining] bytes of input cannot produce more than
-  /// this however the header reads. Anything above it is left to the buffer's
-  /// own growth
+  /// this whatever the header declares. Above that the buffer grows as needed
   static int _affordable(int declared, int remaining, int blockSizeMax) {
     final ceiling = ((remaining + 2) ~/ 3) * blockSizeMax;
     return declared < ceiling ? declared : ceiling;

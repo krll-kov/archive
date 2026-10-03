@@ -102,6 +102,15 @@ class ZipFile extends FileContent {
         throw ArchiveException(
             'zip: local header of ${header?.filename} is damaged');
       }
+      final central = header;
+      if (central != null) {
+        filename = central.filename;
+        crc32 = central.crc32;
+        compressedSize = central.compressedSize;
+        uncompressedSize = central.uncompressedSize;
+        lastModFileTime = central.lastModifiedFileTime;
+        lastModFileDate = central.lastModifiedFileDate;
+      }
       return;
     }
 
@@ -586,6 +595,8 @@ class ZipFile extends FileContent {
       throw ArchivePasswordException(
           'zip: wrong or missing password for $filename');
     }
+    // Only CRC32 can detect wrong password that passed check byte, and damaged
+    // data fails CRC32 too, so verify throws ArchiveChecksumException for both
     return InputMemoryStream(_zipCryptoBody(passing.first, start));
   }
 

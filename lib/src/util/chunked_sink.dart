@@ -66,8 +66,8 @@ abstract class ChunkedSink extends ByteConversionSink {
   @override
   void add(List<int> chunk) => addSlice(chunk, 0, chunk.length, false);
 
-  /// Takes part of a buffer without cutting a view of it first,
-  /// which is what a `ByteConversionSink` is for
+  /// Takes part of a buffer without creating a view of it first, as
+  /// `ByteConversionSink` allows
   @override
   void addSlice(List<int> chunk, int start, int end, bool isLast) {
     RangeError.checkValidRange(start, end, chunk.length);
@@ -145,8 +145,8 @@ abstract class ChunkedSink extends ByteConversionSink {
 
   /// Runs a piece of the parse and remembers a failure, so that the next call
   /// reports the same one rather than reading what follows it as if nothing
-  /// had happened. What a codec's core throws at corrupt data is whatever it
-  /// ran into, and this is where that becomes one kind of failure
+  /// had happened. A codec's core throws whatever error it hits on corrupt
+  /// data, and here that becomes one kind of failure
   void _guarded(void Function() body) {
     try {
       body();
@@ -290,7 +290,7 @@ class _Collected implements Sink<List<int>> {
 const _streamPiece = 1 << 16;
 
 /// The output side of a chunked codec: what a codec's core writes into an
-/// `OutputStream`, handed to a `Sink` piece by piece.
+/// `OutputStream`, sent to a `Sink` piece by piece.
 ///
 /// Every range is copied on the way out. The core writes ranges of a buffer it
 /// keeps using, so a sink that held a view of one would see it change
@@ -304,7 +304,7 @@ class SinkOutputStream extends OutputStream {
   var written = 0;
 
   /// Where the bytes go instead of the sink, for the stretch a filter has to
-  /// read back before anything may be handed over
+  /// read back before anything may be sent
   OutputMemoryStream? get divert => _divert;
   OutputMemoryStream? _divert;
 
@@ -391,7 +391,7 @@ class SinkOutputStream extends OutputStream {
       held.writeBytes(piece);
       return;
     }
-    // A range the core wrote can be megabytes, and a sink handed it in one go
+    // A range the core wrote can be megabytes, and a sink given it in one go
     // has no way to hold the codec back while it deals with it
     if (piece.length >= _streamPiece) {
       _drain();
@@ -432,7 +432,7 @@ class SinkOutputStream extends OutputStream {
   /// Drops the count and anything still buffered. Bytes already sent to the
   /// sink cannot be taken back.
   ///
-  /// Dropping is what the other outputs do: `OutputMemoryStream.clear` sets its
+  /// The other outputs drop too: `OutputMemoryStream.clear` sets its
   /// length to zero and `OutputFileStream.clear` closes the file. `dart:io` has
   /// no such method to follow. Nothing in the package calls this on a sink:
   /// `Inflate` clears only an [OutputMemoryStream], and `Deflate` clears from
@@ -443,8 +443,8 @@ class SinkOutputStream extends OutputStream {
     _queued = 0;
   }
 
-  /// Hands over whatever is queued. Every codec calls this when it is done,
-  /// which is what makes the gathering safe
+  /// Sends whatever is queued. Every codec calls this when it is done, which
+  /// makes the gathering safe
   @override
   void flush() => _drain();
 

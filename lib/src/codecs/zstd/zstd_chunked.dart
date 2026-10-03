@@ -27,14 +27,14 @@ import 'zstd_window.dart';
 /// {@macro archive.yield_codecs.decoder}
 /// {@macro archive.converters.encoder}
 class ZstdCodec extends Codec<List<int>, List<int>> {
-  /// Checks the XXH64 of every frame that carries one
+  /// Checks the XXH64 of every frame that has one
   final bool verify;
 
   /// What a frame may name to reach back into
   final ZstdDictionary? dictionary;
 
   /// Refuses a frame whose window is wider than this. It stops an archive from
-  /// naming an allocation
+  /// requesting an arbitrary allocation
   final int windowSizeLimit;
 
   const ZstdCodec(
@@ -52,7 +52,7 @@ class ZstdCodec extends Codec<List<int>, List<int>> {
   /// What [ZstdEncoderConverter.level] uses
   final int level;
 
-  /// Whether a frame this writes carries an XXH64 of its content
+  /// Whether a written frame has an XXH64 of its content
   final bool frameChecksum;
 
   /// {@macro archive.yield_codecs_multithreaded_example}
@@ -78,9 +78,9 @@ const zstdCodec = ZstdCodec();
 /// {@macro archive.codecs.without_on_done}
 /// {@macro archive.yield_codecs.decoder}
 class ZstdDecoderConverter extends ChunkedConverter {
-  /// Checks the XXH64 of every frame that carries one. On by default: a caller
-  /// reading a stream has handed the compressed bytes back by the time the
-  /// check would be made, so there is no second chance at it
+  /// Checks the XXH64 of every frame that has one. On by default: a stream
+  /// reader releases the compressed bytes before the check runs, so it cannot
+  /// be run again later
   final bool verify;
 
   final ZstdDictionary? dictionary;
@@ -107,7 +107,7 @@ class ZstdDecoderConverter extends ChunkedConverter {
 class ZstdEncoderConverter extends ChunkedConverter {
   final int level;
 
-  /// Whether the frame carries an XXH64 of its content
+  /// Whether the frame has an XXH64 of its content
   final bool checksum;
 
   /// `startChunkedConversion` cannot take this option. Its sink writes its
@@ -252,10 +252,10 @@ class ZstdEncoderConverter extends ChunkedConverter {
 
 /// Writes one zstd frame over data that arrives in pieces.
 ///
-/// `ZSTD_compressStream2` hands its own buffer one block of input at a time and
-/// lets the block splitter cut inside that one block. That is what makes a
-/// streamed archive differ from the one the whole input would give. This does
-/// the same: it gathers a block, then encodes what has gathered
+/// `ZSTD_compressStream2` fills its own buffer one block of input at a time and
+/// lets the block splitter cut inside that one block, so a streamed archive
+/// differs from the one the whole input would give. This does the same: it
+/// gathers a block, then encodes it
 class ZstdChunkedEncoder extends ChunkedSink {
   final int level;
   final bool checksum;
@@ -314,11 +314,11 @@ class ZstdChunkedEncoder extends ChunkedSink {
   var _savings = 0;
   var _started = false;
 
-  /// How much of the content has been taken in. It says where the reference's
-  /// input ring is
+  /// How many bytes of content have been received. It gives the position of
+  /// the reference's input ring
   var _content = 0;
 
-  /// `inBuffSize`, the ring the reference gathers into. It hands one
+  /// `inBuffSize`, the ring the reference gathers into. It passes one
   /// `blockSizeMax` to the compressor at a time and starts over once the next
   /// one would not fit, so it wraps on every multiple of this
   late final int _ring = _windowSize + _blockSizeMax;
@@ -484,8 +484,8 @@ class ZstdChunkedEncoder extends ChunkedSink {
     writeZstdMtStreamHeader(_out, checksum, level, _encodeDictionary?.id ?? 0);
   }
 
-  /// The header of a frame whose content turned out to be nothing: the single
-  /// segment flag stands in for the window, and the size follows it in one byte
+  /// The header of a frame whose content is empty: the single segment flag
+  /// replaces the window byte, and the size follows it in one byte
   void _writeEmptyHeader() {
     _started = true;
     writeZstdMtStreamHeader(
@@ -495,8 +495,8 @@ class ZstdChunkedEncoder extends ChunkedSink {
 
 /// Decodes a zstd archive that arrives in pieces.
 ///
-/// The unit of progress is one block, at most 128 KiB, so what is held is the
-/// frame's window and one block, whatever the archive weighs
+/// The unit of progress is one block, at most 128 KiB, so memory holds the
+/// frame's window and one block regardless of archive size
 class ZstdChunkedDecoder extends ChunkedSink {
   final bool verify;
   final ZstdDictionary? dictionary;
@@ -612,8 +612,8 @@ class ZstdChunkedDecoder extends ChunkedSink {
     if (_stage != _Stage.magic || available != 0) {
       throw ArchiveException('zstd: unexpected end of archive');
     }
-    // Skippable frames on their own decode to nothing rather than failing,
-    // which is what the reference does with them
+    // An input of only skippable frames decodes to nothing rather than
+    // failing, as the reference does
     if (_frames == 0 && _skipped == 0) {
       throw ArchiveException('zstd: no frame, the input is empty');
     }
@@ -637,7 +637,7 @@ class ZstdChunkedDecoder extends ChunkedSink {
     _stage = _Stage.frameHeader;
   }
 
-  /// What the descriptor says the rest of the header weighs: the window byte
+  /// Size of the rest of the header, from the descriptor: the window byte
   /// unless the frame is one segment, the dictionary id, and the content size
   static int _headerSize(int descriptor) {
     const fcsSizes = [0, 2, 4, 8];

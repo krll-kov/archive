@@ -662,7 +662,7 @@ class TarMetadata {
     }
   }
 
-  /// Takes what such a header carries, its content already in `rawContent`
+  /// Reads long name, link or PAX records from `rawContent` of [file]
   bool take(TarFile file, [Encoding? encoding]) {
     // GNU tar puts filenames in files when they exceed tar's native length.
     // Both kinds are named '././@LongLink', so only the type flag says
@@ -841,7 +841,7 @@ class TarMetadata {
     return value < 0 || value == TarFile.maxNumericField ? null : value;
   }
 
-  /// Records are "%d %s=%s\n", the length covering the whole record. Walked by
+  /// Records are "%d %s=%s\n", the length covering the whole record. Parsed by
   /// that length rather than split on newlines, and not decoded as UTF-8 up
   /// front: SCHILY.xattr and its kind hold raw bytes with embedded newlines
   void _readRecords(List<int> records) {

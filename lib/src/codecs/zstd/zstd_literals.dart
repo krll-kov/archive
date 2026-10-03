@@ -29,7 +29,7 @@ class ZstdLiterals {
   final Uint32List _lengths = Uint32List(4);
   bool _hasTable = false;
 
-  /// A tree never carries across frames
+  /// A tree is never kept across frames
   void reset() {
     _hasTable = false;
     length = 0;
@@ -160,7 +160,7 @@ class ZstdLiterals {
     return headerSize + compressed;
   }
 
-  /// The jump table gives the first three sizes, the fourth is what is left
+  /// The jump table gives the first three sizes, the fourth is the remainder
   void _decodeFour(Uint8List src, int at, int streamsSize, int regenerated) {
     if (streamsSize < 10) {
       _fourStreamsNeedAt();
@@ -195,7 +195,7 @@ class ZstdLiterals {
   }
 }
 
-/// Every throw here lives out of line: inline, the exception's own
+/// Every throw here is moved out of line: inline, the exception's own
 /// construction puts an allocation and a call into a function that is
 /// otherwise straight-line work, and costs registers where nothing throws
 @pragma('vm:never-inline')

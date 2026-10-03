@@ -422,9 +422,14 @@ class TarEntry {
 Stream<TarEntry> _read(
     _Reader reader, Encoding encoding, CancelSignal signal) async* {
   final metadata = TarMetadata();
+  var first = true;
   try {
     while (true) {
       final header = await reader.exact(512);
+      if (header == null && first) {
+        throw ArchiveException('tar: unexpected end of archive');
+      }
+      first = false;
       // A block of zeros ends the archive; padding or another archive follows
       if (header == null || _allZero(header)) {
         break;

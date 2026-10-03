@@ -252,6 +252,39 @@ void main() {
       }
     });
 
+    test('a source error and then a cut archive give two errors, as utf8 does',
+        () async {
+      Stream<List<int>> halfThenError(List<int> input) async* {
+        yield input.sublist(0, input.length ~/ 2);
+        throw StateError('source failed');
+      }
+
+      final decoders = <String, (Converter<List<int>, Object>, List<int>)>{
+        'utf8.decoder': (utf8.decoder, [0x61, 0xe2, 0x82, 0xac]),
+        'xzCodec.decoder': (xzCodec.decoder, xzCodec.encode(_sample(100000))),
+        'zstdCodec.decoder': (
+          zstdCodec.decoder,
+          zstdCodec.encode(_sample(100000))
+        ),
+        'bzip2Codec.decoder': (
+          bzip2Codec.decoder,
+          bzip2Codec.encode(_sample(100000))
+        ),
+      };
+      for (final MapEntry(key: name, value: (decoder, input))
+          in decoders.entries) {
+        final errors = <Object>[];
+        final subscription = halfThenError(input)
+            .transform(decoder)
+            .listen((_) {}, onError: errors.add);
+        await pumpEventQueue();
+        await subscription.cancel();
+        expect(errors, hasLength(2), reason: name);
+        expect(errors.first, isA<StateError>(), reason: name);
+        expect(errors.last, isA<FormatException>(), reason: name);
+      }
+    });
+
     // We behave like gzip.decoder in dart:io. After a failure a decoder drops
     // the rest of the input and never closes the stream. The listener ends it.
     // await for, pipe and toList cancel at the first error on their own. A

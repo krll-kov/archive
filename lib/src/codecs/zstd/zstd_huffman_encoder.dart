@@ -571,8 +571,8 @@ class ZstdHuffmanEncoder {
     return write - at;
   }
 
-  /// Symbols go in from the last to the first, so the reader walking the bytes
-  /// backwards sees them in order
+  /// Symbols go in from the last to the first, so the reader, which reads the
+  /// bytes backwards, gets them in order
   int _encodeOne(Uint8List out, int at, Uint8List src, int start, int end) {
     if (!zstdUse64Bit) {
       final writer = ZstdBitWriter(ByteData.sublistView(out), at);
@@ -586,7 +586,7 @@ class ZstdHuffmanEncoder {
       }
       return writer.close() - at;
     }
-    // The counts below are masked so the shifts carry no range guard
+    // The counts below are masked so the shifts compile without a range guard
     final view = ByteData.sublistView(out);
     final elt = _elt;
     var held = 0;

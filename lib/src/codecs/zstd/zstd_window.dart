@@ -51,8 +51,8 @@ class ZstdWindow {
     }
     final sink = output;
     if (sink != null) {
-      // A whole window of output stands in front of the dictionary, so nothing
-      // can reach it any more
+      // A whole window of output follows the dictionary, so no match can
+      // reach it any more
       if (origin > 0 && position - origin >= windowSize) {
         buffer.setRange(0, position - origin, buffer, origin);
         position -= origin;
@@ -61,11 +61,11 @@ class ZstdWindow {
       }
       // `ZSTD_decompressStream` restarts at the head of its buffer rather than
       // sliding: the pass just written stays put and becomes the history a
-      // match reaches back into, so nothing is ever moved. What is overwritten
-      // from here on is only what has fallen out of the window
+      // match reaches back into, so nothing is ever moved. From here on only
+      // data outside the window is overwritten
       // The pass has to end far enough in that a match at the widest offset
-      // still lands above what this pass will overwrite. So the buffer carries
-      // two blocks' room rather than one
+      // still points above what this pass will overwrite, so the buffer has
+      // room for two blocks rather than one
       if (origin == 0 &&
           need == blockReserve &&
           position >= windowSize + need) {
@@ -94,8 +94,8 @@ class ZstdWindow {
   void finish() {
     final sink = output;
     if (sink != null && position > origin) {
-      // A whole window handed over at once is a whole window the sink may copy,
-      // so the tail goes out in pieces the size of a block
+      // The sink may copy every piece it gets, so the tail is sent in
+      // block-size pieces rather than as a whole window at once
       _flush(sink, emitted > origin ? emitted : origin, position);
       flushed += position - origin;
       position = 0;
@@ -128,7 +128,7 @@ class ZstdWindow {
     var size = capacity == 0 ? wanted : capacity;
     // Slack above the window, so sliding the history down happens once per
     // slack bytes rather than once per block. Without it a wide window is moved
-    // whole for every block. That is what the output costs, not the decode
+    // whole for every block. This cost comes from the output, not the decode
     final ceiling = bounded ? origin + windowSize + 2 * need : 0;
     while (size < wanted) {
       size <<= 1;
