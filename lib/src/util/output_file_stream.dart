@@ -143,7 +143,12 @@ class OutputFileStream extends OutputStream {
     }
 
     flush();
-    _fileHandle.writeFromSync(bytes, 0, length);
+    if (bytes is Uint8List && length <= bytes.length) {
+      _fileHandle.writeFromSync(Uint8List.view(bytes.buffer),
+          bytes.offsetInBytes, bytes.offsetInBytes + length);
+    } else {
+      _fileHandle.writeFromSync(bytes, 0, length);
+    }
     _length += length;
   }
 

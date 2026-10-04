@@ -71,7 +71,7 @@ class BZip2Decoder {
       //throw ArchiveException('Invalid BlockSize');
     }
 
-    _tt = Uint32List(_blockSize100k * 100000);
+    _tt = Uint32List(_ttStartSize);
 
     var combinedCrc = 0;
 
@@ -132,7 +132,7 @@ class BZip2Decoder {
   /// to do the setup
   void beginStream(int blockSize100k) {
     _blockSize100k = blockSize100k;
-    _tt = Uint32List(_blockSize100k * 100000);
+    _tt = Uint32List(_ttStartSize);
     _groupPos = 0;
     _groupNo = 0;
     _gSel = 0;
@@ -375,6 +375,9 @@ class BZip2Decoder {
         uc = _seqToUnseq[_mtfa[_mtfbase[0]]];
         _unzftab[uc] += es;
 
+        if (nblock + es > _tt.length) {
+          _growTt(nblock + es, nblockMAX);
+        }
         while (es > 0) {
           if (nblock >= nblockMAX) {
             return -1;
@@ -445,6 +448,9 @@ class BZip2Decoder {
 
         // end uc = MTF ( nextSym-1 )
         _unzftab[_seqToUnseq[uc]]++;
+        if (nblock == _tt.length) {
+          _growTt(nblock + 1, nblockMAX);
+        }
         _tt[nblock] = (_seqToUnseq[uc]);
         nblock++;
 
@@ -891,6 +897,21 @@ class BZip2Decoder {
       }
     }
   }
+
+  void _growTt(int needed, int max) {
+    var size = _tt.length * 2;
+    if (size < needed) {
+      size = needed;
+    }
+    if (size > max) {
+      size = max;
+    }
+    if (size > _tt.length) {
+      _tt = Uint32List(size)..setRange(0, _tt.length, _tt);
+    }
+  }
+
+  static const _ttStartSize = 1 << 14;
 
   late int _blockSize100k;
   late Uint32List _tt;

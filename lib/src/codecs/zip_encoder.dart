@@ -11,17 +11,22 @@ import '../util/archive_exception.dart';
 import '../util/byte_order.dart';
 import '../util/chunked_sink.dart';
 import '../util/crc32.dart';
+import '../util/file_content.dart';
 import '../util/input_memory_stream.dart';
 import '../util/input_stream.dart';
 import '../util/output_memory_stream.dart';
 import '../util/output_stream.dart';
+import 'bzip2/bzip2_chunked.dart';
 import 'bzip2_encoder.dart';
+import 'xz/xz_chunked.dart';
 import 'xz_encoder.dart';
 import 'zip/zip_directory.dart';
 import 'zip/zip_file.dart';
 import 'zip/zip_file_header.dart';
 import 'zlib/_zlib_encoder.dart';
+import 'zlib/_zlib_encoder_base.dart';
 import 'zlib/deflate.dart';
+import 'zstd/zstd_chunked.dart';
 import 'zstd/zstd_level_params.dart';
 import 'zstd_encoder.dart';
 
@@ -49,7 +54,7 @@ class _ZipFileData {
   /// the output rather than into a buffer first
   InputStream? source;
 
-  /// What [source] is deflated at, resolved where the entry is added: the
+  /// What [source] is compressed at, resolved where the entry is added: the
   /// buffered path reads the same three places and must not disagree with it
   int level = 6;
 
@@ -138,6 +143,11 @@ class ZipEncoder {
 
   static const _dataDescriptorSignature = 0x08074b50;
 
+  /// An entry up to this size is compressed and written in one piece. A stream
+  /// encoder on each of 10000 entries of 100 to 400 bytes was 29% slower with
+  /// zstd and 37% with xz
+  static const _bufferedMax = 1 << 20;
+
   /// Bit 1 of the general purpose flag, File encryption flag
   static const fileEncryptionBit = 1;
 
@@ -167,7 +177,21 @@ class ZipEncoder {
       DateTime? modified,
       bool autoClose = false,
       ArchiveCallback? callback}) {
-    output ??= OutputMemoryStream();
+    if (output == null) {
+      var headers = 22;
+      var stored = 0;
+      for (final file in archive) {
+        headers += 128 + 3 * file.name.length;
+        final content = file.rawContent;
+        if (file.compression == CompressionType.none &&
+            content is FileContentMemory) {
+          stored += content.length;
+        }
+      }
+      output = stored > 0
+          ? OutputMemoryStream(size: headers + stored)
+          : OutputMemoryStream();
+    }
     encodeStream(archive, output,
         level: level,
         modified: modified,
@@ -279,7 +303,8 @@ class ZipEncoder {
           ?.finish();
 
   /// Writes [entry]'s local header and returns its body. Null if the entry is
-  /// already written whole, everything but a streamed deflate
+  /// already written whole, everything but a streamed deflate and, without a
+  /// password, an entry with more than 1 MiB to write
   ZipEntryBody? addHeader(ArchiveFile entry,
       {bool autoClose = true, ArchiveCallback? callback, int? level}) {
     final fileData = _ZipFileData();
@@ -384,12 +409,20 @@ class ZipEncoder {
           compressionType = CompressionType.deflate;
         }
         if (compressionType == CompressionType.xz &&
+            file.size == 0 &&
             (file.rawContent?.length ?? 0) == 0) {
           compressionType = CompressionType.none;
         }
         final streamedDeflate = streamed &&
             compressionType == CompressionType.deflate &&
             password == null;
+        final streamedOther = streamed &&
+            password == null &&
+            (compressionType == CompressionType.zstd ||
+                compressionType == CompressionType.xz ||
+                compressionType == CompressionType.bzip2) &&
+            file.rawContent != null &&
+            file.size > _bufferedMax;
         if (!streamedDeflate) {
           crc32 = getFileCrc32(file);
         }
@@ -406,6 +439,16 @@ class ZipEncoder {
         if (file.rawContent == null) {
           compressionType = CompressionType.none;
           compressedData = InputMemoryStream(Uint8List(0));
+        } else if (streamedOther) {
+          final requested = level ?? file.compressionLevel ?? _data.level;
+          fileData.level =
+              requested == null || requested < 1 ? zstdDefaultLevel : requested;
+          fileData.source = file.rawContent?.getStream(decompress: false);
+          fileData.source?.reset();
+          // Of zstd, xz and bzip2, bzip2 grows data that does not compress the
+          // most, by up to 1% and 600 bytes
+          final size = entry.size;
+          fileData.zip64 = size + (size >> 6) + 4096 > 0xFFFFFFFF;
         } else if (streamedDeflate) {
           fileData.level = chosen;
           fileData.source = file.rawContent?.getStream(decompress: false);
@@ -691,6 +734,10 @@ class ZipEncoder {
       // Deflated straight into the output, so its length is only known once it
       // is there, and it goes into the descriptor behind the data
       return ZipEntryBody._(source, output, fileData, done);
+    } else if (compressedData != null &&
+        password == null &&
+        compressedData.length > _bufferedMax) {
+      return ZipEntryBody._(compressedData, output, fileData, done);
     } else if (compressedData != null) {
       // local file data
       final at = compressedData.position;
@@ -875,14 +922,17 @@ class ZipEncoder {
   static const _osUnix = 3;
 }
 
-/// Deflates one entry a piece at a time. Call [step] until it returns false,
+/// Writes one entry a piece at a time. Call [step] until it returns false,
 /// then [finish]. This lets a caller pass the bytes on before the whole entry
 /// is compressed
 class ZipEntryBody {
   ZipEntryBody._(this._source, this._output, this._data, this._done)
       : _before = _output.length,
-        _sink = platformZLibEncoder.startEncode(_output,
-            level: _data.level, raw: true);
+        _start = _source.position,
+        _sink = _data.deferred && _data.compression == CompressionType.deflate
+            ? platformZLibEncoder.startEncode(_output,
+                level: _data.level, raw: true)
+            : null;
 
   /// How much one [step] deflates. It still feeds the deflate in 1024 byte
   /// reads, so the output bytes do not change
@@ -893,14 +943,23 @@ class ZipEntryBody {
   final _ZipFileData _data;
   final void Function() _done;
   final int _before;
+  final int _start;
 
-  /// Null on the web, where deflate only runs whole. Then [finish] does the
-  /// entry in one call
+  /// Null on the web, where deflate only runs whole, and on an entry that is
+  /// not a deflate. Then [finish] does a web deflate in one call
   final Sink<List<int>>? _sink;
+
+  Sink<List<int>>? _encoder;
 
   var _closed = false;
 
   bool step() {
+    if (!_data.deferred) {
+      return _copy();
+    }
+    if (_data.compression != CompressionType.deflate) {
+      return _encode();
+    }
     final sink = _sink;
     if (sink == null || _closed || _source.isEOS) {
       return false;
@@ -923,6 +982,30 @@ class ZipEntryBody {
     return true;
   }
 
+  bool _copy() {
+    final take = _source.length < _piece ? _source.length : _piece;
+    if (_closed || take <= 0) {
+      return false;
+    }
+    _output.writeBytes(_source.readBytes(take).toUint8List());
+    return true;
+  }
+
+  bool _encode() {
+    final take = _source.length < _piece ? _source.length : _piece;
+    if (_closed || take <= 0) {
+      return false;
+    }
+    final encoder = _encoder ??= switch (_data.compression) {
+      CompressionType.zstd => ZstdChunkedEncoder(ZLibOutputSink(_output),
+          level: _data.level, contentSize: _source.length),
+      CompressionType.xz => XzChunkedEncoder(ZLibOutputSink(_output)),
+      _ => BZip2ChunkedEncoder(ZLibOutputSink(_output)),
+    };
+    encoder.add(_source.readBytes(take).toUint8List());
+    return true;
+  }
+
   /// Lets the entry go without finishing it. The archive is being abandoned,
   /// so we skip the descriptor and only release what the entry holds
   void cancel() {
@@ -931,18 +1014,32 @@ class ZipEntryBody {
     }
     _closed = true;
     _sink?.close();
-    _source.reset();
+    _encoder = null;
+    if (_data.deferred) {
+      _source.reset();
+    } else {
+      _source.setPosition(_start);
+    }
     _done();
   }
 
-  /// Deflates what is left, then writes the crc and the sizes that the local
-  /// header skipped
+  /// Compresses what is left, then writes the crc and the sizes that the local
+  /// header skipped. A copied entry has them in its local header
   void finish() {
     if (_closed) {
       return;
     }
+    if (!_data.deferred) {
+      _output.writeStream(_source);
+      _closed = true;
+      _source.setPosition(_start);
+      _done();
+      return;
+    }
     final sink = _sink;
-    if (sink == null) {
+    if (_data.compression != CompressionType.deflate) {
+      _finishEncoder();
+    } else if (sink == null) {
       final bytes = _source.toUint8List();
       _data.crc32 = getCrc32(bytes);
       platformZLibEncoder.encodeStream(InputMemoryStream(bytes), _output,
@@ -967,5 +1064,24 @@ class ZipEntryBody {
         ..writeUint32(_data.uncompressedSize);
     }
     _done();
+  }
+
+  void _finishEncoder() {
+    final encoder = _encoder;
+    if (encoder != null) {
+      while (_encode()) {}
+      encoder.close();
+      return;
+    }
+    // ZstdChunkedEncoder was 4% slower on 100 MB and wrote other frames than
+    // the buffered path on 10 MB, so an entry without steps keeps encodeStream
+    switch (_data.compression) {
+      case CompressionType.zstd:
+        ZstdEncoder().encodeStream(_source, _output, level: _data.level);
+      case CompressionType.xz:
+        XZEncoder().encodeStream(_source, _output);
+      default:
+        BZip2Encoder().encodeStream(_source, _output);
+    }
   }
 }

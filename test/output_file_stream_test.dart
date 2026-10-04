@@ -90,6 +90,22 @@ void main() {
       expect(readAll(handle), Uint8List.sublistView(bytes, 10));
     });
 
+    test('writeBytes of a view writes the bytes of the view', () {
+      final handle = RamFileHandle.asWritableRamBuffer();
+      final out = OutputFileStream.toRamFile(handle, bufferSize: 16);
+      final bytes = Uint8List.fromList(List.generate(100, (i) => i));
+      out
+        ..writeBytes(Uint8List.sublistView(bytes, 10, 90))
+        ..writeBytes(Uint8List.sublistView(bytes, 3, 7))
+        ..writeBytes(Uint8List.sublistView(bytes, 20, 60), length: 30);
+      out.flush();
+      expect(readAll(handle), [
+        ...bytes.sublist(10, 90),
+        ...bytes.sublist(3, 7),
+        ...bytes.sublist(20, 50),
+      ]);
+    });
+
     test('zstd decodeStream into it is byte exact', () {
       // Three megabytes, so the window flushes in ranges that start past zero
       var seed = 1;

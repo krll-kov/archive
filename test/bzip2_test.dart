@@ -231,6 +231,36 @@ void main() {
     expect(output.getBytes(), data);
     expect(bzip2Codec.decode(archive), data);
   });
+
+  test('blocks above 16384 symbols decode on every path', () {
+    var seed = 1;
+    final noise = List.generate(60000, (_) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed >> 16 & 0xff;
+    });
+    final runs = [for (var i = 0; i < 400; i++) ...List.filled(400, i % 7)];
+    for (final data in [
+      Uint8List.fromList(noise),
+      Uint8List.fromList(runs),
+      Uint8List.fromList([...noise, ...runs, ...noise, ...runs]),
+    ]) {
+      for (final blockSize100k in [1, 9]) {
+        final archive =
+            BZip2Encoder().encodeBytes(data, blockSize100k: blockSize100k);
+        final reason = '${data.length} bytes, blockSize100k $blockSize100k';
+        expect(BZip2Decoder().decodeBytes(archive, verify: true), data,
+            reason: reason);
+        final output = OutputMemoryStream();
+        expect(
+            BZip2Decoder()
+                .decodeStream(InputMemoryStream(archive), output, verify: true),
+            isTrue,
+            reason: reason);
+        expect(output.getBytes(), data, reason: reason);
+        expect(bzip2Codec.decode(archive), data, reason: reason);
+      }
+    }
+  });
 }
 
 Uint8List _randomised(Uint8List data) {

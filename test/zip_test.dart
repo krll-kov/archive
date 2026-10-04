@@ -2598,8 +2598,8 @@ void main() async {
         CompressionType.xz,
         CompressionType.bzip2
       ]) {
-        final zip = ZipEncoder().encodeBytes(
-            Archive()..add(ArchiveFile.bytes('a.txt', data)..compression = type));
+        final zip = ZipEncoder().encodeBytes(Archive()
+          ..add(ArchiveFile.bytes('a.txt', data)..compression = type));
         final entry = ZipDecoder().decodeBytes(zip).single;
         expect(entry.compression, type);
         final out = entry.readBytes()!;
@@ -2614,6 +2614,62 @@ void main() async {
       final out = lzma.readBytes()!;
       expect(out.length, 1024);
       expect(out.buffer.lengthInBytes, out.length);
+    });
+
+    test('a streamed entry does not read its content for a length', () {
+      final data = Uint8List.fromList(
+          List.generate(1100000, (i) => (i * 7 + i ~/ 1000) & 0xff));
+      for (final type in [
+        CompressionType.none,
+        CompressionType.deflate,
+        CompressionType.zstd,
+        CompressionType.xz,
+        CompressionType.bzip2
+      ]) {
+        final zip = ZipEncoder(streamed: true).encodeBytes(Archive()
+          ..add(ArchiveFile.file('a.bin', data.length, _NoLength(data))
+            ..compression = type));
+        expect(ZipDecoder().decodeBytes(zip, verify: true).single.readBytes(),
+            data,
+            reason: '$type');
+      }
+    });
+
+    test('a streamed zstd, xz or bzip2 entry has a data descriptor', () async {
+      final data = Uint8List.fromList(
+          List.generate(1100000, (i) => (i * 7 + i ~/ 1000) & 0xff));
+      for (final type in [
+        CompressionType.zstd,
+        CompressionType.xz,
+        CompressionType.bzip2
+      ]) {
+        ArchiveFile entry() =>
+            ArchiveFile.bytes('a.bin', data)..compression = type;
+        final pieces = await Stream.fromIterable([entry()])
+            .transform(zipCodec.encoder)
+            .toList();
+        for (final (path, zip) in [
+          (
+            'encodeBytes',
+            ZipEncoder(streamed: true).encodeBytes(Archive()..add(entry()))
+          ),
+          ('zipCodec', Uint8List.fromList([for (final p in pieces) ...p])),
+        ]) {
+          final flags = ByteData.sublistView(zip).getUint16(6, Endian.little);
+          expect(flags & 0x08, 0x08, reason: '$type $path');
+          for (final (verify, throwOnError) in [
+            (false, false),
+            (true, false),
+            (false, true),
+          ]) {
+            final back = ZipDecoder()
+                .decodeBytes(zip, verify: verify, throwOnError: throwOnError)
+                .single;
+            expect(back.compression, type, reason: '$type $path');
+            expect(back.readBytes(), data, reason: '$type $path');
+          }
+        }
+      }
     });
 
     test('encode password', () {
@@ -2994,3 +3050,24 @@ int _uint32(Uint8List bytes, int at) =>
     (bytes[at + 1] << 8) |
     (bytes[at + 2] << 16) |
     (bytes[at + 3] << 24);
+
+class _NoLength extends FileContent {
+  _NoLength(this.bytes);
+
+  final Uint8List bytes;
+
+  @override
+  int get length => throw StateError('the length reads the whole entry');
+
+  @override
+  InputStream getStream({bool decompress = true}) => InputMemoryStream(bytes);
+
+  @override
+  void write(OutputStream output) => output.writeBytes(bytes);
+
+  @override
+  Future<void> close() async {}
+
+  @override
+  void closeSync() {}
+}

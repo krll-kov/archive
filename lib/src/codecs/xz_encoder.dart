@@ -123,12 +123,8 @@ class XZEncoder {
       bool hasCompressedLength = false,
       bool hasUncompressedLength = false}) {
     final inputLength = input.length;
-    final data = input.toUint8List();
-    // Covert data into LZMA2 format.
-    final lzma2 = OutputMemoryStream();
-    _writeLZMA2UncompressedData(lzma2, data);
-    _writeLZMA2EndMarker(lzma2);
-    final compressedLength = lzma2.length;
+    final chunks = (inputLength + _lzma2ChunkMax - 1) ~/ _lzma2ChunkMax;
+    final compressedLength = inputLength + chunks * 3 + 1;
 
     // Optionally write the compressed and uncompressed lengths.
     final blockLengths = OutputMemoryStream();
@@ -175,7 +171,40 @@ class XZEncoder {
     output.writeUint32(getCrc32(headerBytes));
 
     // Write block data.
-    output.writeBytes(lzma2.getBytes());
+    var crc32 = 0;
+    final crc64 = Crc64();
+    final sha256 = Sha256();
+    final start = input.position;
+    Uint8List? buffer;
+    try {
+      // Covert data into LZMA2 format.
+      for (var at = 0; at < inputLength; at += _lzma2ChunkMax) {
+        final want = inputLength - at < _lzma2ChunkMax
+            ? inputLength - at
+            : _lzma2ChunkMax;
+        var chunk = input.viewBytes(want);
+        if (chunk == null) {
+          buffer ??= Uint8List(_lzma2ChunkMax);
+          final got = input.readInto(buffer, 0, want);
+          if (got <= 0) {
+            break;
+          }
+          chunk = Uint8List.sublistView(buffer, 0, got);
+        }
+        switch (streamFlags & 0xf) {
+          case 0x01:
+            crc32 = getCrc32(chunk, crc32);
+          case 0x04:
+            crc64.update(chunk);
+          case 0x0a:
+            sha256.update(chunk, 0, chunk.length);
+        }
+        _writeLZMA2UncompressedData(output, chunk, resetDictionary: at == 0);
+      }
+    } finally {
+      input.setPosition(start);
+    }
+    _writeLZMA2EndMarker(output);
     var paddingLength = _writePadding(output, from: blockStart);
 
     // Write data checksum.
@@ -184,13 +213,13 @@ class XZEncoder {
       case 0x00: // none
         break;
       case 0x01: // CRC32
-        output.writeUint32(getCrc32(data));
+        output.writeUint32(crc32);
         break;
       case 0x04: // CRC64
-        output.writeBytes(crc64Bytes(data));
+        output.writeBytes(crc64.bytes);
         break;
       case 0x0a: // SHA-256
-        output.writeBytes(Sha256.of(data));
+        output.writeBytes(sha256.digest());
         break;
       default:
         throw 'Unknown check type $checkType';

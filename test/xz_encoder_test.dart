@@ -76,6 +76,20 @@ void main() {
       XZEncoder().encodeStream(InputMemoryStream(source), output);
       expect(Uint8List.sublistView(output.getBytes(), 3), expected);
     });
+
+    test('encodeStream reads the input one chunk at a time', () {
+      final source = _sample(200000);
+      for (final check in XZCheck.values) {
+        final expected = XZEncoder().encodeBytes(source, check: check);
+        for (final view in [true, false]) {
+          final input = _ChunkReads([0, 0, ...source], view: view)..skip(2);
+          final output = OutputMemoryStream();
+          XZEncoder().encodeStream(input, output, check: check);
+          expect(output.getBytes(), expected, reason: '$check, view $view');
+          expect(input.position, 2, reason: '$check, view $view');
+        }
+      }
+    });
   });
 
   group('xz chunked encoder', () {
@@ -187,6 +201,23 @@ void main() {
       expect(got, source);
     });
   });
+}
+
+class _ChunkReads extends InputMemoryStream {
+  _ChunkReads(super.bytes, {required this.view});
+
+  final bool view;
+
+  @override
+  Uint8List toUint8List() {
+    if (length > 1 << 16) {
+      throw StateError('read $length bytes at once');
+    }
+    return super.toUint8List();
+  }
+
+  @override
+  Uint8List? viewBytes(int count) => view ? super.viewBytes(count) : null;
 }
 
 class _Held implements Sink<List<int>> {

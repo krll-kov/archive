@@ -69,6 +69,29 @@ void main() {
       expect(ZipDecoder().decodeBytes(held.bytes).files, isEmpty);
     });
 
+    test('a stored entry above 1 MiB is written a step at a time', () {
+      final data = _source(3 << 20, 9);
+      for (final streamed in [false, true]) {
+        final held = _Held();
+        final encoder = ZipChunkedEncoder(held, streamed: streamed);
+        final body = encoder.addHeader(ArchiveFile.bytes('stored.bin', data)
+          ..compression = CompressionType.none);
+        encoder.flush();
+        expect(body, isNotNull, reason: 'streamed $streamed');
+        expect(held.bytes.length, lessThan(1 << 16),
+            reason: 'streamed $streamed');
+        var steps = 0;
+        while (body!.step()) {
+          steps++;
+        }
+        body.finish();
+        encoder.close();
+        expect(steps, greaterThan(1), reason: 'streamed $streamed');
+        final back = ZipDecoder().decodeBytes(held.bytes, verify: true);
+        expect(back.single.readBytes(), data, reason: 'streamed $streamed');
+      }
+    });
+
     test('adding after close is refused', () {
       final encoder = ZipChunkedEncoder(_Held())..close();
       expect(() => encoder.add(ArchiveFile.string('a', 'b')),
@@ -361,6 +384,35 @@ void main() {
       await source.close();
       expect(content.closed, isTrue);
     });
+
+    for (final type in [
+      CompressionType.none,
+      CompressionType.zstd,
+      CompressionType.xz,
+      CompressionType.bzip2
+    ]) {
+      for (final streamed in [true, false]) {
+        test('a cancel in a ${type.name} entry, streamed $streamed', () async {
+          final content = _ClosingInput(_source(3 << 20, 29));
+          final source = StreamController<ArchiveFile>();
+          final written = Completer<void>();
+          var length = 0;
+          final subscription = source.stream
+              .transform(ZipCodec(streamed: streamed, autoClose: true).encoder)
+              .listen((piece) {
+            length += piece.length;
+            if (length > 1 << 16 && !written.isCompleted) {
+              written.complete();
+            }
+          });
+          source.add(ArchiveFile.stream('big.bin', content)..compression = type);
+          await written.future.timeout(const Duration(seconds: 20));
+          await subscription.cancel().timeout(const Duration(seconds: 10));
+          await source.close();
+          expect(content.closed, isTrue);
+        });
+      }
+    }
 
     for (final streamed in [true, false]) {
       test('streamed $streamed: an entry is out before the next one arrives',
