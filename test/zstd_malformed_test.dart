@@ -105,31 +105,31 @@ int _firstBlock(Uint8List frame) {
 }
 
 void main() {
-  test('the fixtures decode before anything is done to them', () {
+  test('undamaged fixtures decode', () {
     expect(_agreed(_frame, 'the frame').bytes, _source);
     expect(_agreed(_plain, 'the frame without a checksum').bytes, _source);
   });
 
-  test('an empty single-segment frame accepts a zero-length RLE block', () {
+  test('empty single-segment frame accepts zero-length RLE block', () {
     final frame =
         _bytes([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x00, 0x03, 0x00, 0x00, 0x00]);
     expect(_agreed(frame, 'zero-length RLE block').bytes, isEmpty);
   });
 
-  group('zstd refuses a frame that stops early', () {
-    test('cut at every length', () {
+  group('zstd refuses truncated or padded frame', () {
+    test('truncated at every length', () {
       for (var cut = 0; cut < _frame.length; cut++) {
         _refuse(Uint8List.sublistView(_frame, 0, cut), 'cut to $cut');
       }
     });
 
-    test('cut at every length without a checksum to catch it', () {
+    test('truncated at every length without checksum', () {
       for (var cut = 0; cut < _plain.length; cut++) {
         _refuse(Uint8List.sublistView(_plain, 0, cut), 'plain cut to $cut');
       }
     });
 
-    test('a frame with bytes appended', () {
+    test('frame followed by extra bytes throws', () {
       for (final tail in [
         [0],
         [40, 181],
@@ -141,8 +141,8 @@ void main() {
     });
   });
 
-  group('zstd on a damaged frame', () {
-    test('every byte of the header, changed', () {
+  group('zstd damaged frame throws or decodes original bytes', () {
+    test('every header byte changed', () {
       final header = _firstBlock(_frame) + 3;
       for (var at = 0; at < header; at++) {
         for (final mask in [0x01, 0x40, 0xff]) {
@@ -157,7 +157,7 @@ void main() {
       }
     });
 
-    test('a thousand random single byte changes', () {
+    test('1000 random single-byte changes', () {
       final random = Random(20260913);
       for (var i = 0; i < 1000; i++) {
         final bytes = Uint8List.fromList(_frame);
@@ -171,7 +171,7 @@ void main() {
       }
     });
 
-    test('a hundred random spans overwritten', () {
+    test('100 random spans overwritten', () {
       final random = Random(13092026);
       for (var i = 0; i < 100; i++) {
         final bytes = Uint8List.fromList(_frame);
@@ -189,19 +189,19 @@ void main() {
     });
   });
 
-  group('zstd refuses a frame header that cannot be honoured', () {
-    test('the reserved bit of the descriptor', () {
+  group('zstd refuses invalid frame header', () {
+    test('reserved descriptor bit set', () {
       final bytes = Uint8List.fromList(_frame)..[4] |= 0x08;
       _refuse(bytes, 'reserved descriptor bit');
     });
 
-    test('a window wider than the limit', () {
+    test('window wider than limit', () {
       // The widest window descriptor, 3.5 TB, which no limit allows
       _refuse(_bytes([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0xff, 0, 0, 0]),
           'window above the limit');
     });
 
-    test('a dictionary this decoder does not have', () {
+    test('dictionary id without matching dictionary', () {
       final dictionary = ZstdDictionary(
           File('test/_data/zstd/dict-trained.dict').readAsBytesSync());
       expect(dictionary.id, isNot(0));
@@ -209,14 +209,14 @@ void main() {
           'a frame naming a dictionary');
     }, testOn: 'vm');
 
-    test('a content size the frame does not produce', () {
+    test('content size that frame does not produce', () {
       for (final declared in [1, 79999, 80001, 1 << 20]) {
         final frame = _declaring(declared);
         _refuse(frame, 'declared $declared against 80000');
       }
     });
 
-    test('a content size no machine could hold', () {
+    test('content size too large to allocate', () {
       // The claim alone must buy no memory: the frame is sixteen bytes
       for (final declared in [
         1 << 30,
@@ -235,7 +235,7 @@ void main() {
       }
     }, testOn: 'vm');
 
-    test('a header that stops inside its fields', () {
+    test('header truncated inside its fields', () {
       for (final head in [
         [0x28, 0xb5, 0x2f, 0xfd],
         [0x28, 0xb5, 0x2f, 0xfd, 0xa0],
@@ -247,14 +247,14 @@ void main() {
     });
   });
 
-  group('zstd refuses a block that cannot be honoured', () {
-    test('the reserved block type', () {
+  group('zstd refuses invalid block', () {
+    test('reserved block type', () {
       final at = _firstBlock(_plain);
       final bytes = Uint8List.fromList(_plain)..[at] |= 6;
       _refuse(bytes, 'block type three');
     });
 
-    test('a block larger than the frame allows', () {
+    test('block larger than frame allows', () {
       final at = _firstBlock(_plain);
       final bytes = Uint8List.fromList(_plain);
       bytes[at] |= 0xf8;
@@ -263,18 +263,18 @@ void main() {
       _refuse(bytes, 'block above the block maximum');
     });
 
-    test('an RLE block with no byte to repeat', () {
+    test('RLE block without byte to repeat', () {
       _refuse(_bytes([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x00, 0x1b, 0x00, 0x00]),
           'RLE block without its byte');
     });
 
-    test('a raw block that runs past the input', () {
+    test('raw block running past input end', () {
       _refuse(
           _bytes([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x00, 0x21, 0x00, 0x00, 1, 2]),
           'raw block of four with two bytes left');
     });
 
-    test('a frame whose blocks never end', () {
+    test('frame without last block', () {
       // Every block says another follows, and then the input stops
       _refuse(
           _bytes([
@@ -285,7 +285,7 @@ void main() {
           'no last block');
     });
 
-    test('literals that claim more than a block', () {
+    test('literals larger than block', () {
       final at = _firstBlock(_plain) + 3;
       final bytes = Uint8List.fromList(_plain);
       bytes[at] = 0x0e;
@@ -296,7 +296,7 @@ void main() {
       _refuse(bytes, 'literals above the block maximum');
     });
 
-    test('treeless literals with no earlier tree', () {
+    test('treeless literals without previous tree', () {
       final at = _firstBlock(_plain) + 3;
       final bytes = Uint8List.fromList(_plain);
       bytes[at] = (bytes[at] & ~3) | 3;
@@ -304,7 +304,7 @@ void main() {
     });
   });
 
-  group('zstd on the frames around a frame', () {
+  group('zstd frames around frame', () {
     test('every skippable magic is skipped', () {
       for (var low = 0x50; low <= 0x5f; low++) {
         final archive = _bytes([low, 0x2a, 0x4d, 0x18, 2, 0, 0, 0, 9, 9]);
@@ -314,7 +314,7 @@ void main() {
       }
     });
 
-    test('a skippable frame that claims more than is there', () {
+    test('skippable frame size past input end throws', () {
       for (final size in [1, 16, 0x7fffffff]) {
         final head = Uint8List(8);
         head.setRange(0, 4, [0x50, 0x2a, 0x4d, 0x18]);
@@ -323,7 +323,7 @@ void main() {
       }
     });
 
-    test('a skippable frame between two frames', () {
+    test('skippable frame between 2 frames is skipped', () {
       final archive = _bytes([
         ..._frame,
         0x50, 0x2a, 0x4d, 0x18, 4, 0, 0, 0, 1, 2, 3, 4, //
@@ -333,13 +333,13 @@ void main() {
           [..._source, ..._source]);
     });
 
-    test('a second frame that is damaged', () {
+    test('damaged second frame throws', () {
       final second = Uint8List.fromList(_frame);
       second[second.length - 6] ^= 0xff;
       _refuse(_bytes([..._frame, ...second]), 'the second frame is damaged');
     });
 
-    test('what is not zstd at all', () {
+    test('input that is not zstd throws', () {
       for (final bytes in [
         [1, 2, 3, 4, 5, 6, 7, 8],
         [0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0],
@@ -351,15 +351,15 @@ void main() {
     });
   });
 
-  group('zstd on a damaged checksum', () {
-    test('the four checksum bytes, each changed', () {
+  group('zstd damaged checksum', () {
+    test('each of 4 changed checksum bytes throws', () {
       for (var at = _frame.length - 4; at < _frame.length; at++) {
         final bytes = Uint8List.fromList(_frame)..[at] ^= 0xff;
         _refuse(bytes, 'checksum byte $at');
       }
     });
 
-    test('a wrong checksum passes when the check is off', () {
+    test('wrong checksum passes with verify false', () {
       final bytes = Uint8List.fromList(_frame)..[_frame.length - 1] ^= 0xff;
       expect(ZstdDecoder().decodeBytes(bytes, throwOnError: true), _source);
       final output = OutputMemoryStream();
@@ -373,7 +373,7 @@ void main() {
 
   // A threaded frame cuts its blocks where the single threaded one does not,
   // so it is a different walk for the decoder and worth damaging on its own
-  group('zstd on a frame the workers wrote', () {
+  group('zstd frame written by workers', () {
     late Uint8List source;
     late Uint8List frame;
 
@@ -391,17 +391,17 @@ void main() {
       frame = await done.future;
     });
 
-    test('it decodes on every path', () {
+    test('decodes on every path', () {
       expect(_agreed(frame, 'the threaded frame').bytes, source);
     });
 
-    test('cut short, it is refused on every path', () {
+    test('truncated, throws on every path', () {
       for (var cut = 1; cut < frame.length; cut += 997) {
         _refuse(Uint8List.sublistView(frame, 0, cut), 'threaded cut to $cut');
       }
     });
 
-    test('damaged, it is caught or harmless on every path', () {
+    test('damaged, throws or decodes same on every path', () {
       final random = Random(9132026);
       for (var i = 0; i < 200; i++) {
         final bytes = Uint8List.fromList(frame);
@@ -416,7 +416,7 @@ void main() {
     });
   }, testOn: 'vm');
 
-  test('a damaged archive yields what decoded before the failure', () {
+  test('damaged archive returns bytes decoded before failure', () {
     final damaged = Uint8List.fromList(_frame);
     damaged[damaged.length - 6] ^= 0xff;
     final archive = _bytes([..._frame, ...damaged]);
@@ -427,7 +427,7 @@ void main() {
     expect(output.getBytes(), _source);
   });
 
-  test('damaged literals count as damaged data', () {
+  test('damaged literals throw ArchiveException', () {
     final source = Uint8List.fromList(List.generate(
         5000,
         (i) =>

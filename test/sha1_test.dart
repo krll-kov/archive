@@ -81,7 +81,7 @@ void main() {
     data[i] = (i * 31 + 7) & 0xff;
   }
 
-  test('matches the reference digest', () {
+  test('digest matches reference', () {
     for (final entry in _reference.entries) {
       final hash = Sha1();
       hash.update(data, 0, entry.key);
@@ -89,7 +89,7 @@ void main() {
     }
   });
 
-  test('matches the FIPS 180-2 vectors', () {
+  test('digest matches FIPS 180-2 vectors', () {
     expect(_hex((Sha1()..update(_bytes('abc'), 0, 3)).digest()),
         'a9993e364706816aba3e25717850c26c9cd0d89d');
     final long =
@@ -98,7 +98,7 @@ void main() {
         '84983e441c3bd26ebaae4aa1f95129e5e54670f1');
   });
 
-  test('splitting the input does not change the digest', () {
+  test('input split into pieces gives same digest', () {
     for (final entry in _reference.entries) {
       final size = entry.key;
       for (final chunk in const [1, 5, 7, 63, 64, 65]) {
@@ -113,7 +113,7 @@ void main() {
     }
   });
 
-  test('HMAC-SHA1 matches the RFC 2202 vectors', () {
+  test('HMAC-SHA1 matches RFC 2202 vectors', () {
     expect(_hmac(Uint8List(20)..fillRange(0, 20, 0x0b), _bytes('Hi There')),
         'b617318655057264e28bc0b6fb378c8ef146be00');
     expect(_hmac(_bytes('Jefe'), _bytes('what do ya want for nothing?')),
@@ -139,7 +139,7 @@ void main() {
         'e8e99d0f45237d786d6bbaa7965c7808bbff1a91');
   });
 
-  test('one HMAC-SHA1 gives the same MAC for every message it finishes', () {
+  test('reused HMAC-SHA1 gives same MAC for same message', () {
     final mac = HmacSha1(_bytes('Jefe'));
     final text = _bytes('what do ya want for nothing?');
     final out = Uint8List(HmacSha1.macSize);
@@ -152,7 +152,7 @@ void main() {
     }
   });
 
-  test('PBKDF2-HMAC-SHA1 matches the RFC 6070 vectors', () {
+  test('PBKDF2-HMAC-SHA1 matches RFC 6070 vectors', () {
     String derive(String password, String salt, int count, int length) =>
         _hex(pbkdf2HmacSha1(_bytes(password), _bytes(salt), count, length));
     expect(derive('password', 'salt', 1, 20),
@@ -169,7 +169,19 @@ void main() {
         '56fa6aa75548099dcc37d7f03425e0c3');
   });
 
-  test('PBKDF2-HMAC-SHA1 derives a 66-byte AES-256 zip key', () {
+  test('PBKDF2-HMAC-SHA1 with iterations below 1 throws ArgumentError', () {
+    for (final iterations in [0, -1]) {
+      for (final length in [0, 1, 66]) {
+        expect(
+            () => pbkdf2HmacSha1(
+                _bytes('password'), _bytes('salt'), iterations, length),
+            throwsArgumentError,
+            reason: 'iterations $iterations, length $length');
+      }
+    }
+  });
+
+  test('PBKDF2-HMAC-SHA1 derives 66-byte AES-256 zip key', () {
     expect(
         _hex(pbkdf2HmacSha1(_bytes('secret'),
             Uint8List.fromList(List.generate(16, (i) => i)), 1000, 66)),
@@ -178,7 +190,7 @@ void main() {
         'a336');
   });
 
-  test('HMAC-SHA1 matches the reference around the padding boundaries', () {
+  test('HMAC-SHA1 matches reference around padding boundaries', () {
     for (final byKey in _hmacReference.entries) {
       final key =
           Uint8List.fromList(List.generate(byKey.key, (i) => (i * 17 + 3)));
@@ -190,13 +202,13 @@ void main() {
     }
   });
 
-  test('matches the FIPS 180-2 vector of a million a', () {
+  test("digest of 1000000 bytes 'a' matches FIPS 180-2", () {
     final million = Uint8List(1000000)..fillRange(0, 1000000, 0x61);
     expect(_hex((Sha1()..update(million, 0, million.length)).digest()),
         '34aa973cd4c4daa4f61eeb2bdbad27316534016f');
   });
 
-  test('digest leaves the instance ready for the next input', () {
+  test('instance is ready for next input after digest', () {
     final hash = Sha1();
     hash.update(data, 0, 1000);
     hash.digest();
@@ -204,7 +216,7 @@ void main() {
     expect(_hex(hash.digest()), _reference[65]);
   });
 
-  test('reset returns a used instance to its initial state', () {
+  test('reset returns used instance to initial state', () {
     final hash = Sha1();
     hash.update(data, 0, 1000);
     hash.reset();

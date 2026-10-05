@@ -6,13 +6,13 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
-  test('decode', () {
+  test('decode', testOn: 'vm', () {
     final orig = io.File(p.join('test/_data/bzip2/test.bz2')).readAsBytesSync();
 
     BZip2Decoder().decodeBytes(orig, verify: true);
   });
 
-  test('encode', () {
+  test('encode', testOn: 'vm', () {
     final file = io.File(p.join('test/_data/cat.jpg')).readAsBytesSync();
 
     final compressed = BZip2Encoder().encodeBytes(file);
@@ -25,14 +25,14 @@ void main() {
     }
   });
 
-  test('encode rejects a block size outside the format', () {
+  test('encode with block size outside 1..9 throws ArgumentError', () {
     expect(() => BZip2Encoder().encodeBytes([1, 2, 3], blockSize100k: 10),
         throwsA(isA<ArgumentError>()));
   });
 
   // After a stream bzip2 1.0.8 reads BZh and a digit from 1 to 9. If a byte
   // differs, bzip2 ignores the rest as trailing garbage and exits 0
-  test('bytes after a stream that start no stream are ignored on every path',
+  test('trailing bytes that start no stream are ignored by every decode path',
       () async {
     final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
     final stream = BZip2Encoder().encodeBytes(data);
@@ -62,7 +62,7 @@ void main() {
   });
 
   // The input ends inside BZh and the digit. bzip2 1.0.8 exits 2 on it
-  test('a tail that ends inside a stream signature is an error on every path',
+  test('trailing bytes ending inside stream signature fail every decode path',
       () {
     final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
     final stream = BZip2Encoder().encodeBytes(data);
@@ -89,7 +89,8 @@ void main() {
     }
   });
 
-  test('a cut archive is a failure on both input streams', () async {
+  test('truncated archive fails with memory and file input streams',
+      testOn: 'vm', () async {
     // A file reads zeros past its end and memory throws, so the bit reader
     // stops at the end itself, or the verdict depends on the stream given
     final source = Uint8List(400000);
@@ -119,7 +120,7 @@ void main() {
     }
   });
 
-  test('a wrong block checksum throws only with verify', () async {
+  test('wrong block CRC throws only with verify', () async {
     final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
     final bad = Uint8List.fromList(BZip2Encoder().encodeBytes(data));
     bad[10] ^= 0xff;
@@ -132,7 +133,9 @@ void main() {
         emitsThrough(emitsError(isA<ArchiveChecksumException>())));
   });
 
-  test('damaged or cut data throws with either flag and not without', () {
+  test(
+      'damaged or truncated data throws with verify or throwOnError, not without',
+      () {
     final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
     final whole = BZip2Encoder().encodeBytes(data);
     for (final bad in [
@@ -154,7 +157,7 @@ void main() {
     }
   });
 
-  test('a zip entry with damaged bzip2 data reports it', () {
+  test('zip entry with damaged bzip2 data throws ArchiveException', () {
     final source = Uint8List(200000);
     for (var i = 0; i < source.length; i++) {
       source[i] = (i * 29 + (i >> 4)) & 0xff;
@@ -174,7 +177,7 @@ void main() {
     expect(entry.readBytes, throwsA(isA<ArchiveException>()));
   });
 
-  test('a signature naming block size zero is refused on every path', () async {
+  test('stream header with block size 0 fails every decode path', () async {
     final good = BZip2Encoder().encodeBytes([1, 2, 3]);
     final bad = Uint8List.fromList(good)..[3] = 0x30;
 
@@ -191,7 +194,7 @@ void main() {
   });
 
   // bzip2 1.0.8 reads selectors past 18002 and ignores them
-  test('a block with more selectors than the table holds decodes', () {
+  test('block with more than 18001 selectors decodes, as bzip2 1.0.8 does', () {
     final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
     final archive =
         _withExtraSelectors(BZip2Encoder().encodeBytes(data), 18008);
@@ -204,7 +207,7 @@ void main() {
     expect(bzip2Codec.decode(archive), data);
   });
 
-  test('endStream writes the block that addByte left open', () {
+  test('endStream writes block left open by addByte', () {
     final data = Uint8List.fromList(List.generate(5000, (i) => i % 251));
     final output = OutputMemoryStream(byteOrder: ByteOrder.bigEndian);
     final encoder = BZip2Encoder()..beginStream(output);
@@ -218,7 +221,7 @@ void main() {
     expect(BZip2Decoder().decodeBytes(output.getBytes(), verify: true), data);
   });
 
-  test('a randomised block decodes to its data on every path', () async {
+  test('randomised block decodes to original data on every path', () async {
     final data = Uint8List.fromList(
         List.generate(20000, (i) => (i ~/ 3 * 37 + (i >> 5) * 11) % 128 * 2));
     final archive = _randomised(data);
@@ -354,7 +357,7 @@ class _BitReader {
   int read(int bits) {
     var value = 0;
     for (var i = 0; i < bits; i++) {
-      value = (value << 1) | ((_bytes[at >> 3] >> (7 - (at & 7))) & 1);
+      value = value * 2 + ((_bytes[at >> 3] >> (7 - (at & 7))) & 1);
       at++;
     }
     return value;
@@ -367,8 +370,14 @@ class _BitWriter {
   var _filled = 0;
 
   void write(int value, int bits) {
+    final digits = List<int>.filled(bits, 0);
+    var rest = value;
+    for (var i = 0; i < bits; i++) {
+      digits[i] = rest % 2;
+      rest ~/= 2;
+    }
     for (var i = bits - 1; i >= 0; i--) {
-      _byte = (_byte << 1) | ((value >> i) & 1);
+      _byte = (_byte << 1) | digits[i];
       if (++_filled == 8) {
         _out.add(_byte);
         _byte = 0;

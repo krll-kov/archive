@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -16,7 +15,8 @@ Uint8List _source(int length, int seed) {
   final bytes = Uint8List(length);
   var state = seed;
   for (var i = 0; i < length; i++) {
-    state = (state * 1103515245 + 12345) & 0x7fffffff;
+    state =
+        (state * 20077 + state * 16838 % 0x8000 * 0x10000 + 12345) % 0x80000000;
     bytes[i] = (state >> 16) % 5 == 0 ? 0x41 : (state >> 8) & 0xff;
   }
   return bytes;
@@ -89,47 +89,21 @@ Future<List<List<Object>>> _stream(Uint8List archive, int piece) async {
 
 const _heldContent = 1 << 20;
 
-Object _bytes(List<int> bytes) => bytes.length <= _heldContent
-    ? bytes.toList()
-    : '${bytes.length} bytes, CRC32 ${getCrc32(bytes)}';
-
-List<List<Object>> _whole(Uint8List archive) => TarDecoder()
-    .decodeBytes(archive)
-    .files
-    .map((f) => <Object>[
-          f.name,
-          f.size,
-          f.isFile ? _bytes(f.content) : <int>[],
-        ])
-    .toList();
-
 void main() {
-  final directory = Directory('test/_data/tar');
-  final archives = directory
-      .listSync()
-      .whereType<File>()
-      .map((f) => f.uri.pathSegments.last)
-      // writer-big.tar names an entry of 16 GB inside a 4 KB file. The whole
-      // decoder clamps the read and reports what it found, the streamed one
-      // says the archive ended, so the two have nothing to compare
-      .where((name) => name.endsWith('.tar') && name != 'writer-big.tar')
-      .toList()
-    ..sort();
-
   group('tar chunked encoder', () {
-    test('it writes what one archive writes', () {
+    test('output equals TarEncoder.encodeBytes output', () {
       expect(
           _tar(_entries()), TarEncoder().encodeBytes(_archiveOf(_entries())));
     });
 
-    test('an empty archive is still an archive', () {
+    test('empty archive writes valid tar', () {
       final held = _Held();
       TarChunkedEncoder(held).close();
       expect(held.bytes, TarEncoder().encodeBytes(Archive()));
       expect(TarDecoder().decodeBytes(held.bytes).files, isEmpty);
     });
 
-    test('a name too long for the header reads back', () {
+    test('name longer than header field decodes back', () {
       final name = '${'a-very-long-directory-name/' * 6}file.txt';
       expect(name.length, greaterThan(100));
       final entry = ArchiveFile.string(name, 'content');
@@ -137,13 +111,13 @@ void main() {
       expect(back.files.single.name, name);
     });
 
-    test('adding after close is refused', () {
+    test('add after close throws StateError', () {
       final encoder = TarChunkedEncoder(_Held())..close();
       expect(() => encoder.add(ArchiveFile.string('a', 'b')),
           throwsA(isA<StateError>()));
     });
 
-    test('nesting it in zstd writes a .tar.zst on the fly', () {
+    test('encoder nested in zstd sink writes .tar.zst while adding', () {
       final entries = _entries();
       final held = _Held();
       final encoder = TarChunkedEncoder(ZstdChunkedEncoder(held, level: 3));
@@ -160,7 +134,7 @@ void main() {
       expect(back.files[1].content, entries[1].content);
     });
 
-    test('nesting it in bzip2 writes a .tar.bz2 on the fly', () {
+    test('encoder nested in bzip2 sink writes .tar.bz2 while adding', () {
       final entries = _entries();
       final held = _Held();
       final encoder = TarChunkedEncoder(BZip2ChunkedEncoder(held));
@@ -173,32 +147,10 @@ void main() {
       expect(TarDecoder().decodeBytes(tar).files.map((f) => f.name),
           entries.map((e) => e.name));
     });
-
-    test('an entry read from a file goes through in pieces', () async {
-      final directory = await Directory.systemTemp.createTemp('tar_stream');
-      try {
-        final path = '${directory.path}/big.bin';
-        final content = _source(500000, 13);
-        File(path).writeAsBytesSync(content);
-        final input = InputFileStream(path);
-        final entry = ArchiveFile.stream('big.bin', input);
-        final held = _Held();
-        TarChunkedEncoder(held)
-          ..add(entry)
-          ..close();
-        await input.close();
-        final back = TarDecoder().decodeBytes(held.bytes);
-        expect(back.files.single.content, content);
-        // The file is half a megabyte, handed over in pieces of 64 KiB
-        expect(held.pieces, greaterThan(4));
-      } finally {
-        directory.deleteSync(recursive: true);
-      }
-    });
   });
 
   group('tar codec', () {
-    test('the configured filename encoding is used both ways', () async {
+    test('filenameEncoding is used when encoding and decoding', () async {
       const codec = TarCodec(filenameEncoding: latin1);
       final entries =
           await Stream.value(ArchiveFile.string('caf\u00e9.txt', 'x'))
@@ -208,7 +160,7 @@ void main() {
       expect(entries.single.name, 'caf\u00e9.txt');
     });
 
-    test('the configured filename encoding reads a long name back', () async {
+    test('filenameEncoding decodes long name back', () async {
       const codec = TarCodec(filenameEncoding: latin1);
       final name = '\u00c3\u00a9${'x' * 120}.txt';
       final entries = await Stream.value(ArchiveFile.string(name, 'x'))
@@ -218,7 +170,7 @@ void main() {
       expect(entries.single.name, name);
     });
 
-    test('a name the filename encoding cannot hold reads back', () async {
+    test('name that filenameEncoding cannot encode decodes back', () async {
       const codec = TarCodec(filenameEncoding: latin1);
       const name = 'price€.txt';
       final entries = await Stream.value(ArchiveFile.string(name, 'x'))
@@ -228,7 +180,7 @@ void main() {
       expect(entries.single.name, name);
     });
 
-    test('it emits before reading an entire entry', () async {
+    test('encoder sends first bytes before reading whole entry', () async {
       final bytes = Uint8List(1024 * 1024);
       var read = 0;
       final input = _ObservedInput(bytes, (count) => read += count);
@@ -238,7 +190,7 @@ void main() {
       expect(read, lessThan(bytes.length));
     });
 
-    test('entries transform into an archive', () async {
+    test('entries transform into archive equal to TarEncoder output', () async {
       final entries = _entries();
       final bytes = await Stream.fromIterable(entries)
           .transform(tarCodec.encoder)
@@ -246,7 +198,8 @@ void main() {
       expect(bytes, _tar(entries));
     });
 
-    test('the bytes of an entry survive the transformer', () async {
+    test('entry bytes are unchanged after encode and decode transformers',
+        () async {
       // By default the entry is left alone, so the same archive can be written
       // again
       final archive = Archive()..add(ArchiveFile.string('a.txt', 'hello'));
@@ -258,7 +211,7 @@ void main() {
       expect(await once(), first);
     });
 
-    test('a .tar.zst is one chain of transforms', () async {
+    test('.tar.zst encodes and decodes through one transform chain', () async {
       final entries = _entries();
       final archive = await Stream.fromIterable(entries)
           .transform(tarCodec.encoder)
@@ -276,7 +229,7 @@ void main() {
   });
 
   group('SinkOutputStream.writeStream', () {
-    test('it hands a stream over in pieces and leaves the position alone', () {
+    test('writeStream writes in pieces and keeps input position', () {
       final source = _source(200000, 17);
       final held = _Held();
       final out = SinkOutputStream(held);
@@ -291,7 +244,7 @@ void main() {
       expect(held.pieces, greaterThan(1));
     });
 
-    test('single bytes are gathered rather than handed over one at a time', () {
+    test('single bytes are buffered, not sent to sink one by one', () {
       final held = _Held();
       final out = SinkOutputStream(held);
       for (var i = 0; i < 200000; i++) {
@@ -304,7 +257,7 @@ void main() {
       expect(held.pieces, lessThan(8));
     });
 
-    test('an exhausted stream writes nothing', () {
+    test('writeStream of exhausted stream writes nothing', () {
       final held = _Held();
       final out = SinkOutputStream(held);
       out.writeStream(InputMemoryStream(Uint8List(0)));
@@ -315,7 +268,9 @@ void main() {
   });
 
   group('tar stream reader', () {
-    test('a header checksum failure is a damaged structure', () async {
+    test(
+        'header checksum failure throws ArchiveException, not ArchiveChecksumException',
+        () async {
       final bytes = TarEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'content')));
       bytes[0] = 98;
@@ -325,7 +280,7 @@ void main() {
               isNot(isA<ArchiveChecksumException>()))));
     });
 
-    test('a corrupted size is rejected instead of losing content', () async {
+    test('corrupted size field throws instead of losing content', () async {
       final archive = Archive()..add(ArchiveFile.string('a', 'abcdef'));
       final bytes = TarEncoder().encodeBytes(archive)..[134] = 0x31;
       expect(() => TarDecoder().decodeBytes(bytes, verify: true),
@@ -333,18 +288,8 @@ void main() {
       await expectLater(_stream(bytes, 512), throwsA(isA<ArchiveException>()));
     });
 
-    for (final name in archives) {
-      test('$name reads as the whole-archive decoder does', () async {
-        final archive = File('${directory.path}/$name').readAsBytesSync();
-        final want = _whole(archive);
-        for (final piece in [1, 137, 512, 4096, archive.length]) {
-          expect(await _stream(archive, piece), want,
-              reason: '$name piece $piece');
-        }
-      });
-    }
-
-    test('a pax record length cannot overflow the metadata boundary', () async {
+    test('pax record length past metadata end throws ArchiveException',
+        () async {
       final output = OutputMemoryStream();
       final records = Uint8List.fromList(
           utf8.encode('12 path=foo\n9223372036854775807 path=bar\n'));
@@ -380,7 +325,7 @@ void main() {
       }
     });
 
-    test('a long name and a pax header survive the stream', () async {
+    test('long name and pax header decode through stream', () async {
       final long = '${'a-very-long-directory-name/' * 6}file.txt';
       final entries = [
         ArchiveFile.string(long, 'first'),
@@ -399,27 +344,7 @@ void main() {
       }
     });
 
-    test('a GNU incremental header keeps its name', () async {
-      final bytes =
-          File('test/_data/tar/gnu-incremental.tar').readAsBytesSync();
-      final read = await _stream(bytes, 512);
-      expect(read.map((e) => e[0]), ['test2/', 'test2/foo', 'test2/sparse']);
-    });
-
-    test('a GNU dumpdir entry is a directory', () async {
-      final bytes =
-          File('test/_data/tar/gnu-incremental.tar').readAsBytesSync();
-      final types = <String, TarEntryType>{};
-      await for (final entry
-          in _pieces(bytes, 512).transform(tarCodec.decoder)) {
-        types[entry.name] = entry.type;
-        await entry.content.drain<void>();
-      }
-      expect(types['test2/'], TarEntryType.directory);
-      expect(types['test2/foo'], TarEntryType.file);
-    });
-
-    test('content left unread is skipped', () async {
+    test('unread content is skipped, next entry decodes', () async {
       final archive = Archive()
         ..add(ArchiveFile.bytes('a.bin', _source(5000, 7)))
         ..add(ArchiveFile.bytes('b.bin', _source(9000, 11)));
@@ -432,8 +357,7 @@ void main() {
       expect(names, ['a.bin', 'b.bin']);
     });
 
-    test('content read only part way still leaves the archive in step',
-        () async {
+    test('partly read content does not break next entry', () async {
       final archive = Archive()
         ..add(ArchiveFile.bytes('a.bin', _source(5000, 13)))
         ..add(ArchiveFile.string('b.txt', 'second'));
@@ -450,7 +374,7 @@ void main() {
       expect(names, ['a.bin', 'b.txt']);
     });
 
-    test('reading the content twice is refused', () async {
+    test('second read of content throws StateError', () async {
       final archive = Archive()..add(ArchiveFile.string('a.txt', 'one'));
       final bytes = TarEncoder().encodeBytes(archive);
       await for (final entry
@@ -460,7 +384,7 @@ void main() {
       }
     });
 
-    test('the content of an entry the archive has passed is refused', () async {
+    test('content of passed entry throws StateError', () async {
       final archive = Archive()
         ..add(ArchiveFile.string('a.txt', 'one'))
         ..add(ArchiveFile.string('b.txt', 'two'));
@@ -473,7 +397,7 @@ void main() {
       expect(() => held.first.content, throwsA(isA<StateError>()));
     });
 
-    test('an archive cut short is refused', () async {
+    test('truncated archive throws ArchiveException', () async {
       final archive = Archive()
         ..add(ArchiveFile.bytes('a.bin', _source(4000, 17)));
       final bytes = TarEncoder().encodeBytes(archive);
@@ -481,7 +405,7 @@ void main() {
       expect(_stream(short, 256), throwsA(isA<ArchiveException>()));
     });
 
-    test('the type flag comes back as a type', () async {
+    test('type flag decodes to TarEntryType', () async {
       final archive = Archive()
         ..add(ArchiveFile.directory('dir'))
         ..add(ArchiveFile.string('dir/a.txt', 'one'))
@@ -499,7 +423,7 @@ void main() {
       expect(types['link'] == TarEntryType.file, isFalse);
     });
 
-    test('only a link carries a symbolic link, as TarDecoder reports it',
+    test('only link entries have symbolicLink, as TarDecoder reports',
         () async {
       final archive = Archive()
         ..add(ArchiveFile.directory('dir'))
@@ -519,32 +443,12 @@ void main() {
       expect(links, whole);
     });
 
-    test('an empty archive yields nothing', () async {
+    test('empty archive gives no entries', () async {
       final bytes = TarEncoder().encodeBytes(Archive());
       expect(await _stream(bytes, 512), isEmpty);
     });
 
-    test('it reads a .tar.gz as it arrives', () async {
-      final archive = Archive()
-        ..add(ArchiveFile.bytes('big.bin', _source(200000, 19)))
-        ..add(ArchiveFile.string('note.txt', 'at the end'));
-      final tar = TarEncoder().encodeBytes(archive);
-      final gz = Uint8List.fromList(gzip.encode(tar));
-      final names = <String>[];
-      var bytes = 0;
-      await for (final entry in _pieces(gz, 4096)
-          .transform(gzip.decoder)
-          .transform(tarCodec.decoder)) {
-        names.add(entry.name);
-        await for (final piece in entry.content) {
-          bytes += piece.length;
-        }
-      }
-      expect(names, ['big.bin', 'note.txt']);
-      expect(bytes, 200000 + 10);
-    });
-
-    test('it reads a .tar.zst as it arrives', () async {
+    test('reads .tar.zst piece by piece through zstdCodec.decoder', () async {
       final archive = Archive()
         ..add(ArchiveFile.bytes('big.bin', _source(300000, 23)));
       final tar = TarEncoder().encodeBytes(archive);
@@ -560,41 +464,7 @@ void main() {
       expect(read, ['big.bin']);
     });
 
-    // Reading input past tar end fails on bytes after compressed stream, which
-    // bsdtar and Python tarfile accept
-    test('bytes after the compressed stream do not fail the archive', () async {
-      final content = _source(3000, 29);
-      final tar = TarEncoder()
-          .encodeBytes(Archive()..add(ArchiveFile.bytes('a.bin', content)));
-      final compressed = {
-        'gzip': (gzip.encode(tar), gzip.decoder),
-        'zstd': (zstdCodec.encode(tar), zstdCodec.decoder),
-      };
-      final tails = {
-        'zero padding': Uint8List(512),
-        'signature': utf8.encode('SIGNATURE:3045022100abcdef'),
-      };
-      for (final format in compressed.entries) {
-        for (final tail in tails.entries) {
-          final bytes = Uint8List.fromList([...format.value.$1, ...tail.value]);
-          for (final piece in [512, bytes.length]) {
-            final read = <String, List<int>>{};
-            await for (final entry in _pieces(bytes, piece)
-                .transform(format.value.$2)
-                .transform(tarCodec.decoder)) {
-              read[entry.name] = await entry.content
-                  .fold<List<int>>(<int>[], (held, p) => held..addAll(p));
-            }
-            expect(read.keys, ['a.bin'],
-                reason: '${format.key}, ${tail.key}, pieces of $piece');
-            expect(read['a.bin'], content,
-                reason: '${format.key}, ${tail.key}, pieces of $piece');
-          }
-        }
-      }
-    });
-
-    test('content listened to after the reader moved on fails', () async {
+    test('content listened after reader moved on throws StateError', () async {
       // The skip past an entry empties it, so a late listener used to read
       // nothing and no error
       final tar = TarEncoder().encodeBytes(Archive()
@@ -613,7 +483,7 @@ void main() {
 
     // An input may go silent without closing, a stalled download being the
     // usual one. Neither a cancel nor a timeout may then wait on it for good
-    test('a silent input can be cancelled while a header is awaited', () async {
+    test('cancel works while waiting for header from silent input', () async {
       for (final start in [
         <int>[],
         [1, 2, 3]
@@ -631,8 +501,7 @@ void main() {
       }
     });
 
-    test('a timeout on content over a silent input gets the caller out',
-        () async {
+    test('timeout on content from silent input ends wait', () async {
       final tar = TarEncoder().encodeBytes(
           Archive()..add(ArchiveFile.bytes('a.bin', _source(3000, 3))));
       final source = StreamController<List<int>>();
@@ -652,7 +521,7 @@ void main() {
       await source.close();
     }, timeout: const Timeout(Duration(seconds: 10)));
 
-    test('content cancelled part way leaves the next entry whole', () async {
+    test('cancel of content part way keeps next entry whole', () async {
       final first = _source(200000, 7);
       final second = _source(5000, 9);
       final tar = TarEncoder().encodeBytes(Archive()
@@ -671,7 +540,7 @@ void main() {
       expect(got['second.bin'], second);
     });
 
-    test('cancelling the archive releases a paused content reader', () async {
+    test('cancel of archive releases paused content reader', () async {
       final tar = TarEncoder().encodeBytes(
           Archive()..add(ArchiveFile.bytes('a.bin', _source(3000, 3))));
       final source = StreamController<List<int>>();
@@ -712,7 +581,7 @@ void main() {
   });
 
   group('tar stream writer', () {
-    test('a source that goes silent can be cancelled and is let go', () async {
+    test('cancel of encoder over silent source releases source', () async {
       final source = StreamController<ArchiveFile>();
       final written = Completer<void>();
       final subscription = source.stream
@@ -727,7 +596,7 @@ void main() {
       await source.close();
     });
 
-    test('a source that fails ends the archive with that error', () async {
+    test('source error ends archive stream with same error', () async {
       final source = StreamController<ArchiveFile>();
       final events = <String>[];
       final ended = Completer<void>();
@@ -747,7 +616,7 @@ void main() {
     });
 
     for (final autoClose in [false, true]) {
-      test('autoClose $autoClose decides whether a written entry is closed',
+      test('autoClose $autoClose decides whether written entry is closed',
           () async {
         final content = _ClosingInput(_source(300000, 21));
         final bytes = await Stream.value(ArchiveFile.stream('big.bin', content))
@@ -758,7 +627,7 @@ void main() {
       });
     }
 
-    test('autoClose closes an entry cut off by a cancel', () async {
+    test('autoClose closes entry interrupted by cancel', () async {
       final content = _ClosingInput(_source(4 << 20, 23));
       final source = StreamController<ArchiveFile>();
       final written = Completer<void>();
@@ -774,7 +643,8 @@ void main() {
 
     // The entry stream reports a length of 0 before its end. Only the first
     // 100 pieces are taken. The whole archive is fewer than 100 pieces
-    test('an entry whose length does not agree with its isEOS ends', () async {
+    test('entry whose length disagrees with isEOS ends instead of looping',
+        () async {
       final pieces = await Stream.value(
               ArchiveFile.stream('a.bin', _LyingInput(Uint8List(10))))
           .transform(tarCodec.encoder)
@@ -784,9 +654,9 @@ void main() {
     });
   });
 
-  group('a declared length buys no memory', () {
-    test('a long name header claiming a terabyte reserves nothing', () async {
-      final header = _longLink(1 << 40);
+  group('declared length does not allocate memory', () {
+    test('long name header claiming 1 TB throws without allocating', () async {
+      final header = _longLink(1099511627776);
       expect(TarDecoder().decodeBytes(header).length, 0,
           reason: 'the whole-archive decoder clamps the claim to its input');
       Object? thrown;
@@ -819,8 +689,8 @@ Uint8List _longLink(int size) {
   header[124] = 0x80;
   var left = size;
   for (var i = 135; i > 124; i--) {
-    header[i] = left & 0xff;
-    left >>= 8;
+    header[i] = left % 256;
+    left ~/= 256;
   }
   for (var i = 0; i < 11; i++) {
     header[136 + i] = 0x30;

@@ -5,7 +5,7 @@ import 'package:archive/archive.dart';
 import 'package:test/test.dart';
 
 void main() {
-  group('dynamic Huffman validation', () {
+  group('dynamic Huffman table validation', () {
     final archives = {
       'incomplete code length table':
           'eJwFwAEIAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABQAAAAE=',

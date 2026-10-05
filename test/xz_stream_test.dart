@@ -48,7 +48,7 @@ void main() {
 
   group('xz chunked decoder', () {
     for (final name in archives) {
-      test('$name decodes the same whatever the pieces', () {
+      test('$name decodes same in pieces of any size', testOn: 'vm', () {
         final src = _archive(name);
         final want =
             XZDecoder().decodeBytes(src, verify: true, throwOnError: true);
@@ -62,7 +62,8 @@ void main() {
     // resets nothing. That LZMA chunk keeps the state and probabilities from
     // before the copy. The archive is LZMA with reset 3, control 2, LZMA with
     // reset 0. It was built by hand and passes xz -t and 7zz t
-    test('an LZMA chunk after an uncompressed chunk keeps its state', () async {
+    test('LZMA chunk after uncompressed chunk keeps decoder state',
+        testOn: 'vm', () async {
       final src = _archive('lzma2_copy_keeps_state.xz');
       final want = List.filled(
               20, 'the quick brown fox jumps over the lazy dog 0123456789\n')
@@ -93,7 +94,7 @@ void main() {
       'bad-1-lzma2-8.xz',
       'bad-1-vli-1.xz',
     ]) {
-      test('$name is rejected on every path', () {
+      test('$name throws on every decode path', testOn: 'vm', () {
         final src = _archive(name);
         expect(
             () =>
@@ -104,13 +105,13 @@ void main() {
       });
     }
 
-    test('a truncated archive is rejected', () {
+    test('truncated archive throws ArchiveException', testOn: 'vm', () {
       final src = _archive('good-1-lzma2-1.xz');
       expect(() => _decode(Uint8List.sublistView(src, 0, src.length - 8), 64),
           throwsA(isA<ArchiveException>()));
     });
 
-    test('an overlong index record count is rejected', () {
+    test('overlong index record count throws ArchiveException', () {
       final encoded = XZEncoder().encodeBytes([]);
       encoded[13] = 0x80;
       ByteData.sublistView(encoded)
@@ -125,7 +126,7 @@ void main() {
       }
     });
 
-    test('a first LZMA2 chunk without a dictionary reset is rejected', () {
+    test('first LZMA2 chunk without dictionary reset throws', () {
       final encoded = XZEncoder().encodeBytes([1, 2, 3], check: XZCheck.crc32);
       expect(encoded[24], 1);
       encoded[24] = 2;
@@ -137,7 +138,7 @@ void main() {
       'block flags',
       'LZMA2 property size'
     ]) {
-      test('unsupported $field with valid checksums is rejected', () {
+      test('unsupported $field with valid checksums throws', () {
         final encoded =
             XZEncoder().encodeBytes([65, 66, 67], check: XZCheck.none);
         final view = ByteData.sublistView(encoded);
@@ -174,7 +175,7 @@ void main() {
 
     // The input may stop sending without closing: what arrived whole is not
     // held back for the close, and what cannot be xz is refused at once
-    test('a whole archive comes out before the input closes', () async {
+    test('complete archive is decoded before input closes', () async {
       final source = StreamController<List<int>>();
       final content = List<int>.generate(3000, (i) => (i * 7) & 0xff);
       final got = <int>[];
@@ -194,7 +195,8 @@ void main() {
       await source.close();
     });
 
-    test('a byte no archive starts with is refused at once', () async {
+    test('bytes that cannot start archive fail stream before input closes',
+        () async {
       final source = StreamController<List<int>>();
       final failed = Completer<Object>();
       final subscription = source.stream
@@ -207,8 +209,7 @@ void main() {
       await source.close();
     });
 
-    test('part of the magic, which an archive may still follow, is waited on',
-        () async {
+    test('start of magic waits for more input instead of failing', () async {
       final source = StreamController<List<int>>();
       Object? error;
       final ended = Completer<void>();
@@ -231,13 +232,14 @@ void main() {
       expect(error, isA<ArchiveException>());
     });
 
-    test('a damaged block is caught by its check', () {
+    test('damaged block throws on check mismatch', testOn: 'vm', () {
       final src = Uint8List.fromList(_archive('crc32.xz'));
       src[src.length - 20] ^= 0xff;
       expect(() => _decode(src, 64), throwsA(isA<ArchiveException>()));
     });
 
-    test('a closed sink refuses more bytes, the way dart:io filters do', () {
+    test('add after close throws StateError, as dart:io filters do',
+        testOn: 'vm', () {
       final src = _archive('hello.xz');
       final decoder = XzChunkedDecoder(_Held())
         ..add(src)
@@ -245,7 +247,7 @@ void main() {
       expect(() => decoder.add(src), throwsStateError);
     });
 
-    test('a sink that failed keeps reporting the same failure', () {
+    test('failed sink throws same error on every later call', testOn: 'vm', () {
       final decoder = XzChunkedDecoder(_Held(), verify: true);
       // Not an xz signature, which the first piece is enough to know
       expect(
@@ -256,7 +258,7 @@ void main() {
       expect(decoder.close, throwsA(isA<ArchiveException>()));
     });
 
-    test('the check runs unless it is turned off', () {
+    test('check is verified unless verify is false', testOn: 'vm', () {
       // The eight bytes of the CRC64 sit between the block and the index, so
       // damaging one of them leaves data only the check can call wrong
       final src = Uint8List.fromList(_archive('cat.jpg.xz'));
@@ -275,7 +277,7 @@ void main() {
       }, returnsNormally);
     });
 
-    test('addSlice takes a range and closes on the last one', () {
+    test('addSlice decodes range and closes on isLast', testOn: 'vm', () {
       final src = _archive('cat.jpg.xz');
       final want =
           XZDecoder().decodeBytes(src, verify: true, throwOnError: true);
@@ -304,7 +306,7 @@ void main() {
       'stream_padding.xz',
       'hello-hello-hello.xz',
     ]) {
-      test('$name takes exactly what the pull decoder takes, damaged any way',
+      test('$name damaged any way gives same result as XZDecoder', testOn: 'vm',
           () {
         final base = _archive(name);
         void agree(Uint8List src, String what) {
@@ -342,15 +344,14 @@ void main() {
       });
     }
 
-    test('an empty input is rejected', () {
+    test('empty input throws ArchiveException', () {
       expect(() => XzChunkedDecoder(_Held()).close(),
           throwsA(isA<ArchiveException>()));
     });
   });
 
   group('xz stream converter', () {
-    test('the default encoder writes the native CRC64 check on every backend',
-        () {
+    test('default encoder writes CRC64 check on every platform', () {
       final native = base64Decode(
           '/Td6WFoAAATm1rRGAgAhARYAAAB0L+WjAQACAQIDAACjq/XzQTeKOwABGwMLL7kQ'
           'H7bzfQEAAAAABFla');
@@ -358,7 +359,8 @@ void main() {
     });
 
     for (final name in ['cat.jpg.xz', 'concatenated.xz', 'x86.xz', 'pb4.xz']) {
-      test('$name decodes from the file the way a reader gets it', () async {
+      test('$name read from file in reader pieces decodes', testOn: 'vm',
+          () async {
         final want = XZDecoder()
             .decodeBytes(_archive(name), verify: true, throwOnError: true);
         final got = <int>[];
@@ -373,7 +375,8 @@ void main() {
       });
     }
 
-    test('pieces that arrive one event apart decode the same', () async {
+    test('pieces arriving in separate events decode same', testOn: 'vm',
+        () async {
       final src = _archive('cat.jpg.xz');
       final want =
           XZDecoder().decodeBytes(src, verify: true, throwOnError: true);
@@ -396,7 +399,8 @@ void main() {
       expect(await done, want);
     });
 
-    test('a reader that pauses gets everything once it resumes', () async {
+    test('paused listener receives all output after resume', testOn: 'vm',
+        () async {
       final src = _archive('cat.jpg.xz');
       final want =
           XZDecoder().decodeBytes(src, verify: true, throwOnError: true);
@@ -420,7 +424,7 @@ void main() {
       expect(got, want);
     });
 
-    test('output keeps up with a download rather than waiting for it',
+    test('output is sent while input still arrives, not at end', testOn: 'vm',
         () async {
       // Forty copies of the same archive is a valid xz file of forty streams,
       // which is what gives a long input with something to hand over all the
@@ -466,13 +470,13 @@ void main() {
       expect(decodedWhenFedOut, greaterThan((want * 0.9).round()));
     });
 
-    test('convert takes the whole archive at once', () {
+    test('convert decodes whole archive in one call', testOn: 'vm', () {
       final src = _archive('hello.xz');
       expect(const XzDecoderConverter(verify: true).convert(src),
           XZDecoder().decodeBytes(src, verify: true, throwOnError: true));
     });
 
-    test('a failure reaches the stream as an error', () async {
+    test('failure is sent to stream as error event', testOn: 'vm', () async {
       final src = _archive('good-1-lzma2-1.xz');
       final cut = Uint8List.sublistView(src, 0, src.length ~/ 2);
       expect(
@@ -483,7 +487,7 @@ void main() {
     });
 
     // xz 5.8 refuses an LZMA chunk whose first range coder byte is not zero
-    test('a range coder that does not start at zero is refused', () {
+    test('range coder not starting at zero throws', testOn: 'vm', () {
       final src = Uint8List.fromList(_archive('good-1-lzma2-1.xz'));
       final chunk = 12 + (src[12] + 1) * 4;
       expect(src[chunk], greaterThanOrEqualTo(0xe0));
@@ -494,7 +498,8 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a nonzero range coder start fails without checksum verification', () {
+    test('nonzero range coder start throws even with verify false',
+        testOn: 'vm', () {
       final src = Uint8List.fromList(_archive('hello-hello-hello.xz'));
       final chunk = 12 + (src[12] + 1) * 4;
       expect(src[chunk], greaterThanOrEqualTo(0xe0));
@@ -519,7 +524,7 @@ void main() {
       expect(output.getBytes(), isEmpty);
     });
 
-    test('a SHA-256 check that does not match is refused', () {
+    test('wrong SHA-256 check throws ArchiveException', testOn: 'vm', () {
       final src = Uint8List.fromList(_archive('sha256.xz'));
       expect(src[7], 0x0a);
       final data = 12 + (src[12] + 1) * 4 + 3;

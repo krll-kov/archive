@@ -142,7 +142,7 @@ void main() {
       final source = entry.value;
       final crc = getCrc32(source);
 
-      test('${entry.key} round trips', () {
+      test('${entry.key} decodes back', () {
         final encoded = const ZstdEncoder().encodeBytes(source);
         final decoded = ZstdDecoder()
             .decodeBytes(encoded, verify: true, throwOnError: true);
@@ -150,7 +150,7 @@ void main() {
         expect(getCrc32(decoded), crc);
       });
 
-      test('${entry.key} round trips through a stream', () {
+      test('${entry.key} decodes back through stream', () {
         final out = OutputMemoryStream();
         const ZstdEncoder().encodeStream(InputMemoryStream(source), out);
         final decoded = ZstdDecoder()
@@ -158,13 +158,13 @@ void main() {
         expect(getCrc32(decoded), crc);
       });
 
-      test('${entry.key} reports the size it wrote', () {
+      test('${entry.key} frame header has correct content size', () {
         final encoded = const ZstdEncoder().encodeBytes(source);
         expect(ZstdDecoder().uncompressedSize(encoded), source.length);
       });
     }
 
-    test('a frame without a checksum still round trips', () {
+    test('frame without checksum decodes back', () {
       final source = cases['several blocks']!;
       final encoded = const ZstdEncoder(checksum: false).encodeBytes(source);
       final decoded =
@@ -174,19 +174,19 @@ void main() {
 
     // A frame never opens with a repeated byte block, which older decoders
     // read as the frame ending early, so the first one is coded instead
-    test('a repeated byte costs a handful of bytes a block', () {
+    test('repeated byte compresses to few bytes per block', () {
       final encoded =
           const ZstdEncoder(checksum: false).encodeBytes(Uint8List(70000));
       expect(encoded.length, lessThan(24));
     });
 
-    test('a repeating phrase compresses hard', () {
+    test('repeating phrase compresses strongly', () {
       final source = cases['a short phrase over and over']!;
       final encoded = const ZstdEncoder(checksum: false).encodeBytes(source);
       expect(encoded.length * 20, lessThan(source.length));
     });
 
-    test('every sequence is accounted for', () {
+    test('sequences cover every input byte', () {
       for (final entry in cases.entries) {
         final source = entry.value;
         final encoded = const ZstdEncoder().encodeBytes(source);
@@ -199,7 +199,7 @@ void main() {
 
     // A short source on purpose: the deepest levels search hard enough that a
     // few hundred kilobytes would dominate the whole suite
-    test('every level round trips', () {
+    test('every level decodes back', () {
       final source = _words(30000);
       final crc = getCrc32(source);
       var first = 0;
@@ -222,7 +222,7 @@ void main() {
       expect(last, lessThan(first * 3 ~/ 5));
     });
 
-    test('a level above the range is clamped, below it refused', () {
+    test('level above 22 is clamped, negative level throws', () {
       final source = cases['text with long repeats']!;
       expect(ZstdEncoder(level: 99).encodeBytes(source).length,
           ZstdEncoder(level: zstdMaxLevel).encodeBytes(source).length);
@@ -231,14 +231,14 @@ void main() {
           throwsA(isA<ArgumentError>()));
     });
 
-    test('a higher level is not larger on real text', () {
+    test('higher level output is not larger on real text', () {
       final source = cases['words drawn at random']!;
       final low = ZstdEncoder(checksum: false, level: 1).encodeBytes(source);
       final high = ZstdEncoder(checksum: false, level: 9).encodeBytes(source);
       expect(high.length * 3, lessThan(low.length * 2));
     });
 
-    test('a stream over memory is handed the whole buffer', () {
+    test('encodeStream over memory equals encodeBytes', () {
       final source = cases['several blocks']!;
       final out = OutputMemoryStream();
       const ZstdEncoder().encodeStream(InputMemoryStream(source), out);
@@ -249,7 +249,7 @@ void main() {
     // encoder keeps beside it, which is thirteen megabytes at level twelve and
     // twenty four at level sixteen. Below that the buffer holds everything and
     // nothing is reduced, so a smaller source would test nothing
-    test('a stream longer than the window writes what one buffer writes', () {
+    test('stream longer than window equals encodeBytes output', () {
       final source = _words(13 << 20);
       for (final level in [1, 3, 5, 6, 9, 12]) {
         final whole = ZstdEncoder(level: level).encodeBytes(source);
@@ -262,7 +262,7 @@ void main() {
     // The tree and the optimal parse raise a position by two and keep a mark
     // of their own, so their tables reduce by different rules than the rest.
     // Seventeen megabytes is the least that makes both of these slide
-    test('a slid tree writes what one buffer writes', () {
+    test('stream at levels 13 and 16 with slid tree equals encodeBytes', () {
       final source = _words(17 << 20);
       for (final level in [13, 16]) {
         final whole = ZstdEncoder(level: level).encodeBytes(source);
@@ -272,7 +272,7 @@ void main() {
       }
     });
 
-    test('a stream shorter than the window writes what one buffer writes', () {
+    test('stream shorter than window equals encodeBytes output', () {
       for (final entry in cases.entries) {
         final out = OutputMemoryStream();
         const ZstdEncoder().encodeStream(_Piped(entry.value), out);
@@ -281,7 +281,7 @@ void main() {
       }
     });
 
-    test('a frame slid past its dictionary writes what one buffer writes', () {
+    test('stream sliding past dictionary equals encodeBytes output', () {
       final source = _words(13 << 20);
       final dictionary = ZstdDictionary(_words(1 << 16));
       for (final level in [3, 6, 12]) {
@@ -293,7 +293,7 @@ void main() {
       }
     });
 
-    test('a stream without a checksum still writes what one buffer writes', () {
+    test('stream without checksum equals encodeBytes output', () {
       final source = _words(13 << 20);
       const coder = ZstdEncoder(checksum: false);
       final out = OutputMemoryStream();
@@ -301,7 +301,7 @@ void main() {
       expect(out.getBytes(), coder.encodeBytes(source));
     });
 
-    test('a slid frame reads back', () {
+    test('slid frame decodes back', () {
       final source = _words(13 << 20);
       final out = OutputMemoryStream();
       const ZstdEncoder().encodeStream(_Piped(source), out);
@@ -311,13 +311,13 @@ void main() {
       expect(getCrc32(decoded), getCrc32(source));
     });
 
-    test('an empty stream writes an empty frame', () {
+    test('empty stream writes empty frame', () {
       final out = OutputMemoryStream();
       const ZstdEncoder().encodeStream(_Piped(Uint8List(0)), out);
       expect(out.getBytes(), const ZstdEncoder().encodeBytes(Uint8List(0)));
     });
 
-    test('a stream reads only the bytes it was given', () {
+    test('encodeStream reads only bytes from input position to end', () {
       final source = _words(3 << 20);
       final held = _Piped(source)..skip(1024);
       final out = OutputMemoryStream();
@@ -326,7 +326,7 @@ void main() {
           const ZstdEncoder().encodeBytes(Uint8List.sublistView(source, 1024)));
     });
 
-    test('a frame appended to a filled stream reserves its room once', () {
+    test('frame appended to non-empty output reserves space once', () {
       final source = _words(3 << 20);
       final prefix = _words(4 << 20);
       final out = _Reserving()..writeBytes(prefix);

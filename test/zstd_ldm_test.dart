@@ -29,7 +29,7 @@ Uint8List _repeatedFar(int gap, int run) {
 
 void main() {
   group('zstd long distance matcher', () {
-    test('the reference turns it on only for the widest window', () {
+    test('enabled only for widest window, as in reference', () {
       expect(ZstdLdm.forParams(8, 26), isNull);
       expect(ZstdLdm.forParams(8, 27), isNotNull);
       expect(ZstdLdm.forParams(5, 27), isNull);
@@ -40,20 +40,22 @@ void main() {
       expect(deep.windowLog, 27);
     });
 
-    test('a sequence capacity follows the block it is asked for', () {
+    test('sequence capacity matches requested block size', () {
       final ldm = _matcher();
       expect(ldm.capacityFor(1 << 17), (1 << 17) ~/ ldm.minMatch + 1);
       expect(ldm.capacityFor(0), 1);
     });
 
-    test('reference strategy numbers keep the long distance thresholds', () {
+    test(
+        'strategies 6 to 9 give long distance minMatch null, 64, 32, 32 as reference',
+        () {
       expect(
           [6, 7, 8, 9]
               .map((strategy) => ZstdLdm.forParams(strategy, 27)?.minMatch),
           [null, 64, 32, 32]);
     });
 
-    test('a run repeated far back is found again', () {
+    test('run repeated far back is found', () {
       final ldm = _matcher();
       final src = _repeatedFar(1 << 20, 1 << 12);
       final view = ByteData.sublistView(src);
@@ -69,7 +71,7 @@ void main() {
       expect(found, isTrue, reason: 'no match reached back over the filler');
     });
 
-    test('a source with nothing to find leaves no sequences', () {
+    test('source without repeats gives no sequences', () {
       final ldm = _matcher();
       final src = Uint8List(1 << 16);
       for (var at = 0; at < src.length; at++) {
@@ -82,7 +84,7 @@ void main() {
       }
     });
 
-    test('a block shorter than a match is skipped', () {
+    test('block shorter than minimum match is skipped', () {
       final ldm = _matcher();
       final src = Uint8List(4);
       final out = ZstdLdmSequences(ldm.capacityFor(1 << 17));
@@ -91,7 +93,7 @@ void main() {
     });
 
     // What a dictionary put in the table is reachable from the first block
-    test('a filled table matches into what filled it', () {
+    test('filled table finds matches in data that filled it', () {
       final ldm = _matcher();
       final src = _repeatedFar(1 << 20, 1 << 12);
       final half = (1 << 12) + (1 << 20);
@@ -103,7 +105,7 @@ void main() {
 
     // `slide` is what lets a streamed frame drop the front of its buffer, and
     // a position that fell off the front has to read as never filled
-    test('a slide moves every position it keeps and drops the rest', () {
+    test('slide moves kept positions and drops others', () {
       final ldm = _matcher();
       final src = _repeatedFar(1 << 20, 1 << 12);
       final view = ByteData.sublistView(src);
@@ -126,7 +128,7 @@ void main() {
       expect(after.size, greaterThan(0));
     });
 
-    test('a slide past everything leaves nothing to reach back to', () {
+    test('slide past all data leaves no match candidates', () {
       final src = _repeatedFar(1 << 20, 1 << 12);
       final view = ByteData.sublistView(src);
       final tail = (1 << 12) + (1 << 20);

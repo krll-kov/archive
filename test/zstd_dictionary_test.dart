@@ -45,14 +45,14 @@ void main() {
           File('${directory.path}/dict-raw.dict').readAsBytesSync()),
     };
 
-    test('a trained dictionary carries an id and entropy tables', () {
+    test('trained dictionary has id and entropy tables', () {
       final trained = dictionaries['trained']!;
       expect(trained.hasEntropy, isTrue);
       expect(trained.id, isNot(0));
       expect(trained.repeatOffsets, hasLength(3));
     });
 
-    test('anything else is taken as raw content', () {
+    test('other bytes are used as raw content dictionary', () {
       final raw = dictionaries['raw']!;
       expect(raw.hasEntropy, isFalse);
       expect(raw.id, 0);
@@ -74,7 +74,7 @@ void main() {
         expect(getCrc32(decoded), crc);
       });
 
-      test('$name decodes through a stream', () {
+      test('$name decodes through stream', () {
         final output = OutputMemoryStream();
         final ok = ZstdDecoder(dictionary: dictionary).decodeStream(
             InputMemoryStream(bytes), output,
@@ -86,14 +86,14 @@ void main() {
       });
     }
 
-    test('a frame naming a dictionary is rejected without one', () {
+    test('frame with dictionary id throws without dictionary', () {
       final bytes =
           File('${directory.path}/dv-small-trained-l19.zst').readAsBytesSync();
       expect(() => ZstdDecoder().decodeBytes(bytes, throwOnError: true),
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a frame naming a dictionary is rejected by the wrong one', () {
+    test('frame with dictionary id throws with wrong dictionary', () {
       final bytes =
           File('${directory.path}/dv-small-trained-l19.zst').readAsBytesSync();
       expect(
@@ -102,7 +102,7 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a dictionary the frame does not name is still applied', () {
+    test('dictionary given for frame without id is still applied', () {
       final bytes =
           File('${directory.path}/dv-small-raw-l19.zst').readAsBytesSync();
       expect(ZstdDecoder().decodeBytes(bytes), isNot(hasLength(718)));
@@ -111,7 +111,7 @@ void main() {
       expect(getCrc32(decoded), 943341646);
     });
 
-    test('a dictionary cut inside its entropy tables is rejected', () {
+    test('dictionary truncated inside entropy tables throws', () {
       final full =
           File('${directory.path}/dict-trained.dict').readAsBytesSync();
       for (final cut in [9, 20, 64, 100]) {
@@ -121,9 +121,8 @@ void main() {
       }
     });
 
-    test(
-        'a dictionary cut inside its entropy tables throws what the package '
-        'exports', () {
+    test('dictionary truncated inside entropy tables throws ArchiveException',
+        () {
       final full =
           File('${directory.path}/dict-trained.dict').readAsBytesSync();
       for (final cut in [9, 20, 64, 100]) {
@@ -133,7 +132,7 @@ void main() {
       }
     });
 
-    test('a dictionary cut anywhere throws what the package exports', () {
+    test('dictionary truncated anywhere throws ArchiveException', () {
       final full =
           File('${directory.path}/dict-trained.dict').readAsBytesSync();
       for (var cut = 9; cut < full.length; cut++) {
@@ -145,9 +144,8 @@ void main() {
       }
     });
 
-    test(
-        'a dictionary with too many Huffman weights throws what the package '
-        'exports', () {
+    test('dictionary with too many Huffman weights throws ArchiveException',
+        () {
       final damaged = Uint8List.fromList(
           File('${directory.path}/dict-trained.dict').readAsBytesSync());
       damaged[8] = 37;

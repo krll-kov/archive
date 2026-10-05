@@ -25,7 +25,7 @@ void main() {
       }
       expect(crcVal, 0x3AC67C2B);
     });
-    test('typed views agree with bytewise CRC32 at every tail length', () {
+    test('CRC32 of typed views equals bytewise CRC32 at every tail length', () {
       final random = Random(417);
       final data =
           Uint8List.fromList(List.generate(8200, (_) => random.nextInt(256)));

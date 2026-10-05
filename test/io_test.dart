@@ -1,4 +1,6 @@
 // ignore_for_file: avoid_print
+@TestOn('vm')
+library;
 
 import 'dart:async';
 import 'dart:io';
@@ -536,7 +538,7 @@ void main() {
     await encoder.close();
   });
 
-  test('TarFileEncoder tgz leaves nothing in the system temp folder', () async {
+  test('TarFileEncoder tgz leaves no files in system temp folder', () async {
     final directory = Directory.systemTemp.createTempSync('archive-tgz-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final scratch = Directory('${directory.path}/scratch')..createSync();
@@ -545,6 +547,25 @@ void main() {
       await TarFileEncoder().tarDirectory(Directory('test/_data/test2'),
           filename: '${directory.path}/example2.tgz',
           compression: TarFileEncoder.gzip);
+      expect(scratch.listSync(), isEmpty);
+    }, getSystemTempDirectory: () => scratch);
+  });
+
+  test('TarFileEncoder tgz deletes temporary folder when filter throws',
+      () async {
+    final directory = Directory.systemTemp.createTempSync('archive-tgz-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final scratch = Directory('${directory.path}/scratch')..createSync();
+    final failure = StateError('filter failed');
+    final encoder = TarFileEncoder();
+    addTearDown(encoder.close);
+    await IOOverrides.runZoned(() async {
+      await expectLater(
+          encoder.tarDirectory(Directory('test/_data/test2'),
+              filename: '${directory.path}/example2.tgz',
+              compression: TarFileEncoder.gzip,
+              filter: (entity, progress) => throw failure),
+          throwsA(same(failure)));
       expect(scratch.listSync(), isEmpty);
     }, getSystemTempDirectory: () => scratch);
   });
@@ -577,7 +598,8 @@ void main() {
     expect(archive.length, equals(6));
   });
 
-  test('stream zip encode store writes entries without compression', () async {
+  test('ZipFileEncoder with level store writes every entry uncompressed',
+      () async {
     final data = File('test/_data/tarurls.txt');
     final path = '$testOutputPath/example_store.zip';
     final encoder = ZipFileEncoder()..create(path, level: ZipFileEncoder.store);
@@ -602,7 +624,7 @@ void main() {
     expect(archive.findFile('string.txt')!.content, List.filled(5000, 0x78));
   });
 
-  test('stream zip encode store level of one file', () async {
+  test('ZipFileEncoder stores only file added with level store', () async {
     final data = File('test/_data/tarurls.txt');
     final path = '$testOutputPath/example_store_one.zip';
     final encoder = ZipFileEncoder()..create(path);
@@ -694,7 +716,7 @@ void main() {
     expect(files.length, 4);
   });
 
-  test('extractFileToDisk keeps symlink chains inside the output directory',
+  test('extractFileToDisk keeps symlink chains inside output directory',
       () async {
     final directory = Directory.systemTemp.createTempSync('archive-extract-');
     addTearDown(() => directory.deleteSync(recursive: true));
@@ -742,7 +764,7 @@ void main() {
     expect(files.length, 4);
   });
 
-  test('extractFileToDisk tar.zst', () async {
+  test('extractFileToDisk extracts tar.zst', () async {
     final inPath = 'test/_data/test2.tar.zst';
     final outPath = '$testOutputPath/extractFileToDisk_tar_zst';
     final dir = Directory(outPath);
@@ -755,7 +777,7 @@ void main() {
     expect(files.length, 4);
   });
 
-  test('extractFileToDisk tzst', () async {
+  test('extractFileToDisk extracts tzst', () async {
     final inPath = 'test/_data/test2.tzst';
     final outPath = '$testOutputPath/extractFileToDisk_tzst';
     final dir = Directory(outPath);
@@ -770,7 +792,7 @@ void main() {
 
   // The header picks the format. The name counts only when the header is
   // unknown
-  test('extractFileToDisk reads the header before the name', () async {
+  test('extractFileToDisk detects format from header, not file name', () async {
     final directory = Directory.systemTemp.createTempSync('archive-extract-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final gz = File('test/_data/test2.tar.gz').readAsBytesSync();
@@ -782,7 +804,7 @@ void main() {
     }
   });
 
-  test('extractFileToDisk handles tar filenames beginning with codec magic',
+  test('extractFileToDisk extracts tar whose filenames start with codec magic',
       () async {
     const name = 'BZh11AY&SY.txt';
     final bytes = TarEncoder().encodeBytes(
@@ -801,7 +823,7 @@ void main() {
 
   // The file is a gzip with no tar inside. Nothing from it may reach the
   // output directory
-  test('extractFileToDisk refuses a gzip that holds no tar', () async {
+  test('extractFileToDisk throws on gzip without tar inside', () async {
     final directory = Directory.systemTemp.createTempSync('archive-extract-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final text =
@@ -825,7 +847,7 @@ void main() {
         isEmpty);
   });
 
-  test('extractFileToDisk rejects a truncated tar.zst frame', () async {
+  test('extractFileToDisk throws on truncated tar.zst frame', () async {
     final directory = Directory.systemTemp.createTempSync('archive-extract-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final archive = Archive()
@@ -860,7 +882,8 @@ void main() {
   });
 
   // pbzip2 writes one bzip2 stream per block and bzip2 -d reads them all
-  test('extractFileToDisk reads every tar.bz2 stream and rejects a cut one',
+  test(
+      'extractFileToDisk reads every tar.bz2 stream and throws on truncated one',
       () async {
     final directory = Directory.systemTemp.createTempSync('archive-extract-');
     addTearDown(() => directory.deleteSync(recursive: true));
@@ -895,8 +918,7 @@ void main() {
     expect(File('$lenient/second.bin').readAsBytesSync(), [4, 5, 6]);
   });
 
-  test('extractFileToDisk removes temporary tar files after rejection',
-      () async {
+  test('extractFileToDisk deletes temporary tar files after failure', () async {
     final directory = Directory.systemTemp.createTempSync('archive-cleanup-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final scratch = Directory('${directory.path}/scratch')..createSync();
@@ -917,8 +939,7 @@ void main() {
     }, getSystemTempDirectory: () => scratch);
   });
 
-  test('extractFileToDisk returns when the drive of the output does not exist',
-      () async {
+  test('extractFileToDisk returns when output drive does not exist', () async {
     final directory = Directory.systemTemp.createTempSync('archive-extract-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final input = File('${directory.path}/input.zip')
@@ -951,7 +972,8 @@ void main() {
   });
 
   // bsdtar makes a real hard link, Python tarfile and 7-Zip 26 write a copy
-  test('extractFileToDisk reads a hard link through its target', () async {
+  test('extractFileToDisk writes hard link with content of its target',
+      () async {
     final root = Directory.systemTemp.createTempSync('archive-extract-path-');
     addTearDown(() => root.deleteSync(recursive: true));
     final out = OutputMemoryStream();
@@ -972,7 +994,7 @@ void main() {
         'compiler');
   }, testOn: '!windows');
 
-  test('a tar hard link encoded into a zip reads through its target', () async {
+  test('tar hard link encoded into zip keeps content of its target', () async {
     final root = Directory.systemTemp.createTempSync('archive-extract-path-');
     addTearDown(() => root.deleteSync(recursive: true));
     final out = OutputMemoryStream();
@@ -1015,7 +1037,7 @@ void main() {
     }
 
     // bsdtar, Python tarfile and 7-Zip 26 also strip leading slashes
-    test('$method extraction strips leading slashes from names', () async {
+    test('$method strips leading slashes from entry names', () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');
       addTearDown(() => root.deleteSync(recursive: true));
       final output = p.join(root.path, 'out');
@@ -1027,7 +1049,7 @@ void main() {
           'abs');
     });
 
-    test('$method extraction creates an empty directory entry', () async {
+    test('$method creates empty directory entry', () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');
       addTearDown(() => root.deleteSync(recursive: true));
       final output = p.join(root.path, 'out');
@@ -1043,8 +1065,7 @@ void main() {
 
     // Python tarfile default filter and 7-Zip 26 also keep such link out,
     // bsdtar and Python filter='tar' create it as allowAbsoluteSymlinks does
-    test('$method extraction creates absolute symlinks only when allowed',
-        () async {
+    test('$method creates absolute symlinks only when allowed', () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');
       addTearDown(() => root.deleteSync(recursive: true));
       final archive = Archive()
@@ -1059,7 +1080,7 @@ void main() {
       expect(Link(p.join(allowed, 'abs')).targetSync(), '/usr/share/missing');
     }, testOn: '!windows');
 
-    test('$method extraction resolves output symlinks before parent components',
+    test('$method resolves output symlinks before parent path components',
         () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');
       addTearDown(() => root.deleteSync(recursive: true));
@@ -1091,7 +1112,7 @@ void main() {
 
     // bsdtar and Python tarfile also create a link whose target is a link
     // not yet resolvable, 7-Zip 26 drops it
-    test('$method extraction keeps a link to a link still dangling', () async {
+    test('$method keeps dangling link to dangling link', () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');
       addTearDown(() => root.deleteSync(recursive: true));
       final output = p.join(root.path, 'out');
@@ -1109,7 +1130,7 @@ void main() {
     }, testOn: '!windows');
 
     // bsdtar and Python tarfile also keep link text as the archive has it
-    test('$method extraction keeps link text as the archive has it', () async {
+    test('$method writes link target text unchanged from archive', () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');
       addTearDown(() => root.deleteSync(recursive: true));
       final output = p.join(root.path, 'out');
@@ -1125,8 +1146,7 @@ void main() {
     }, testOn: '!windows');
 
     // bsdtar gives same tree: later entry replaces file or link at its path
-    test('$method extraction replaces what an earlier entry left at a path',
-        () async {
+    test('$method replaces file left at path by earlier entry', () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');
       addTearDown(() => root.deleteSync(recursive: true));
       final output = p.join(root.path, 'out');
@@ -1149,7 +1169,8 @@ void main() {
       expect(File(p.join(output, 'b.txt')).readAsStringSync(), 'b');
     }, testOn: '!windows');
 
-    test('$method extraction rejects link targets escaping through links',
+    test(
+        '$method rejects link targets that escape output directory through links',
         () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');
       addTearDown(() => root.deleteSync(recursive: true));
@@ -1173,8 +1194,7 @@ void main() {
       expect(secret.readAsStringSync(), 'outside');
     }, testOn: '!windows');
 
-    test('$method extraction rejects an escape named before its link',
-        () async {
+    test('$method rejects escaping path that comes before its link', () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');
       addTearDown(() => root.deleteSync(recursive: true));
       final output = p.join(root.path, 'out');
@@ -1197,8 +1217,7 @@ void main() {
       expect(secret.readAsStringSync(), 'outside');
     }, testOn: '!windows');
 
-    test('$method extraction checks links under the physical output directory',
-        () async {
+    test('$method checks links against physical output directory', () async {
       final root = Directory.systemTemp.createTempSync('archive-extract-path-');
       addTearDown(() => root.deleteSync(recursive: true));
       Directory(p.join(root.path, 'nested', 'target'))
@@ -1263,7 +1282,7 @@ void main() {
   });
 
   for (final method in ['sync', 'async']) {
-    test('$method extraction of a decoded tar writes it the second time too',
+    test('$method of decoded tar writes same files on second extraction',
         () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
@@ -1293,7 +1312,7 @@ void main() {
     expect(fs.readByte(), equals(80));
   });
 
-  test('zip directory finishes when onProgress throws', () async {
+  test('zipDirectory finishes when onProgress throws', () async {
     final root = Directory.systemTemp.createTempSync('archive-zip-progress-');
     addTearDown(() => root.deleteSync(recursive: true));
     final source = p.join(root.path, 'src');
@@ -1424,8 +1443,8 @@ void main() {
     );
   });
 
-  group('extractFileToDisk after a failure part way through', () {
-    test('keeps the cause and takes the temporary tar with it', () async {
+  group('extractFileToDisk after failure part way through', () {
+    test('rethrows original error and deletes temporary tar', () async {
       final scratch = Directory.systemTemp.createTempSync('extract_failure');
       addTearDown(() => scratch.deleteSync(recursive: true));
       int leftovers() => Directory.systemTemp
@@ -1449,11 +1468,11 @@ void main() {
     });
   });
 
-  group('extractFileToDisk and a damaged archive', () {
+  group('extractFileToDisk on damaged archive', () {
     Uint8List content() => Uint8List.fromList(
         List<int>.generate(5000, (i) => (i * 131 + (i >> 7)) & 0xff));
 
-    test('a zip entry that cannot be decoded leaves no file', () async {
+    test('zip entry that cannot be decoded leaves no file on disk', () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
       final zip = ZipEncoder().encodeBytes(Archive()
@@ -1503,7 +1522,8 @@ void main() {
       }
     });
 
-    test('extractArchiveToDisk flags apply to an archive decoded without them',
+    test(
+        'extractArchiveToDisk verify and throwOnError apply to archive decoded without them',
         () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
@@ -1537,7 +1557,7 @@ void main() {
       }
     });
 
-    test('verify finds a wrong CRC that extraction otherwise accepts',
+    test('verify throws on wrong CRC that extraction without flags accepts',
         () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
@@ -1560,7 +1580,7 @@ void main() {
       expect(File(p.join(checked, 's.bin')).existsSync(), isFalse);
     });
 
-    test('whole entries of a zip with a wrong end record are extracted',
+    test('complete entries of zip with wrong end record are extracted',
         () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
@@ -1588,7 +1608,7 @@ void main() {
       }
     });
 
-    test('the callback gets every entry of a zip with a wrong end record',
+    test('callback receives every entry of zip with wrong end record',
         () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
@@ -1605,7 +1625,7 @@ void main() {
       expect(seen, ['a.bin', 'b.bin']);
     });
 
-    test('the callback gets each entry once when a zip link cannot be read',
+    test('callback receives each entry once when zip link cannot be read',
         () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
@@ -1638,8 +1658,8 @@ void main() {
     });
 
     test(
-        'the callback gets each entry once when a duplicate name comes before '
-        'a zip link that cannot be read', () async {
+        'callback receives each entry once when duplicate name comes before '
+        'unreadable zip link', () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
       final output = OutputMemoryStream();
@@ -1677,7 +1697,7 @@ void main() {
       expect(seen, ['a.bin', 'a.bin', 'link', 'c.bin']);
     });
 
-    test('verify checks the checksum of the tar container', () async {
+    test('verify checks checksum of compressed tar container', () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
       final packed = GZipEncoder().encodeBytes(TarEncoder()
@@ -1696,7 +1716,8 @@ void main() {
           throwsA(isA<ArchiveChecksumException>()));
     });
 
-    test('a callback error is never taken for damage', () async {
+    test('callback error is rethrown, never reported as damaged archive',
+        () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
       final input = File(p.join(directory.path, 'a.tar'))
@@ -1709,7 +1730,7 @@ void main() {
           throwsA(same(failure)));
     });
 
-    test('a damaged central directory extracts entries before the damage',
+    test('damaged central directory still extracts entries before damage',
         () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
@@ -1741,9 +1762,9 @@ void main() {
     });
   });
 
-  group('extraction and a write that fails', () {
+  group('extraction when file write fails', () {
     for (final method in ['sync', 'async']) {
-      test('$method passes the error through and leaves no file', () async {
+      test('$method rethrows write error and leaves no file', () async {
         final directory =
             Directory.systemTemp.createTempSync('archive-extract-');
         addTearDown(() => directory.deleteSync(recursive: true));
@@ -1758,8 +1779,7 @@ void main() {
       });
     }
 
-    test('extractFileToDisk passes the error through and leaves no file',
-        () async {
+    test('extractFileToDisk rethrows write error and leaves no file', () async {
       final directory = Directory.systemTemp.createTempSync('archive-extract-');
       addTearDown(() => directory.deleteSync(recursive: true));
       final input = File(p.join(directory.path, 'a.zip'))

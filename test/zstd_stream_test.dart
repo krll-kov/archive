@@ -57,7 +57,7 @@ void main() {
 
   group('zstd chunked decoder', () {
     for (final name in _archives()) {
-      test('$name decodes the same whatever the pieces', () {
+      test('$name decodes same in pieces of any size', () {
         final src = _archive(name);
         final dictionary = dictionaryFor(name);
         Uint8List? want;
@@ -82,13 +82,13 @@ void main() {
       });
     }
 
-    test('a truncated frame is rejected', () {
+    test('truncated frame throws ArchiveException', () {
       final src = _archive('text-1k-l19.zst');
       expect(() => _decode(Uint8List.sublistView(src, 0, src.length - 6), 64),
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a trailing empty skippable frame is accepted', () {
+    test('trailing empty skippable frame is accepted', () {
       final content = [1, 2, 3];
       final archive = Uint8List.fromList([
         ...ZstdEncoder().encodeBytes(content),
@@ -129,14 +129,16 @@ void main() {
       ],
     };
     for (final entry in skippableOnly.entries) {
-      test('${entry.key} skippable-only archives decode to no bytes', () {
+      test('${entry.key} archive of only skippable frames decodes to no bytes',
+          () {
         final archive = Uint8List.fromList(entry.value);
         expect(ZstdDecoder().decodeBytes(archive, throwOnError: true), isEmpty);
         for (final piece in [1, 3, archive.length]) {
           expect(_decode(archive, piece), isEmpty);
         }
       });
-      test('${entry.key} skippable-only archives decode through InputStream',
+      test(
+          '${entry.key} archive of only skippable frames decodes through InputStream',
           () {
         final output = OutputMemoryStream();
         expect(
@@ -149,7 +151,7 @@ void main() {
 
     // The input may stop sending without closing: what arrived whole is not
     // held back for the close, and what cannot be zstd is refused at once
-    test('a whole frame comes out before the input closes', () async {
+    test('complete frame is decoded before input closes', () async {
       final source = StreamController<List<int>>();
       final content = List<int>.generate(3000, (i) => (i * 7) & 0xff);
       final got = <int>[];
@@ -171,7 +173,7 @@ void main() {
 
     // A frame that has not ended still hands out every block that arrived
     // whole. Only the last block waits for the bytes it lacks
-    test('blocks come out before the frame ends', () async {
+    test('blocks are decoded before frame ends', () async {
       final source = StreamController<List<int>>();
       final content =
           List<int>.generate(1500000, (i) => (i * 7 + (i >> 9)) & 0xff);
@@ -198,7 +200,8 @@ void main() {
       [0x28, 0xb5, 0x2e],
       [0x53, 0x2a, 0x4c],
     ]) {
-      test('$junk, which no frame starts with, is refused at once', () async {
+      test('$junk cannot start frame and fails stream before input closes',
+          () async {
         final source = StreamController<List<int>>();
         final failed = Completer<Object>();
         final subscription = source.stream
@@ -216,7 +219,7 @@ void main() {
       [0x28, 0xb5, 0x2f],
       [0x5f, 0x2a],
     ]) {
-      test('$start, which a frame may still follow, is waited on', () async {
+      test('$start may begin frame, decoder waits for more input', () async {
         final source = StreamController<List<int>>();
         Object? error;
         final ended = Completer<void>();
@@ -240,13 +243,13 @@ void main() {
       });
     }
 
-    test('a damaged frame is caught by its checksum', () {
+    test('damaged frame throws on checksum mismatch', () {
       final src = Uint8List.fromList(_archive('text-1k-l19.zst'));
       src[src.length - 12] ^= 0xff;
       expect(() => _decode(src, 64), throwsA(isA<ArchiveException>()));
     });
 
-    test('the check runs unless it is turned off', () {
+    test('checksum is verified unless verify is false', () {
       final src = Uint8List.fromList(_archive('text-1k-l19.zst'));
       // The last four bytes are the frame's XXH64, which only the check reads
       src[src.length - 1] ^= 0xff;
@@ -254,26 +257,26 @@ void main() {
       expect(() => _decode(src, 64, verify: false), returnsNormally);
     });
 
-    test('an empty input is rejected', () {
+    test('empty input throws ArchiveException', () {
       expect(() => ZstdChunkedDecoder(_Held()).close(),
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a frame that needs a dictionary says so', () {
+    test('frame with dictionary id throws without dictionary', () {
       final src = _archive('dv-small-trained-l1.zst');
       expect(() => _decode(src, 64), throwsA(isA<ArchiveException>()));
     });
   });
 
   group('zstd stream converter', () {
-    test('an empty stream writes the reference frame', () async {
+    test('empty stream gives reference frame', () async {
       final frame = await const Stream<List<int>>.empty()
           .transform(const ZstdCodec(level: 1, frameChecksum: false).encoder)
           .fold<List<int>>([], (bytes, chunk) => bytes..addAll(chunk));
       expect(frame, [0x28, 0xb5, 0x2f, 0xfd, 0x20, 0, 1, 0, 0]);
     });
 
-    test('decodes from the file the way a reader gets it', () async {
+    test('file read in reader pieces decodes', () async {
       final name = 'domains-slice-l19.zst';
       final want = ZstdDecoder()
           .decodeBytes(_archive(name), verify: true, throwOnError: true);
@@ -286,7 +289,7 @@ void main() {
       expect(got, want);
     });
 
-    test('pieces that arrive one event apart decode the same', () async {
+    test('pieces arriving in separate events decode same', () async {
       final src = _archive('domains-slice-l19.zst');
       final want = ZstdDecoder().decodeBytes(src, verify: true);
       final controller = StreamController<List<int>>();
@@ -302,12 +305,12 @@ void main() {
       expect(await done, want);
     });
 
-    test('convert takes the whole archive at once', () {
+    test('convert decodes whole archive in one call', () {
       final src = _archive('text-1k-l19.zst');
       expect(zstdCodec.decode(src), ZstdDecoder().decodeBytes(src));
     });
 
-    test('a Stream encodes and decodes back through the two converters',
+    test('Stream encodes and decodes back through zstdCodec converters',
         () async {
       final source = Uint8List(300000);
       for (var i = 0; i < source.length; i++) {
@@ -327,7 +330,7 @@ void main() {
       expect(got, source);
     });
 
-    test('the pieces the input arrives in do not reach the archive', () {
+    test('input piece sizes do not change output', () {
       final source = Uint8List(400000);
       for (var i = 0; i < source.length; i++) {
         source[i] = (i * 29 + (i >> 7)) & 0xff;
@@ -361,8 +364,7 @@ void main() {
       }
     });
 
-    test('double-fast matches stop at the window after the input ring wraps',
-        () {
+    test('double-fast matches stay inside window after input ring wraps', () {
       const block = 131072;
       const ring = (1 << 21) + block;
       final source = Uint8List(ring + block);
@@ -411,7 +413,7 @@ void main() {
       }
     });
 
-    test('every level writes a frame that reads back', () {
+    test('output of every level decodes back', () {
       final source = Uint8List(200000);
       for (var i = 0; i < source.length; i++) {
         source[i] = (i * 5 + (i >> 6)) & 0xff;
@@ -432,7 +434,7 @@ void main() {
       }
     });
 
-    test('an empty input still writes a frame', () {
+    test('empty input writes valid frame', () {
       final held = _Held();
       ZstdChunkedEncoder(held).close();
       expect(held.closed, isTrue);
@@ -442,7 +444,7 @@ void main() {
           isEmpty);
     });
 
-    test('what it writes carries no content size and reads back', () {
+    test('output has no content size and decodes back', () {
       final source = Uint8List(70000);
       for (var i = 0; i < source.length; i++) {
         source[i] = (i * 7) & 0xff;
@@ -480,7 +482,7 @@ void main() {
       return source;
     }
 
-    test('contentSize writes what the reference writes for a pledged size', () {
+    test('contentSize gives reference output for pledged size', () {
       for (final size in [1, 255, 256, 65792, 300000]) {
         final source = pledgedSource(size);
         for (final level in [1, 3, 19]) {
@@ -503,7 +505,8 @@ void main() {
       }
     });
 
-    test('contentSize through the threaded converter', () async {
+    test('contentSize through threaded converter gives reference output',
+        () async {
       Future<List<int>> encode(Uint8List source, int level) =>
           Stream<List<int>>.fromIterable([
             for (var at = 0; at < source.length; at += 65536)
@@ -523,7 +526,7 @@ void main() {
           _archive('pledged/st-300000-l19.zst'));
     });
 
-    test('input of other length than contentSize throws', () async {
+    test('input length different from contentSize throws', () async {
       final source = Uint8List(1000);
       for (final given in [0, 999, 1001]) {
         expect(() => ZstdEncoderConverter(contentSize: given).convert(source),

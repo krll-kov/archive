@@ -11,7 +11,7 @@ void main() {
     buffer[i] = i % 256;
   }
 
-  test('error', () {
+  test('error', testOn: 'vm', () {
     var file = File(p.join('test/_data/inflate/data.bin'));
     var data = file.readAsBytesSync();
     final inflatedDataBytes = Inflate(data).getBytes();
@@ -19,7 +19,7 @@ void main() {
     expect(inflatedDataString.length, equals(5259));
   });
 
-  test('an incomplete code is refused, not a hang', () {
+  test('incomplete Huffman code throws instead of hanging', () {
     // A code with gaps, so a lookup lands on an entry no symbol was assigned.
     // That used to read as symbol 0 with a length of 0, consuming no bits,
     // so the decoder emitted a zero literal until it ran out of memory
@@ -38,7 +38,7 @@ void main() {
     expect(() => Inflate(incomplete), throwsFormatException);
   });
 
-  test('an incomplete code length code is refused as zlib does', () {
+  test('incomplete code length code throws, as zlib does', () {
     final incomplete = _dynamicBlock({0: 1}, (b) {
       for (var i = 0; i < 258 + 16; ++i) {
         b.write(0, 1);
@@ -61,7 +61,7 @@ void main() {
     expect(Inflate(overrun).getBytes(), isEmpty);
   });
 
-  test('a cut stream gives the start of the data and nothing else', () {
+  test('truncated stream returns start of data and nothing else', () {
     final data = Uint8List.fromList(
         utf8.encode('the quick brown fox jumps over the lazy dog ' * 20));
     final deflated = Uint8List.fromList(Deflate(data).getBytes());

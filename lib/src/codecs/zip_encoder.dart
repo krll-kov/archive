@@ -116,8 +116,7 @@ class _ZipEncoderData {
   _ZipEncoderData(this.level, [DateTime? dateTime]) {
     time = _getTime(dateTime);
     date = _getDate(dateTime);
-    seconds =
-        dateTime == null ? null : dateTime.millisecondsSinceEpoch ~/ 1000;
+    seconds = dateTime == null ? null : dateTime.millisecondsSinceEpoch ~/ 1000;
   }
 }
 

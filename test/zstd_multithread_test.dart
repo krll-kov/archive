@@ -109,13 +109,13 @@ void main() {
     input[i] = i % 3000 < 2400 ? (i >> 4) & 0xff : state & 0xff;
   }
 
-  test('the frame decodes back to the input', () async {
+  test('frame decodes back to input', () async {
     final frame = await _encode(input, jobSize: 524288);
     expect(ZstdDecoder().decodeBytes(frame, verify: true, throwOnError: true),
         input);
   });
 
-  test('the worker count does not change the bytes', () async {
+  test('worker count does not change output', () async {
     final one = await _encode(input, workers: 1, jobSize: 524288);
     for (final workers in [2, 3, 8]) {
       expect(await _encode(input, workers: workers, jobSize: 524288), one,
@@ -123,19 +123,19 @@ void main() {
     }
   });
 
-  test('job size and overlap do change them', () async {
+  test('job size and overlap change output', () async {
     final held = await _encode(input, jobSize: 524288);
     expect(await _encode(input, jobSize: 1048576), isNot(held));
     expect(await _encode(input, jobSize: 524288, overlapLog: 9), isNot(held));
   });
 
-  test('an input below the job minimum is the single threaded frame', () async {
+  test('input below job minimum gives single-thread frame', () async {
     final small = Uint8List.sublistView(input, 0, 300000);
     expect(await _encode(small),
         ZstdEncoder(checksum: false, level: 6).encodeBytes(small));
   });
 
-  test('encoding a stream advances its read position', () async {
+  test('encodeStream moves input position to end', () async {
     final small = Uint8List.sublistView(input, 0, 1024);
     final ordinary = InputMemoryStream(small)..skip(17);
     const ZstdEncoder(level: 1).encodeStream(ordinary, OutputMemoryStream());
@@ -156,7 +156,7 @@ void main() {
     expect(parallel.position, ordinary.position);
   });
 
-  test('a checksum still covers the whole input', () async {
+  test('checksum covers whole input', () async {
     final done = Completer<Uint8List>();
     ZstdEncoder(level: 1).encodeBytes(input,
         multithread: ZstdMultithreadOptions(
@@ -193,7 +193,7 @@ void main() {
     22: [302845, 4012362388],
   };
   for (var level = 1; level <= 22; level++) {
-    test('level $level writes the frame the reference writes', () async {
+    test('level $level output equals reference output', () async {
       final frame = await _encode(input, level: level, jobSize: 524288);
       expect([frame.length, getCrc32(frame)], golden[level]);
     });
@@ -217,13 +217,13 @@ void main() {
     return Uint8List.fromList(out);
   }
 
-  test('the transform path writes a frame that decodes back', () async {
+  test('transform output decodes back', () async {
     final frame = await transform(4);
     expect(ZstdDecoder().decodeBytes(frame, verify: true, throwOnError: true),
         input);
   });
 
-  test('the transform path sends a job in pieces of at most 64 KiB', () async {
+  test('transform sends each job in pieces of at most 64 KiB', () async {
     var largest = 0;
     final out = BytesBuilder(copy: false);
     await for (final piece
@@ -245,13 +245,13 @@ void main() {
         input);
   });
 
-  test('the transform path does not depend on the worker count', () async {
+  test('transform output does not depend on worker count', () async {
     final one = await transform(1);
     expect(await transform(4), one);
     expect(await transform(8), one);
   });
 
-  test('level 22 streaming jobs write the reference frame', () async {
+  test('level 22 streaming jobs give reference output', () async {
     final source = Uint8List.sublistView(input, 0, 1048577);
     Stream<List<int>> pieces() async* {
       for (var at = 0; at < source.length; at += 131071) {
@@ -272,7 +272,7 @@ void main() {
     expect([frame.length, getCrc32(frame)], [211267, 4043156817]);
   });
 
-  test('an empty stream writes the reference frame', () async {
+  test('empty stream gives reference frame', () async {
     final frame = await const Stream<List<int>>.empty()
         .transform(const ZstdCodec(
       level: 1,
@@ -283,8 +283,7 @@ void main() {
     expect(frame, [0x28, 0xb5, 0x2f, 0xfd, 0x20, 0, 1, 0, 0]);
   });
 
-  test('a job size under the minimum writes the frame the minimum writes',
-      () async {
+  test('job size below minimum gives same output as minimum', () async {
     // `ZSTD_CCtxParams_setParameter` raises a job size below
     // ZSTDMT_JOBSIZE_MIN to that minimum, so both of these cut the same jobs.
     // Sizing the long distance matcher by the given number instead left its
@@ -314,7 +313,7 @@ void main() {
     expect(await jobs(1000), await jobs(zstdMtJobSizeMin));
   }, testOn: 'vm');
 
-  test('a level the encoder cannot honour throws whatever the input size', () {
+  test('invalid level throws for any input size', () {
     // Under the job size minimum the frame is the single threaded one, and the
     // level was read before the call returned. Over that size the work ran
     // later, so the ArgumentError went to onDone as an empty result
@@ -339,7 +338,7 @@ void main() {
 
   // The last job of a stream is whatever arrived after the one before it, and a
   // source that fails part way through a job has to end the frame, not hang it
-  group('a transform whose input stops', () {
+  group('transform whose input ends', () {
     Future<List<int>> encode(Uint8List source, int piece,
         {int workers = 4}) async {
       Stream<List<int>> pieces() async* {
@@ -366,7 +365,7 @@ void main() {
           : (length < 524288
               ? 'before the first job is full'
               : 'part way into a job');
-      test('$label writes one frame whatever the pieces', () async {
+      test('$label writes one frame for any input pieces', () async {
         final source = Uint8List.sublistView(input, 0, length);
         final whole = await encode(source, source.length);
         expect(
@@ -382,7 +381,7 @@ void main() {
     }
 
     for (final at in [1000, 700000, 2 * 524288]) {
-      test('a source that fails after $at bytes ends with that error',
+      test('source error after $at bytes ends stream with same error',
           () async {
         final source = StreamController<List<int>>();
         final output = source.stream
@@ -401,7 +400,7 @@ void main() {
       });
     }
 
-    test('a source that fails gets no bytes after the error', () async {
+    test('no bytes are sent after source error', () async {
       final source = StreamController<List<int>>();
       final events = <String>[];
       final ended = Completer<void>();
@@ -422,7 +421,7 @@ void main() {
     });
   });
 
-  test('a silent input can be cancelled and is let go', () async {
+  test('cancel over silent input releases input', () async {
     // Parked on an input that neither sends nor closes: before the first job
     // is full, and with a job already out on a worker
     for (final start in [0, 1000, 600000]) {
@@ -444,7 +443,7 @@ void main() {
     }
   }, testOn: 'vm');
 
-  test('a spawn that fails kills the worker already started', () async {
+  test('failed spawn kills worker already started', () async {
     final exited = ReceivePort();
     final real = zstdMtSpawnWorker;
     addTearDown(() {
@@ -474,7 +473,7 @@ void main() {
 
   // One worker gets eight jobs. The first job fails and the frame is lost.
   // The pool must not send the worker a second job
-  test('a failed job stops the pool handing out jobs', () async {
+  test('failed job stops pool from starting more jobs', () async {
     final real = zstdMtSpawnWorker;
     final given = ReceivePort();
     addTearDown(() {
@@ -493,7 +492,7 @@ void main() {
     expect(jobs, 1);
   }, testOn: 'vm');
 
-  test('a failed job reaches the converter as ArchiveException', () async {
+  test('failed job reaches converter as ArchiveException', () async {
     final real = zstdMtSpawnWorker;
     final given = ReceivePort();
     addTearDown(() {
@@ -516,7 +515,7 @@ void main() {
   }, testOn: 'vm');
 
   for (final path in ['file', 'transform']) {
-    test('$path bounds completed jobs while the first job waits', () async {
+    test('$path limits completed jobs held while first job waits', () async {
       final real = zstdMtSpawnWorker;
       final given = ReceivePort();
       final first = Completer<SendPort>();
@@ -578,7 +577,7 @@ void main() {
     }, testOn: 'vm');
   }
 
-  test('cancelling the output cancels the input subscription', () async {
+  test('cancel of output cancels input subscription', () async {
     final input = StreamController<List<int>>();
     final firstBody = Completer<void>();
     final output = input.stream.transform(const ZstdCodec(
@@ -601,7 +600,7 @@ void main() {
     // same twelve lines with a passthrough generator hang there too
   }, testOn: 'vm');
 
-  test('pausing the output stops reading the input', () async {
+  test('pause of output stops reading input', () async {
     final inputEnded = Completer<void>();
     final firstBody = Completer<void>();
     Stream<List<int>> source() async* {
@@ -633,7 +632,7 @@ void main() {
     expect(consumedAll, isFalse);
   });
 
-  test('a transform rejects an invalid memory budget', () async {
+  test('transform with invalid memoryBudget throws ArgumentError', () async {
     final output = Stream<List<int>>.value([1, 2, 3]).transform(
       const ZstdCodec(
         level: 1,
@@ -644,20 +643,20 @@ void main() {
     await expectLater(output.toList(), throwsArgumentError);
   });
 
-  group('the worker pool the settings ask for', () {
+  group('worker pool size from settings', () {
     // The geometry of the streamed frame, which is what the transform runs on
     List<int> geometry(int level) =>
         ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
             jobSize: 0, overlapLog: 0);
 
-    test('a budget under one worker still affords one', () {
+    test('budget below 1 worker still allows 1 worker', () {
       for (final level in [1, 6, 12, 19]) {
         expect(zstdMtWorkerCap(1, level, zstdMtSizeUnknown, geometry(level)), 1,
             reason: 'level $level');
       }
     });
 
-    test('a budget buys a worker for what a worker holds', () {
+    test('budget allows workers by memory per worker', () {
       const level = 6;
       final cost = zstdMtWorkerCost(level, zstdMtSizeUnknown, geometry(level));
       for (final workers in [1, 3, 7]) {
@@ -670,7 +669,7 @@ void main() {
           reason: 'no budget is no bound');
     });
 
-    test('the pool is what was asked for, lowered to what is afforded', () {
+    test('pool size is requested workers limited by budget and cores', () {
       expect(zstdMtPoolSize(4, 16, 0), 4, reason: 'no cap, no change');
       expect(zstdMtPoolSize(4, 16, 1), 1, reason: 'the cap lowers it');
       expect(zstdMtPoolSize(4, 16, 9), 4, reason: 'a cap above it does not');
@@ -681,8 +680,7 @@ void main() {
       expect(zstdMtPoolSize(0, 1, 0), 1, reason: 'never below one');
     });
 
-    test('a transform under a budget of one byte writes the same frame',
-        () async {
+    test('transform with 1-byte budget gives same output', () async {
       Future<List<int>> run(int budget) async {
         final parts = <int>[];
         await for (final part
@@ -701,7 +699,7 @@ void main() {
     });
   }, testOn: 'vm');
 
-  test('a transform consumes each chunk before requesting another', () async {
+  test('transform reads next chunk only after current one is used', () async {
     Stream<List<int>> source() async* {
       final buffer = Uint8List(1000)..fillRange(0, 1000, 1);
       yield buffer;
@@ -729,7 +727,7 @@ void main() {
         expected);
   });
 
-  test('small jobs are clamped to the reference minimum', () async {
+  test('small job size is raised to reference minimum', () async {
     final src = Uint8List.fromList(
       List<int>.generate(600000, (i) => (i * 13 + (i >> 9)) & 255),
     );
@@ -738,7 +736,7 @@ void main() {
     expect(smaller, minimum);
   });
 
-  test('large jobs are clamped to the reference maximum', () {
+  test('large job size is lowered to reference maximum', () {
     const maximum = 1 << 30;
     for (final level in [1, 6, 12, 19, 22]) {
       final expected = ZstdMtFrameEncoder.geometry(level, zstdMtSizeUnknown,
@@ -754,7 +752,7 @@ void main() {
     }
   });
 
-  test('input read failures reach onError', () async {
+  test('input read error reaches onError', () async {
     final error = Completer<Object>();
     var completed = false;
     expect(
@@ -770,7 +768,7 @@ void main() {
     expect(completed, isFalse);
   });
 
-  test('a RangeError reaches onError as ArchiveException', () async {
+  test('RangeError reaches onError as ArchiveException', () async {
     final error = Completer<Object>();
     ZstdEncoder().encodeStream(
         _BrokenInput(RangeError('bug')), OutputMemoryStream(),
@@ -782,7 +780,7 @@ void main() {
         isA<ArchiveException>());
   });
 
-  test('file output failures reach onError', () async {
+  test('file output error reaches onError', () async {
     final directory = Directory.systemTemp.createTempSync('zstd-multithread-');
     final file = File('${directory.path}/input')
       ..writeAsBytesSync(Uint8List(600000));
@@ -805,7 +803,7 @@ void main() {
     }
   }, testOn: 'vm');
 
-  test('a sink refuses the options, since it cannot wait for a worker', () {
+  test('startChunkedConversion with multithread throws ArgumentError', () {
     expect(
         () =>
             ZstdCodec(multithread: ZstdMultithreadOptions.converter(workers: 2))
@@ -814,7 +812,7 @@ void main() {
         throwsArgumentError);
   });
 
-  test('settings that cannot be honoured are refused', () {
+  test('invalid workers, budget or job settings throw ArgumentError', () {
     void call({int workers = 1, int jobSize = 0, int overlapLog = 0}) =>
         ZstdEncoder().encodeBytes(input,
             multithread: ZstdMultithreadOptions(
@@ -828,7 +826,8 @@ void main() {
     expect(() => call(jobSize: -1), throwsArgumentError);
   });
 
-  test('a dictionary goes to the first job and the frame names it', () async {
+  test('dictionary is used by first job and its id is in frame header',
+      () async {
     final dictionary = ZstdDictionary(Uint8List.sublistView(input, 0, 4096));
     final done = Completer<Uint8List>();
     ZstdEncoder(checksum: false, level: 6, dictionary: dictionary).encodeBytes(
@@ -857,7 +856,7 @@ void main() {
       expect(seen.last, src.length);
     }
 
-    test('encodeBytes reports input covered by written jobs', () async {
+    test('encodeBytes reports input of written jobs', () async {
       final seen = <int>[];
       final done = Completer<Uint8List>();
       const ZstdEncoder(level: 3).encodeBytes(src,
@@ -871,7 +870,7 @@ void main() {
       expectProgress(seen);
     });
 
-    test('progress moves inside a job as its blocks are compressed', () async {
+    test('progress grows inside job as blocks are compressed', () async {
       final seen = <int>[];
       await for (final _ in Stream<List<int>>.fromIterable([src]).transform(
           ZstdEncoderConverter(
@@ -883,7 +882,7 @@ void main() {
       expectProgress(seen);
     });
 
-    test('encodeStream of a file reports it as well', () async {
+    test('encodeStream of file reports progress', () async {
       final dir = Directory.systemTemp.createTempSync('zstd-progress');
       addTearDown(() => dir.deleteSync(recursive: true));
       final path = '${dir.path}/src.bin';
@@ -905,7 +904,7 @@ void main() {
       expectProgress(seen);
     }, testOn: 'vm');
 
-    test('the converter reports it as well', () async {
+    test('converter reports progress', () async {
       final seen = <int>[];
       final out = BytesBuilder(copy: false);
       await for (final piece in Stream<List<int>>.fromIterable([
@@ -921,8 +920,7 @@ void main() {
       expectProgress(seen);
     });
 
-    test('an onProgress that throws reaches the zone, the encode goes on',
-        () async {
+    test('onProgress error goes to zone and encode continues', () async {
       final errors = <Object>[];
       final converted = Completer<Uint8List>();
       final bytes = Completer<Uint8List>();

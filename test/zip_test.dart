@@ -211,7 +211,7 @@ final zipTests = <dynamic>[
 
 void main() async {
   group('zip', () {
-    test('EOCD may span two reverse-search chunks', () {
+    test('EOCD may span two reverse-search chunks', testOn: 'vm', () {
       final dir = Directory.systemTemp.createTempSync('archive-comment-');
       addTearDown(() => dir.deleteSync(recursive: true));
       for (final size in [
@@ -259,7 +259,7 @@ void main() async {
       }
     });
 
-    test('an extra field with 1 to 3 trailing bytes is read', () {
+    test('extra field with 1 to 3 trailing bytes decodes', () {
       final content = utf8.encode('extra field payload' * 20);
       final name = utf8.encode('hello.txt');
       final crc = getCrc32(content);
@@ -320,8 +320,8 @@ void main() async {
       }
     });
 
-    test('an MS-DOS directory without a trailing slash is a directory',
-        () async {
+    test('MS-DOS directory without trailing slash decodes as directory',
+        testOn: 'vm', () async {
       final bytes = _rawZip([
         _RawEntry('def'.codeUnits, 0x0014, 0x10),
         _RawEntry('def/foo'.codeUnits, 0x0014, 0x20, content: 'foo'.codeUnits),
@@ -357,7 +357,7 @@ void main() async {
       }
     });
 
-    test('a name without the UTF-8 flag is CP437 unless it is valid UTF-8', () {
+    test('name without UTF-8 flag decodes as CP437 unless valid UTF-8', () {
       List<int> unicodePath(List<int> header, String name,
           {int crc = 0, int version = 1}) {
         final utf = utf8.encode(name);
@@ -417,7 +417,103 @@ void main() async {
           ['café.txt']);
     });
 
-    test('EOCD remains covered when approaching the first chunk', () {
+    test('Unicode Path is used only from central directory, as in 7-Zip', () {
+      List<int> unicodePath(List<int> raw, String name,
+          {int version = 1, int crc = 0}) {
+        final path = utf8.encode(name);
+        return (ByteData(9)
+                  ..setUint16(0, 0x7075, Endian.little)
+                  ..setUint16(2, 5 + path.length, Endian.little)
+                  ..setUint8(4, version)
+                  ..setUint32(5, getCrc32(raw) ^ crc, Endian.little))
+                .buffer
+                .asUint8List() +
+            path;
+      }
+
+      final raw = 'legacy.txt'.codeUnits;
+      final local = 'local.txt'.codeUnits;
+      final central = 'central.txt'.codeUnits;
+      final content = utf8.encode('hello');
+      for (final (entry, name) in [
+        (
+          _RawEntry(raw, 0, 0x20,
+              content: content, localExtra: unicodePath(raw, '新.txt')),
+          'legacy.txt'
+        ),
+        (
+          _RawEntry(raw, 0, 0x20,
+              content: content,
+              extra: unicodePath(raw, '新.txt'),
+              localExtra: const []),
+          '新.txt'
+        ),
+        (
+          _RawEntry(central, 0, 0x20,
+              content: content,
+              localName: local,
+              localExtra: unicodePath(local, '新.txt'),
+              extra: unicodePath(central, '新.txt')),
+          '新.txt'
+        ),
+        (
+          _RawEntry(raw, 0, 0x20,
+              content: content,
+              localExtra: unicodePath(raw, '新.txt', version: 2)),
+          'legacy.txt'
+        ),
+        (
+          _RawEntry(raw, 0, 0x20,
+              content: content, localExtra: unicodePath(raw, '新.txt', crc: 1)),
+          'legacy.txt'
+        ),
+      ]) {
+        final bytes = _rawZip([entry]);
+        for (final (verify, throwOnError) in [
+          (false, false),
+          (true, false),
+          (false, true)
+        ]) {
+          final archive = ZipDecoder()
+              .decodeBytes(bytes, verify: verify, throwOnError: throwOnError);
+          expect(archive.single.name, name);
+          expect(archive.single.content, content);
+          final offset = _centralDirectoryOffset(bytes);
+          final header = ZipFileHeader()
+            ..read(InputMemoryStream(bytes)..setPosition(offset + 4),
+                verify: verify || throwOnError);
+          final file = ZipFile(header)
+            ..read(InputMemoryStream(bytes), verify: verify || throwOnError);
+          expect(file.filename, name);
+          expect(file.getStream().toUint8List(), content);
+        }
+      }
+      final conflict = _rawZip([
+        _RawEntry(central, 0, 0x20,
+            content: content,
+            localName: local,
+            localExtra: unicodePath(local, '新.txt'),
+            extra: unicodePath(central, '旧.txt'))
+      ]);
+      for (final (verify, throwOnError) in [
+        (false, false),
+        (true, false),
+        (false, true)
+      ]) {
+        for (final archive in [
+          ZipDecoder().decodeBytes(conflict,
+              verify: verify, throwOnError: throwOnError),
+          ZipDecoder().decodeStream(InputMemoryStream(conflict),
+              verify: verify, throwOnError: throwOnError)
+        ]) {
+          expect(archive.single.name, '旧.txt');
+          expect(archive.single.content, content);
+        }
+      }
+    });
+
+    test('EOCD remains covered when approaching the first chunk', testOn: 'vm',
+        () {
       final dir = Directory.systemTemp.createTempSync('archive-first-chunk-');
       addTearDown(() => dir.deleteSync(recursive: true));
       final empty = ZipEncoder().encodeBytes(
@@ -456,7 +552,8 @@ void main() async {
       }
     });
 
-    test('the EOCD of a nested zip is not mistaken for the outer one', () {
+    test('the EOCD of a nested zip is not mistaken for the outer one',
+        testOn: 'vm', () {
       final dir = Directory.systemTemp.createTempSync('archive-nested-');
       addTearDown(() => dir.deleteSync(recursive: true));
       final inner = ZipEncoder().encodeBytes(
@@ -493,7 +590,7 @@ void main() async {
     });
 
     test('a signature in the trailing comment bytes is too late to be an EOCD',
-        () {
+        testOn: 'vm', () {
       final dir = Directory.systemTemp.createTempSync('archive-tail-sig-');
       addTearDown(() => dir.deleteSync(recursive: true));
       final content = 'known payload' * 400;
@@ -561,7 +658,7 @@ void main() async {
       expect(zipBytes.length, greaterThan(zipBytes3.length));
     });
 
-    test('encode file stream', () async {
+    test('encode file stream', testOn: 'vm', () async {
       final input = InputFileStream('test/_data/zip/android-javadoc.zip');
       final output = OutputFileStream('$testOutputPath/encode_file_stream.zip');
       final archive = Archive();
@@ -579,7 +676,7 @@ void main() async {
       expect(content.length, input.length);
     });
 
-    test('file close', () async {
+    test('file close', testOn: 'vm', () async {
       final input = InputFileStream('test/_data/test2.zip');
       final archive = ZipDecoder().decodeStream(input);
       final f1 = archive[1];
@@ -589,7 +686,7 @@ void main() async {
       expect(f2content.length, 3);
     });
 
-    test('memory file close', () async {
+    test('memory file close', testOn: 'vm', () async {
       final archive = ZipDecoder().decodeStream(
           InputMemoryStream(File('test/_data/test2.zip').readAsBytesSync()));
       final f1 = archive[1];
@@ -599,7 +696,7 @@ void main() async {
       expect(f2content.length, 3);
     });
 
-    test('shared file', () async {
+    test('shared file', testOn: 'vm', () async {
       final archive = ZipDecoder().decodeStream(
           InputMemoryStream(File('test/_data/test2.zip').readAsBytesSync()));
       final archive2 = Archive()..add(archive[1]);
@@ -656,7 +753,7 @@ void main() async {
       }
     });
 
-    test('zip file data: memory stream', () async {
+    test('zip file data: memory stream', testOn: 'vm', () async {
       final archive = ZipDecoder().decodeStream(
           InputMemoryStream(File('test/_data/test2.zip').readAsBytesSync()));
       final file = archive[1];
@@ -708,7 +805,7 @@ void main() async {
       expect(utf8.decode(verifyFile.content), text);
     });
 
-    test('decode encode', () async {
+    test('decode encode', testOn: 'vm', () async {
       final archive = ZipDecoder().decodeStream(
           InputMemoryStream(File('test/_data/test2.zip').readAsBytesSync()));
 
@@ -719,7 +816,7 @@ void main() async {
       expect(archive.length, archive2.length);
     });
 
-    test('decode file stream', () async {
+    test('decode file stream', testOn: 'vm', () async {
       final input = InputFileStream('test/_data/zip/android-javadoc.zip',
           bufferSize: 32 * 1024);
       final archive = ZipDecoder().decodeStream(input);
@@ -727,7 +824,8 @@ void main() async {
           archive, '$testOutputPath/zip_decode_file_stream');
     });
 
-    test('the decoder reads a stream in either byte order', () {
+    test('decoder reads input in big- and little-endian byte order',
+        testOn: 'vm', () {
       for (final name in ['test.zip', 'lzma.zip']) {
         final path = 'test/_data/zip/$name';
         final bytes = File(path).readAsBytesSync();
@@ -754,7 +852,8 @@ void main() async {
       }
     });
 
-    test('an entry decoded and encoded again keeps its modification time', () {
+    test('decoded and re-encoded entry keeps modification time', testOn: 'vm',
+        () {
       final decoded = ZipDecoder()
           .decodeBytes(File('test/_data/zip/test.zip').readAsBytesSync());
       final again = ZipDecoder().decodeBytes(ZipEncoder().encodeBytes(decoded));
@@ -765,14 +864,14 @@ void main() async {
       }
     });
 
-    test('decode', () async {
+    test('decode', testOn: 'vm', () async {
       var file = File(p.join('test/_data/zip/android-javadoc.zip'));
       var bytes = file.readAsBytesSync();
       final archive = ZipDecoder().decodeBytes(bytes, verify: true);
       expect(archive.length, equals(102));
     });
 
-    test('verify refuses content that does not match its CRC32', () {
+    test('verify throws on content that does not match CRC32', () {
       final bytes = ZipEncoder().encodeBytes(Archive()
         ..add(ArchiveFile.noCompress('a.txt', 5, utf8.encode('hello')))
         ..add(ArchiveFile.string('b.txt', 'hello' * 100)));
@@ -792,7 +891,7 @@ void main() async {
           utf8.encode('Hello'));
     });
 
-    test('an entry from a stream read part way holds the rest of it', () {
+    test('entry from partly read stream holds remaining bytes', () {
       for (final compression in [
         CompressionType.deflate,
         CompressionType.none
@@ -812,7 +911,7 @@ void main() async {
       }
     });
 
-    test('verify refuses a damaged local header or central directory', () {
+    test('verify throws on damaged local header or central directory', () {
       final bytes = ZipEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
       final central = ByteData.sublistView(bytes)
@@ -831,21 +930,29 @@ void main() async {
       }
     });
 
-    test('strict decoding refuses a local name the central one does not match',
+    test('local name that differs from central name decodes under central name',
         () {
       final bytes = ZipEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
-      final damaged = Uint8List.fromList(bytes)..[31] ^= 1;
-      for (final (verify, throwOnError) in [(true, false), (false, true)]) {
-        expect(
-            () => ZipDecoder().decodeBytes(damaged,
-                verify: verify, throwOnError: throwOnError),
-            throwsA(isA<ArchiveException>()),
-            reason: 'verify $verify, throwOnError $throwOnError');
+      final renamed = Uint8List.fromList(bytes)..[31] ^= 1;
+      for (final (verify, throwOnError) in [
+        (false, false),
+        (true, false),
+        (false, true)
+      ]) {
+        for (final archive in [
+          ZipDecoder()
+              .decodeBytes(renamed, verify: verify, throwOnError: throwOnError),
+          ZipDecoder().decodeStream(InputMemoryStream(renamed),
+              verify: verify, throwOnError: throwOnError)
+        ]) {
+          expect(archive.single.name, 'a.txt');
+          expect(archive.single.content, 'hello'.codeUnits);
+        }
       }
     });
 
-    test('verify refuses a zip without its end of central directory', () {
+    test('verify throws on zip without end of central directory', () {
       final bytes = ZipEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
       for (final cut in [1, 5, 22]) {
@@ -874,7 +981,7 @@ void main() async {
               .single
               .content;
 
-      test('a wrong CRC throws only with verify', () {
+      test('wrong CRC throws only with verify', () {
         final bad = Uint8List.fromList(zip);
         bad[14] ^= 1;
         expect(read(bad, false, false), data);
@@ -883,7 +990,7 @@ void main() async {
             throwsA(isA<ArchiveChecksumException>()));
       });
 
-      test('a wrong central CRC throws only with verify', () {
+      test('wrong central CRC throws only with verify', () {
         final bad = Uint8List.fromList(zip);
         final central =
             ByteData.sublistView(bad).getUint32(bad.length - 6, Endian.little);
@@ -896,7 +1003,7 @@ void main() async {
         expect((file.rawContent! as ZipFile).verifyCrc32(), isFalse);
       });
 
-      test('an unsigned descriptor CRC can equal its optional signature', () {
+      test('data descriptor CRC equal to descriptor signature decodes', () {
         final content = Uint8List.fromList([0xac, 0x0a, 0x7a, 0xd5]);
         expect(getCrc32(content), 0x08074b50);
         final encoded = ZipEncoder(streamed: true)
@@ -926,7 +1033,7 @@ void main() async {
         }
       });
 
-      test('an error thrown by the callback reaches the caller unchanged', () {
+      test('callback error is rethrown unchanged', () {
         final two = ZipEncoder().encodeBytes(Archive()
           ..add(ArchiveFile.bytes('a', data))
           ..add(ArchiveFile.bytes('b', data)));
@@ -945,7 +1052,8 @@ void main() async {
         }
       });
 
-      test('damaged structure throws with either flag and not without', () {
+      test('damaged structure throws with verify or throwOnError, not without',
+          () {
         final bad = Uint8List.fromList(zip);
         final central =
             ByteData.sublistView(bad).getUint32(bad.length - 6, Endian.little);
@@ -961,7 +1069,9 @@ void main() async {
         }
       });
 
-      test('entry size must match decompressed content with either flag', () {
+      test(
+          'entry size that differs from content throws with verify or throwOnError',
+          () {
         for (final compression in [
           CompressionType.none,
           CompressionType.deflate,
@@ -1002,7 +1112,9 @@ void main() async {
         }
       });
 
-      test('strict decoding rejects fields outside their ZIP records', () {
+      test(
+          'lengths and offsets outside their records throw only with verify or throwOnError',
+          () {
         final central =
             ByteData.sublistView(zip).getUint32(zip.length - 6, Endian.little);
         for (final (offset, width, value) in [
@@ -1034,7 +1146,7 @@ void main() async {
         }
       });
 
-      test('strict decoding rejects a truncated archive comment', () {
+      test('verify rejects truncated archive comment', testOn: 'vm', () {
         final archive = Archive()
           ..comment = 'archive comment'
           ..add(ArchiveFile.string('a.txt', 'some content'));
@@ -1068,7 +1180,7 @@ void main() async {
         }
       });
 
-      test('strict decoding accepts a 65535-byte archive comment', () {
+      test('verify accepts 65535-byte archive comment', testOn: 'vm', () {
         final comment = 'a' * 65535;
         final bytes = ZipEncoder().encodeBytes(Archive()
           ..comment = comment
@@ -1093,7 +1205,7 @@ void main() async {
         }
       });
 
-      test('strict decoding rejects an unsupported compression method', () {
+      test('verify rejects unsupported compression method', () {
         final bad = Uint8List.fromList(zip);
         ByteData.sublistView(bad).setUint16(8, 42, Endian.little);
         expect(() => read(bad, false, false), returnsNormally);
@@ -1105,7 +1217,7 @@ void main() async {
         }
       });
 
-      test('an entry count past 65535 without zip64 is read', () {
+      test('entry count above 65535 without zip64 decodes', () {
         const count = 65537;
         final out = BytesBuilder();
         final central = BytesBuilder();
@@ -1151,7 +1263,8 @@ void main() async {
         }
       });
 
-      test('an unsupported method fails only its own entry', () async {
+      test('unsupported method fails only its own entry', testOn: 'vm',
+          () async {
         final two = ZipEncoder().encodeBytes(Archive()
           ..add(ArchiveFile.bytes('good', data))
           ..add(ArchiveFile.bytes('odd', data)));
@@ -1192,7 +1305,7 @@ void main() async {
         expect(File(p.join(dir.path, 'out', 'odd')).existsSync(), isFalse);
       });
 
-      test('an unsupported method entry encoded again stays unreadable', () {
+      test('unsupported method entry stays unreadable after re-encode', () {
         final two = ZipEncoder().encodeBytes(Archive()
           ..add(ArchiveFile.bytes('good', data))
           ..add(ArchiveFile.bytes('odd', data)));
@@ -1221,7 +1334,8 @@ void main() async {
             before.directory.fileHeaders.last.file!.getRawContent());
       });
 
-      test('an unsupported method under AE-2 is encoded again as AE-2', () {
+      test('unsupported method under AE-2 is re-encoded as AE-2',
+          testOn: '!node', () {
         final one = ZipEncoder(password: 'pw')
             .encodeBytes(Archive()..add(ArchiveFile.bytes('odd', data)));
         final view = ByteData.sublistView(one);
@@ -1262,7 +1376,7 @@ void main() async {
                 .toUint8List());
       });
 
-      test('an unsupported method encoded again keeps its option bits', () {
+      test('unsupported method keeps option bits after re-encode', () {
         final one = ZipEncoder().encodeBytes(Archive()
           ..add(ArchiveFile.bytes('odd', data)
             ..compression = CompressionType.none));
@@ -1283,7 +1397,8 @@ void main() async {
         expect(odd.file!.flags & 6, 6);
       });
 
-      test('strict decoding keeps local records before the central directory',
+      test(
+          'local record running into central directory throws with verify or throwOnError',
           () {
         final stored = ZipEncoder().encodeBytes(Archive()
           ..add(ArchiveFile.bytes('a', data)
@@ -1309,7 +1424,7 @@ void main() async {
         }
       });
 
-      test('strict decoding rejects a truncated data descriptor', () {
+      test('verify rejects truncated data descriptor', () {
         final encoded = ZipEncoder(streamed: true)
             .encodeBytes(Archive()..add(ArchiveFile.bytes('a', data)));
         expect(
@@ -1333,7 +1448,8 @@ void main() async {
         }
       });
 
-      test('an empty password encrypts and decrypts an entry', () async {
+      test('empty password encrypts and decrypts entry', testOn: '!node',
+          () async {
         final key = ZipFile.deriveKey(
             '', Uint8List.fromList(List.generate(16, (i) => i)));
         expect(
@@ -1380,7 +1496,7 @@ void main() async {
         }
       });
 
-      test('a wrong or missing password throws regardless of flags', () {
+      test('wrong or missing password throws with any flags', testOn: 'vm', () {
         for (final name in ['aes256.zip', 'zipCrypto.zip']) {
           final bytes = File('test/_data/zip/$name').readAsBytesSync();
           for (final password in ['wrong', null]) {
@@ -1407,8 +1523,8 @@ void main() async {
         }
       });
 
-      test('extractFileToDisk throws for a wrong or missing password',
-          () async {
+      test('extractFileToDisk throws on wrong or missing password',
+          testOn: 'vm', () async {
         final dir = Directory.systemTemp.createTempSync('zip_password');
         addTearDown(() => dir.deleteSync(recursive: true));
         for (final name in ['aes256.zip', 'zipCrypto.zip']) {
@@ -1423,8 +1539,8 @@ void main() async {
         }
       });
 
-      test('extractArchiveToDisk throws for a wrong or missing password',
-          () async {
+      test('extractArchiveToDisk throws on wrong or missing password',
+          testOn: 'vm', () async {
         final dir = Directory.systemTemp.createTempSync('zip_password');
         addTearDown(() => dir.deleteSync(recursive: true));
         for (final name in ['aes256.zip', 'zipCrypto.zip']) {
@@ -1456,7 +1572,7 @@ void main() async {
       });
     });
 
-    test('verify refuses a local header offset past the end', () {
+    test('verify throws on local header offset past file end', () {
       final bytes = ZipEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
       final central = ByteData.sublistView(bytes)
@@ -1468,7 +1584,7 @@ void main() async {
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a zip behind a prefix its offsets leave out reads its entries', () {
+    test('zip after prefix not counted in offsets decodes its entries', () {
       final bytes = ZipEncoder().encodeBytes(Archive()
         ..add(ArchiveFile.string('a.txt', 'hello'))
         ..add(ArchiveFile.string('b.txt', 'world')));
@@ -1483,8 +1599,8 @@ void main() async {
       }
     });
 
-    test('a wrong central directory offset reads like unzip, verify refuses',
-        () {
+    test('wrong central directory offset decodes as unzip does, verify throws',
+        testOn: 'vm', () {
       final bytes = File('test/_data/test.zip').readAsBytesSync();
       final want = ZipDecoder().decodeBytes(bytes).files;
       final damaged = Uint8List.fromList(bytes);
@@ -1496,7 +1612,7 @@ void main() async {
           throwsA(isA<ArchiveException>()));
     });
 
-    test('verify refuses a data descriptor past the end of the file', () {
+    test('verify throws on data descriptor past file end', testOn: 'vm', () {
       final bytes = File('test/_data/zip/dd.zip').readAsBytesSync();
       final damaged = Uint8List.fromList(bytes);
       damaged[28] = 113;
@@ -1504,7 +1620,8 @@ void main() async {
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a zip64 behind a prefix its offsets leave out reads its entries', () {
+    test('zip64 after prefix not counted in offsets decodes its entries',
+        testOn: 'vm', () {
       final bytes = File('test/_data/zip/zip64_archive.zip').readAsBytesSync();
       final want = ZipDecoder().decodeBytes(bytes, verify: true).files;
       final prefixed =
@@ -1516,8 +1633,8 @@ void main() async {
       }
     });
 
-    test('encoding a decoded archive into a file leaves its entries readable',
-        () {
+    test('decoded entries stay readable after encoding archive to file',
+        testOn: 'vm', () {
       final bytes = File('test/_data/test.zip').readAsBytesSync();
       final want = [
         for (final f in ZipDecoder().decodeBytes(bytes).files) f.content
@@ -1533,7 +1650,7 @@ void main() async {
       expect([for (final f in back.files) f.content], want);
     });
 
-    test('verify passes an AES zip without a stored CRC', () {
+    test('verify passes AES zip without stored CRC', testOn: 'vm', () {
       for (final (name, password) in [
         ('aes256.zip', '12345'),
         ('lzma_aes.zip', 'secret')
@@ -1549,8 +1666,7 @@ void main() async {
       }
     });
 
-    test('verifyCrc32 answers false for a damaged entry decoded with verify',
-        () {
+    test('verifyCrc32 returns false for damaged entry', () {
       final bytes = ZipEncoder().encodeBytes(Archive()
         ..add(ArchiveFile.noCompress('a.txt', 5, utf8.encode('hello'))));
       bytes[latin1.decode(bytes).indexOf('hello')] ^= 0x20;
@@ -1563,8 +1679,8 @@ void main() async {
       }
     });
 
-    test('a password entry keeps its UT field in the central directory only',
-        testOn: 'vm', () {
+    test('password entry has UT field only in central directory', testOn: 'vm',
+        () {
       List<int> extraIds(Uint8List bytes, int at, int nameAt, int header) {
         final data = ByteData.sublistView(bytes);
         final nameLength = data.getUint16(at + nameAt, Endian.little);
@@ -1581,11 +1697,10 @@ void main() async {
 
       for (final password in [null, 'secret']) {
         final bytes = ZipEncoder(password: password).encodeBytes(Archive()
-          ..add(ArchiveFile.string('a.txt', 'hello')
-            ..lastModTime = 157766400));
+          ..add(ArchiveFile.string('a.txt', 'hello')..lastModTime = 157766400));
         final central = latin1.decode(bytes).indexOf('PK\x01\x02');
-        expect(extraIds(bytes, 0, 26, 30),
-            password == null ? [0x5455] : [0x9901],
+        expect(
+            extraIds(bytes, 0, 26, 30), password == null ? [0x5455] : [0x9901],
             reason: 'local, password $password');
         expect(extraIds(bytes, central, 28, 46),
             password == null ? [0x5455] : [0x9901, 0x5455],
@@ -1597,14 +1712,16 @@ void main() async {
       }
     });
 
-    test('an AES entry read without a password throws ArchiveException', () {
+    test('AES entry read without password throws ArchiveException',
+        testOn: '!node', () {
       final bytes = ZipEncoder(password: 'secret')
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));
       final entry = ZipDecoder().decodeBytes(bytes).findFile('a.txt')!;
       expect(entry.readBytes, throwsA(isA<ArchiveException>()));
     });
 
-    test('an AES entry read again with a wrong password throws again', () {
+    test('AES entry read again with wrong password throws again',
+        testOn: '!node', () {
       final bytes = ZipEncoder(password: 'secret').encodeBytes(
           Archive()..add(ArchiveFile.string('a.txt', 'hello' * 100)));
       for (final password in [null, 'wrong']) {
@@ -1632,7 +1749,7 @@ void main() async {
       }
     });
 
-    test('a ZipCrypto entry read again with a wrong password throws again',
+    test('ZipCrypto entry read again with wrong password throws again',
         testOn: 'vm', () {
       final bytes = File('test/_data/zip/zipCrypto.zip').readAsBytesSync();
       for (final (verify, throwOnError) in [
@@ -1656,7 +1773,7 @@ void main() async {
       }
     });
 
-    test('an entry with a damaged local header keeps its central name', () {
+    test('entry with damaged local header keeps central name', () {
       final bytes = ZipEncoder().encodeBytes(Archive()
         ..add(ArchiveFile.bytes('one.txt', 'first'.codeUnits))
         ..add(ArchiveFile.bytes('two.txt', 'second'.codeUnits))
@@ -1673,7 +1790,7 @@ void main() async {
       expect(archive.findFile('three.txt')!.content, 'third'.codeUnits);
     });
 
-    test('a duplicate name keeps the CRC of the content it holds', () {
+    test('second entry with same name keeps CRC of its own content', () {
       final output = OutputMemoryStream();
       ZipEncoder()
         ..startEncode(output)
@@ -1692,7 +1809,7 @@ void main() async {
       expect(again.findFile('a.txt')!.readBytes(), content);
     });
 
-    test('an empty entry asked for xz is stored as 7-Zip stores it',
+    test('empty entry with xz compression is stored, as 7-Zip does',
         testOn: 'vm', () async {
       Archive archive() => Archive()
         ..add(ArchiveFile.bytes('empty.bin', [])
@@ -1725,8 +1842,8 @@ void main() async {
       }
     });
 
-    test('an AES entry too short for its header throws on every read',
-        testOn: 'vm', () {
+    test('AES entry shorter than its header throws on every read', testOn: 'vm',
+        () {
       final bytes = ZipEncoder(password: 'pw').encodeBytes(Archive()
         ..add(ArchiveFile.bytes('a.txt', [0x41])
           ..compression = CompressionType.none));
@@ -1750,7 +1867,7 @@ void main() async {
       }
     });
 
-    test('empty directory', () {
+    test('empty directory', testOn: 'vm', () {
       final archive = Archive();
       archive.add(ArchiveFile.directory('empty'));
       final encodedBytes = ZipEncoder().encodeBytes(archive);
@@ -1763,13 +1880,13 @@ void main() async {
       expect(archiveDecoded[0].name, 'empty/');
     });
 
-    test('file decode utf file', () {
+    test('file decode utf file', testOn: 'vm', () {
       var bytes = File(p.join('test/_data/zip/utf.zip')).readAsBytesSync();
       final archive = ZipDecoder().decodeBytes(bytes, verify: true);
       expect(archive.length, equals(5));
     });
 
-    test('file stream encode', () {
+    test('file stream encode', testOn: 'vm', () {
       final fileStream = InputFileStream('test/_data/cat.jpg');
       final archiveFile = ArchiveFile.stream('cat.jpg', fileStream);
       final archive = Archive()..add(archiveFile);
@@ -1781,7 +1898,7 @@ void main() async {
       expect(archiveDecoded.length, 1);
     });
 
-    test('file encoding zip file', () {
+    test('file encoding zip file', testOn: 'vm', () {
       final originalFileName = 'fileöäüÖÄÜß.txt';
       final bytes = Utf8Codec().encode('test');
       final archive = Archive();
@@ -1804,7 +1921,7 @@ void main() async {
       expect(decodedFile.name, originalFileName);
     });
 
-    test('zip64', () {
+    test('zip64', testOn: 'vm', () {
       var bytes =
           File(p.join('test/_data/zip/zip64_archive.zip')).readAsBytesSync();
       final archive = ZipDecoder().decodeBytes(bytes, verify: false);
@@ -1815,7 +1932,7 @@ void main() async {
     // Info-ZIP writes this to a pipe. The sizes behind the data are 8 bytes
     // each with zip64. unzip and Python take the sizes from the central
     // directory and never read these
-    test('zip64 sizes behind the data', () async {
+    test('zip64 sizes in data descriptor', testOn: 'vm', () async {
       final text =
           List.filled(10, 'the quick brown fox jumps over the lazy dog\n')
               .join()
@@ -1836,7 +1953,7 @@ void main() async {
 
     // The entry says 5 GB and holds three bytes. Nothing allocates 5 GB. A
     // zip64 extra field needs version 45 in both headers
-    test('a stored entry over 4 GB needs version 45', () {
+    test('stored entry over 4 GB sets version needed 45', () {
       final output = OutputMemoryStream();
       ZipEncoder()
         ..startEncode(output)
@@ -1857,7 +1974,7 @@ void main() async {
       expect(view.getUint16(central + 6, Endian.little), 45);
     });
 
-    test('data types', () {
+    test('data types', testOn: 'vm', () {
       final archive = Archive();
       archive.add(ArchiveFile.bytes('uint8list', Uint8List(2)));
       archive.add(ArchiveFile.bytes('list_int', Uint8List.fromList([1, 2])));
@@ -1873,7 +1990,7 @@ void main() async {
       expect(archive2.length, equals(archive.length));
     });
 
-    test('encode', () {
+    test('encode', testOn: 'vm', () {
       final archive = Archive();
       final bdata = 'hello world';
       final bytes = Uint8List.fromList(bdata.codeUnits);
@@ -1896,7 +2013,7 @@ void main() async {
       }
     });
 
-    test('encode with timestamp', () {
+    test('encode with timestamp', testOn: 'vm', () {
       final archive = Archive();
       var bdata = 'some file data';
       var bytes = Uint8List.fromList(bdata.codeUnits);
@@ -1921,7 +2038,7 @@ void main() async {
       expect(arc[0].lastModDateTime, equals(DateTime(2010)));
     });
 
-    test('zipCrypto', () {
+    test('zipCrypto', testOn: 'vm', () {
       var file = File(p.join('test/_data/zip/zipCrypto.zip'));
       var bytes = file.readAsBytesSync();
       final archive =
@@ -1945,7 +2062,7 @@ void main() async {
       }
     });
 
-    test('aes256', () {
+    test('aes256', testOn: 'vm', () {
       final stream = InputFileStream('test/_data/zip/aes256.zip');
       final archive = ZipDecoder().decodeStream(stream, password: '12345');
 
@@ -1966,7 +2083,7 @@ void main() async {
       }
     });
 
-    test('decrypting leaves the input bytes as they were', () {
+    test('decrypting does not change input bytes', testOn: 'vm', () {
       for (final name in ['aes256.zip', 'zipCrypto.zip']) {
         final bytes = File('test/_data/zip/$name').readAsBytesSync();
         final original = Uint8List.fromList(bytes);
@@ -1980,7 +2097,8 @@ void main() async {
       }
     });
 
-    test('a stored entry stays readable after decompressing to a file', () {
+    test('stored entry stays readable after decompressing to file',
+        testOn: 'vm', () {
       final expected = 'stored content'.codeUnits;
       final bytes = ZipEncoder().encodeBytes(Archive()
         ..add(ArchiveFile.bytes('a.txt', expected)
@@ -1997,7 +2115,8 @@ void main() async {
       expect(entry.content, expected);
     });
 
-    test('encrypting leaves the source zip and stored bytes as they were', () {
+    test('encrypting does not change source zip or stored bytes', testOn: 'vm',
+        () {
       final bytes = File('test/_data/zip/test.zip').readAsBytesSync();
       final original = Uint8List.fromList(bytes);
       final archive = ZipDecoder().decodeBytes(bytes);
@@ -2025,8 +2144,8 @@ void main() async {
       expect(data, stored);
     });
 
-    test('a non-ASCII password opens zips from other tools and from before',
-        () {
+    test('non-ASCII password opens zips from other tools and older versions',
+        testOn: 'vm', () {
       const password = 'pässwort';
       const expected = {
         'password_utf8_aes.zip': 'hello\n',
@@ -2065,8 +2184,8 @@ void main() async {
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a UTF-8 ZipCrypto password passes the CRC when no check byte matches',
-        () {
+    test('UTF-8 ZipCrypto password passes CRC when no check byte matches',
+        testOn: 'vm', () {
       final bytes =
           File('test/_data/zip/password_utf8_zipcrypto.zip').readAsBytesSync();
       int at(List<int> signature) {
@@ -2087,7 +2206,8 @@ void main() async {
       expect(utf8.decode(entry.readBytes()!), 'hello\n');
     });
 
-    test('a legacy ZipCrypto password survives a UTF-8 verifier collision', () {
+    test('legacy ZipCrypto password works when UTF-8 check byte also matches',
+        () {
       final bytes = base64.decode(
           'UEsDBBQAAQAAAAAAAABcAaBLHAAAABAAAAAFAAAAYS50eHRLpfb7XA4bVEMsFBKkMCd8r6nh'
           '6FGZsOwRBuLDUEsBAhQAFAABAAAAAAAAAFwBoEscAAAAEAAAAAUAAAAAAAAAAAAAAAAAAAAA'
@@ -2100,7 +2220,7 @@ void main() async {
       }
     });
 
-    test('a missing ZipCrypto password throws when the check byte matches', () {
+    test('missing ZipCrypto password throws even when check byte matches', () {
       final bytes = base64.decode(
           'UEsDBBQAAQAAAAAAIQAgMDo2EgAAAAYAAAAFAAAAYS50eHSrT4I8+1ClWK6R6UBEMvz9'
           'Gu9QSwECFAAUAAEAAAAAACEAIDA6NhIAAAAGAAAABQAAAAAAAAAAAAAAAAAAAAAAYS50'
@@ -2128,7 +2248,7 @@ void main() async {
       }
     });
 
-    test('an AES zip without a stored CRC passes verifyCrc32', () {
+    test('AES zip without stored CRC passes verifyCrc32', testOn: 'vm', () {
       for (final (name, password) in [
         ('aes256.zip', '12345'),
         ('lzma_aes.zip', 'secret')
@@ -2160,7 +2280,7 @@ void main() async {
           throwsA(isA<ArchiveChecksumException>()));
     });
 
-    test('an AES zip encoded again has the CRC of its content', () {
+    test('re-encoded AES zip has CRC of its content', testOn: 'vm', () {
       for (final (name, password) in [
         ('aes256.zip', '12345'),
         ('lzma_aes.zip', 'secret')
@@ -2181,7 +2301,7 @@ void main() async {
       }
     });
 
-    test('password', () {
+    test('password', testOn: 'vm', () {
       var file = File(p.join('test/_data/zip/password_zipcrypto.zip'));
       var bytes = file.readAsBytesSync();
 
@@ -2202,7 +2322,7 @@ void main() async {
       }
     });
 
-    test('decode zip bzip2', () {
+    test('decode zip bzip2', testOn: 'vm', () {
       var file = File(p.join('test/_data/zip/zip_bzip2.zip'));
       var bytes = file.readAsBytesSync();
 
@@ -2218,7 +2338,8 @@ void main() async {
     Map<String, List<int>> lzmaExpected() {
       var state = 3;
       final binary = List<int>.generate(70000, (_) {
-        state = (state * 1103515245 + 12345) & 0x7fffffff;
+        state = (state * 20077 + state * 16838 % 0x8000 * 0x10000 + 12345) %
+            0x80000000;
         return (state >> 16) % 5 == 0 ? 0x41 : (state >> 8) & 0xff;
       });
       return {
@@ -2245,7 +2366,7 @@ void main() async {
     }
 
     for (final (name, password) in [('lzma', null), ('lzma_aes', 'secret')]) {
-      test('decode zip $name', () {
+      test('decode zip $name', testOn: 'vm', () {
         final path = 'test/_data/zip/$name.zip';
         expectLzmaArchive(ZipDecoder().decodeBytes(File(path).readAsBytesSync(),
             verify: true, password: password));
@@ -2256,7 +2377,8 @@ void main() async {
       });
     }
 
-    test('LZMA dictionary properties honor the 4096-byte minimum', () {
+    test('LZMA dictionary size below 4096 bytes is raised to 4096',
+        testOn: 'vm', () {
       final nearBytes = File('test/_data/zip/lzma_near.zip').readAsBytesSync();
       final farBytes = File('test/_data/zip/lzma_far.zip').readAsBytesSync();
       for (final nearMatches in [true, false]) {
@@ -2306,8 +2428,8 @@ void main() async {
       }
     });
 
-    test('LZMA entries grow past 2 MiB without exceeding their declared size',
-        () {
+    test('LZMA entries grow past 2 MiB without exceeding declared size',
+        testOn: 'vm', () {
       final encoded = File('test/_data/zip/lzma_2mib.zip').readAsBytesSync();
       final expected = Uint8List(2 * 1024 * 1024 + 273)
         ..fillRange(0, 2 * 1024 * 1024 + 273, 97);
@@ -2347,7 +2469,7 @@ void main() async {
       }
     });
 
-    test('an LZMA size claim does not allocate before validating the data', () {
+    test('LZMA size claim does not allocate before data is validated', () {
       for (final property in [225, 93]) {
         final bytes = ZipEncoder().encodeBytes(Archive()
           ..add(ArchiveFile.file(
@@ -2388,7 +2510,8 @@ void main() async {
       }
     });
 
-    test('a zip made on Windows gets default permissions', () async {
+    test('zip made on Windows gets default permissions', testOn: 'vm',
+        () async {
       final windows = ZipDecoder()
           .decodeBytes(File('test/_data/zip/winxp.zip').readAsBytesSync());
       for (final f in windows.files) {
@@ -2410,7 +2533,7 @@ void main() async {
       }
     });
 
-    test('a zip made on Unix keeps a mode with no permission bits', () {
+    test('zip made on Unix keeps mode without permission bits', () {
       Uint8List unixZip(String name, String content, int mode) {
         final bytes = ZipEncoder().encodeBytes(
             Archive()..add(ArchiveFile.string(name, content)..mode = mode));
@@ -2434,7 +2557,7 @@ void main() async {
       expect(link.symbolicLink, 'target.txt');
     });
 
-    test('encode keeps lzma entries of a decoded zip', () {
+    test('encode keeps lzma entries of decoded zip', testOn: 'vm', () {
       final decoded = ZipDecoder()
           .decodeBytes(File('test/_data/zip/lzma.zip').readAsBytesSync());
       final encoded = ZipEncoder().encodeBytes(decoded);
@@ -2448,9 +2571,9 @@ void main() async {
       }
     });
 
-    test('an entry that claims 2^63 bytes is re-encoded from the bytes it has',
-        () {
-      const hex = '504b03042d00080000000000000000000000ffffffffffffffff0100140041'
+    test('entry claiming 2^63 bytes re-encodes from bytes it has', () {
+      const hex =
+          '504b03042d00080000000000000000000000ffffffffffffffff0100140041'
           '01001000ebffffffffffff7febffffffffffff7f58504b070800000000ffffff'
           'ffffffffff504b01022d002d00080000000000000000000000ffffffffffffff'
           'ff0100140000000000000000000000000000004101001000ebffffffffffff7f'
@@ -2464,8 +2587,7 @@ void main() async {
       expect(() => ZipEncoder().encodeBytes(archive), returnsNormally);
     }, testOn: 'vm');
 
-    test('a time outside the DOS range is clamped as libarchive writes it',
-        () async {
+    test('time outside DOS range is clamped as libarchive does', () async {
       int seconds(DateTime t) => t.millisecondsSinceEpoch ~/ 1000;
       final cases = [
         (-86399, 0x0021, 0x0000),
@@ -2526,7 +2648,8 @@ void main() async {
           (0x0021, 0x0000));
     });
 
-    test('zstd and xz entries are decoded and kept by the encoder', () {
+    test('zstd and xz entries decode and re-encode unchanged', testOn: 'vm',
+        () {
       final a =
           utf8.encode('The quick brown fox jumps over the lazy dog\n' * 30);
       final b = List.generate(70000, (i) => (i * 7 + i ~/ 13) & 0xff);
@@ -2588,7 +2711,7 @@ void main() async {
       }
     });
 
-    test('a zstd entry takes the zstd levels above 9', () {
+    test('zstd entry accepts zstd levels above 9', () {
       final b = List.generate(70000, (i) => (i * 7 + i ~/ 13) & 0xff);
       for (final level in [19, 22]) {
         final expected = ZstdEncoder().encodeBytes(b, level: level).length;
@@ -2625,7 +2748,7 @@ void main() async {
           throwsArgumentError);
     });
 
-    test('a small entry does not hold the output buffer', () {
+    test('small entry is not view of larger output buffer', testOn: 'vm', () {
       final data = utf8.encode('alpha beta gamma');
       for (final type in [
         CompressionType.zstd,
@@ -2650,7 +2773,7 @@ void main() async {
       expect(out.buffer.lengthInBytes, out.length);
     });
 
-    test('a streamed entry does not read its content for a length', () {
+    test('streamed entry is not read just to get its length', () {
       final data = Uint8List.fromList(
           List.generate(1100000, (i) => (i * 7 + i ~/ 1000) & 0xff));
       for (final type in [
@@ -2669,7 +2792,7 @@ void main() async {
       }
     });
 
-    test('a streamed zstd, xz or bzip2 entry has a data descriptor', () async {
+    test('streamed zstd, xz or bzip2 entry has data descriptor', () async {
       final data = Uint8List.fromList(
           List.generate(1100000, (i) => (i * 7 + i ~/ 1000) & 0xff));
       for (final type in [
@@ -2706,7 +2829,7 @@ void main() async {
       }
     });
 
-    test('encode password', () {
+    test('encode password', testOn: 'vm', () {
       final archive = Archive();
       final bdata = 'hello world';
       final bytes = Uint8List.fromList(bdata.codeUnits);
@@ -2729,7 +2852,7 @@ void main() async {
       }
     });
 
-    test('decode/encode', () {
+    test('decode/encode', testOn: 'vm', () {
       final file = File(p.join('test/_data/test.zip'));
       final bytes = file.readAsBytesSync();
 
@@ -2768,14 +2891,14 @@ void main() async {
       }
     });
 
-    test('symlink', () async {
+    test('symlink', testOn: 'vm', () async {
       final stream = InputMemoryStream(
           File('test/_data/zip/symlink.zip').readAsBytesSync());
       final archive = ZipDecoder().decodeStream(stream);
       expect(archive[0].isSymbolicLink, equals(true));
     });
 
-    test('a symlink is written as a link and read back', () {
+    test('symlink encodes as link and decodes back', () {
       final archive = Archive()
         ..add(ArchiveFile.string('a.txt', 'hello'))
         ..add(ArchiveFile.symlink('link', 'a.txt'))
@@ -2795,7 +2918,7 @@ void main() async {
       }
     });
 
-    test('a symlink target in a legacy code page keeps later entries', () {
+    test('symlink target in legacy code page does not drop later entries', () {
       final zip = ZipEncoder(filenameEncoding: latin1).encodeBytes(Archive()
         ..add(ArchiveFile.string('a.txt', 'a'))
         ..add(ArchiveFile.symlink('link', 'target'))
@@ -2811,7 +2934,7 @@ void main() async {
       }
     });
 
-    test('a hard link named above the archive root is still encoded', () {
+    test('hard link pointing above archive root is still encoded', () {
       final archive = Archive()
         ..add(ArchiveFile.string('a.txt', 'hello'))
         ..add(ArchiveFile.symlink('../up', 'a.txt')..isHardLink = true)
@@ -2822,7 +2945,7 @@ void main() async {
       expect(back.findFile('../up')!.isSymbolicLink, isTrue);
     });
 
-    test('decode many files (100k)', () async {
+    test('decode many files (100k)', testOn: 'vm', () async {
       final fp = InputFileStream(
         p.join('test/_data/test_100k_files.zip'),
         bufferSize: 1024 * 1024,
@@ -2859,7 +2982,7 @@ void main() async {
 
     for (final Z in zipTests) {
       final z = Z as Map<String, dynamic>;
-      test('unzip ${z['Name']}', () {
+      test('unzip ${z['Name']}', testOn: 'vm', () {
         final file = File(p.join(z['Name'] as String));
         final bytes = file.readAsBytesSync();
 
@@ -2906,7 +3029,8 @@ void main() async {
   });
 
   group('zip encoder headers', () {
-    test('an entry with no content leaves the local headers walkable', () {
+    test('entry without content keeps local headers in sequence',
+        testOn: '!node', () {
       for (final password in <String?>[null, 'secret']) {
         final encoder = ZipEncoder(password: password);
         final output = OutputMemoryStream();
@@ -2920,7 +3044,7 @@ void main() async {
       }
     });
 
-    test('the archive is the same in a big endian output', () {
+    test('archive is same in big-endian output', () {
       Archive archive() => Archive()
         ..add(ArchiveFile.string('a.txt', 'hello' * 100))
         ..add(ArchiveFile.directory('dir'))
@@ -2938,7 +3062,7 @@ void main() async {
       }
     });
 
-    test('the local and central headers agree on the filename encoding', () {
+    test('local and central headers set same filename encoding flag', () {
       final encoder = ZipEncoder(filenameEncoding: const Latin1Codec());
       final output = OutputMemoryStream();
       encoder.startEncode(output);
@@ -2951,7 +3075,7 @@ void main() async {
           (bytes[6] | (bytes[7] << 8)) & 0x800);
     });
 
-    test('a non-ASCII UTF-8 name is not marked as an OEM name', () {
+    test('non-ASCII UTF-8 name is not marked as OEM name', () {
       Map<String, int> madeBy(ZipEncoder encoder) {
         final archive = Archive()
           ..add(ArchiveFile.string('plain.txt', 'x'))
@@ -2969,7 +3093,8 @@ void main() async {
           {'plain.txt': 20, 'café.txt': 20});
     });
 
-    test('an encrypted entry with no content has room for the AES fields', () {
+    test('encrypted entry without content keeps room for AES fields',
+        testOn: '!node', () {
       final encoder = ZipEncoder(password: 'secret');
       final output = OutputMemoryStream();
       encoder.startEncode(output);
@@ -3007,13 +3132,18 @@ List<String> _walkLocalHeaders(Uint8List bytes) {
 
 class _RawEntry {
   _RawEntry(this.name, this.madeBy, this.attributes,
-      {this.content = const [], this.extra = const []});
+      {this.content = const [],
+      this.extra = const [],
+      this.localExtra,
+      this.localName});
 
   final List<int> name;
   final int madeBy;
   final int attributes;
   final List<int> content;
   final List<int> extra;
+  final List<int>? localExtra;
+  final List<int>? localName;
 }
 
 Uint8List _rawZip(List<_RawEntry> entries) {
@@ -3021,6 +3151,8 @@ Uint8List _rawZip(List<_RawEntry> entries) {
   final central = BytesBuilder();
   for (final e in entries) {
     final crc = getCrc32(e.content);
+    final localName = e.localName ?? e.name;
+    final localExtra = e.localExtra ?? e.extra;
     central
       ..add((ByteData(46)
             ..setUint32(0, 0x02014b50, Endian.little)
@@ -3044,12 +3176,12 @@ Uint8List _rawZip(List<_RawEntry> entries) {
             ..setUint32(14, crc, Endian.little)
             ..setUint32(18, e.content.length, Endian.little)
             ..setUint32(22, e.content.length, Endian.little)
-            ..setUint16(26, e.name.length, Endian.little)
-            ..setUint16(28, e.extra.length, Endian.little))
+            ..setUint16(26, localName.length, Endian.little)
+            ..setUint16(28, localExtra.length, Endian.little))
           .buffer
           .asUint8List())
-      ..add(e.name)
-      ..add(e.extra)
+      ..add(localName)
+      ..add(localExtra)
       ..add(e.content);
   }
   final centralOffset = out.length;

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -57,8 +58,7 @@ class XzDecoderConverter extends ChunkedConverter {
     }
     return archiveStreamErrors(
         stream,
-        (Stream<List<int>> source) => subscribedOnListen(
-            source,
+        (Stream<List<int>> source) => subscribedOnListen(source,
             (Stream<List<int>> source) => _bindMultithread(source, options)));
   }
 
@@ -75,7 +75,12 @@ class XzDecoderConverter extends ChunkedConverter {
     if (!xzIsolatesSupported) {
       // Not super.bind: that goes through startChunkedConversion, which
       // refuses the options this converter still carries
-      yield* XzDecoderConverter(verify: verify).bind(stream);
+      yield* XzDecoderConverter(verify: verify)
+          .bind(stream)
+          .transform(StreamTransformer<List<int>, List<int>>.fromHandlers(
+              handleError: (error, stack, sink) => sink
+                ..addError(error, stack)
+                ..close()));
       return;
     }
     yield* xzDecodeStreamMultithreaded(stream,

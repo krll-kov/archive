@@ -28,7 +28,7 @@ void main() {
     data[i] = (i * 31 + 7) & 0xff;
   }
 
-  test('matches the reference digest', () {
+  test('digest matches reference', () {
     for (final entry in _reference.entries) {
       final hash = Sha256();
       hash.update(data, 0, entry.key);
@@ -36,7 +36,7 @@ void main() {
     }
   });
 
-  test('matches the FIPS 180-2 vectors', () {
+  test('digest matches FIPS 180-2 vectors', () {
     expect(
         _hex(Sha256.of(Uint8List.fromList('abc'.codeUnits))),
         'ba7816bf8f01cfea414140de5dae2223'
@@ -49,7 +49,7 @@ void main() {
         'a33ce45964ff2167f6ecedd419db06c1');
   });
 
-  test('splitting the input does not change the digest', () {
+  test('input split into pieces gives same digest', () {
     for (final entry in _reference.entries) {
       final size = entry.key;
       for (final chunk in const [1, 5, 7, 63, 64, 65]) {
@@ -64,7 +64,7 @@ void main() {
     }
   });
 
-  test('matches the FIPS 180-2 vector of a million a', () {
+  test("digest of 1000000 bytes 'a' matches FIPS 180-2", () {
     final million = Uint8List(1000000)..fillRange(0, 1000000, 0x61);
     expect(
         _hex(Sha256.of(million)),
@@ -72,7 +72,7 @@ void main() {
         'f1809a48a497200e046d39ccc7112cd0');
   });
 
-  test('digest leaves the instance ready for the next input', () {
+  test('instance is ready for next input after digest', () {
     final hash = Sha256();
     hash.update(data, 0, 1000);
     hash.digest();
@@ -80,7 +80,7 @@ void main() {
     expect(_hex(hash.digest()), _reference[65]);
   });
 
-  test('reset returns a used instance to its initial state', () {
+  test('reset returns used instance to initial state', () {
     final hash = Sha256();
     hash.update(data, 0, 1000);
     hash.reset();

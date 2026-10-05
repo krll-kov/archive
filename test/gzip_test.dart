@@ -37,7 +37,9 @@ void main() {
       compareBytes(uncompressed, origData);
     });
 
-    test('gzip encode_web into a big endian output/decode', () {
+    test(
+        'GZipEncoderWeb into big-endian output decodes back and keeps byte order',
+        () {
       final origData = [1, 2, 3, 4, 5, 6];
       final output = OutputMemoryStream(byteOrder: ByteOrder.bigEndian);
       GZipEncoderWeb().encodeStream(InputMemoryStream(origData), output);
@@ -73,7 +75,7 @@ void main() {
       }
     });
 
-    test('decode res/cat.jpg.gz', () {
+    test('decode res/cat.jpg.gz', testOn: 'vm', () {
       final b = File('test/_data/cat.jpg');
       final bBytes = b.readAsBytesSync();
 
@@ -84,7 +86,7 @@ void main() {
       compareBytes(zBytes, bBytes);
     });
 
-    test('decode res/test2.tar.gz', () {
+    test('decode res/test2.tar.gz', testOn: 'vm', () {
       final b = File('test/_data/test2.tar');
       final bBytes = b.readAsBytesSync();
 
@@ -95,7 +97,7 @@ void main() {
       compareBytes(zBytes, bBytes);
     });
 
-    test('decode res/a.txt.gz', () {
+    test('decode res/a.txt.gz', testOn: 'vm', () {
       final aBytes = aTxt.codeUnits;
 
       final file = File('test/_data/a.txt.gz');
@@ -105,7 +107,7 @@ void main() {
       compareBytes(zBytes, aBytes);
     });
 
-    test('encode res/cat.jpg', () {
+    test('encode res/cat.jpg', testOn: 'vm', () {
       final b = File('test/_data/cat.jpg');
       final bBytes = b.readAsBytesSync();
 
@@ -228,7 +230,9 @@ void main() {
       Uint8List of(String name) => name.startsWith('gzip') ? gzip : zlib;
 
       for (final web in [false, true]) {
-        test('verified members write to a sink without readback, web $web', () {
+        test(
+            'verify of 2 members works with sink output that cannot be read back, web $web',
+            () {
           final joined = Uint8List.fromList([...gzip, ...gzip]);
           List<List<int>>? chunks;
           final output = SinkOutputStream(
@@ -246,7 +250,8 @@ void main() {
           expect(chunks!.expand((chunk) => chunk), [1, 2, 3, ...data, ...data]);
         });
 
-        test('verified members finish when progress throws, web $web', () {
+        test('verify of 2 members finishes when onProgress throws, web $web',
+            () {
           final error = StateError('progress callback failed');
           final input = InputMemoryStream([4, 5, ...gzip, ...gzip])..skip(2);
           final output = ProgressOutputStream(
@@ -267,7 +272,9 @@ void main() {
       }
 
       for (final stream in [false, true]) {
-        test('native gzip checks optional header CRC, stream $stream', () {
+        test(
+            'native gzip with verify checks optional header CRC, stream $stream',
+            () {
           final header = gzip.sublist(0, 10)..[3] |= 2;
           final crc = getCrc32(header);
           final member = Uint8List.fromList([
@@ -295,7 +302,8 @@ void main() {
           }
         });
 
-        test('web gzip checks optional header CRC, stream $stream', () {
+        test('web gzip with verify checks optional header CRC, stream $stream',
+            () {
           final header = gzip.sublist(0, 10)..[3] |= 2;
           final crc = getCrc32(header);
           final member = Uint8List.fromList([
@@ -325,7 +333,8 @@ void main() {
           }
         });
 
-        test('strict options reject damaged later gzip headers, stream $stream',
+        test(
+            'verify and throwOnError reject damaged header of later gzip member, stream $stream',
             () {
           for (final byte in [0, 1, 2]) {
             final bad = Uint8List.fromList([...gzip, ...gzip]);
@@ -347,7 +356,8 @@ void main() {
           }
         });
 
-        test('verify checks every concatenated gzip member, stream $stream',
+        test(
+            'verify checks CRC of every concatenated gzip member, stream $stream',
             () {
           final joined = Uint8List.fromList([...gzip, ...gzip, ...gzip]);
           Object decode(List<int> bytes,
@@ -380,11 +390,11 @@ void main() {
       }
 
       for (final MapEntry(key: name, value: decode) in decoders.entries) {
-        test('$name: a whole stream passes verify', () {
+        test('$name: complete stream passes verify', () {
           expect(decode(of(name), true, false), isTrue);
         });
 
-        test('$name: an empty input throws with either flag', () {
+        test('$name: empty input throws with verify or throwOnError', () {
           expect(decode(Uint8List(0), false, false), isFalse);
           for (final (v, t) in [(true, false), (false, true)]) {
             expect(() => decode(Uint8List(0), v, t),
@@ -393,7 +403,7 @@ void main() {
           }
         });
 
-        test('$name: a wrong checksum throws only with verify', () {
+        test('$name: wrong checksum throws only with verify', () {
           final bad = Uint8List.fromList(of(name));
           bad[bad.length - (name.startsWith('gzip') ? 8 : 1)] ^= 1;
           expect(decode(bad, false, false), isTrue);
@@ -402,7 +412,9 @@ void main() {
               throwsA(isA<ArchiveChecksumException>()));
         });
 
-        test('$name: cut or foreign data throws with either flag', () {
+        test(
+            '$name: truncated or foreign data throws with verify or throwOnError',
+            testOn: 'vm', () {
           final whole = of(name);
           final cut = Uint8List.sublistView(whole, 0, whole.length ~/ 2);
           if (name == 'zlib') {
@@ -426,12 +438,12 @@ void main() {
         });
       }
 
-      test('gzip web verifies the zlib stream it falls back to', () {
+      test('web gzip with verify checks zlib stream it falls back to', () {
         expect(const GZipDecoderWeb().decodeBytes(zlib, verify: true), data);
         expect(const GZipDecoder().decodeBytes(zlib, verify: true), data);
       });
 
-      test('web decoders read a stream in either byte order', () {
+      test('web decoders read input in big- and little-endian byte order', () {
         for (final order in ByteOrder.values) {
           for (final (decoder, bytes) in [
             (const GZipDecoderWeb(), gzip),
@@ -447,7 +459,7 @@ void main() {
         }
       });
 
-      test('zlib verify accepts a whole stream that bytes follow', () {
+      test('zlib verify accepts complete stream followed by extra bytes', () {
         final padded = Uint8List.fromList([...zlib, 0, 0, 0, 0]);
         expect(const ZLibDecoder().decodeBytes(padded, verify: true), data);
         expect(
@@ -463,7 +475,7 @@ void main() {
             isTrue);
       });
 
-      test('zlib web rejects invalid method and window fields', () {
+      test('web zlib rejects invalid method and window fields', () {
         final valid = ZLibEncoder().encodeBytes([1, 2, 3, 4]);
         for (final (field, cmf) in [('method', 0x79), ('window', 0x88)]) {
           final bad = Uint8List.fromList(valid);
@@ -486,7 +498,7 @@ void main() {
         }
       });
 
-      test('strict web decoders reject unfinished deflate blocks', () {
+      test('web decoders with verify reject unfinished deflate blocks', () {
         for (final (name, decoder, bad) in [
           (
             'zlib',
@@ -538,7 +550,7 @@ void main() {
 
       // Needs computed Adler-32 trailer, which made throwOnError 12-20% slower
       // on 100 and 500 MB, so test stays off
-      // test('strict native zlib rejects invalid deflate with valid checksum',
+      // test('native zlib with verify rejects invalid deflate that has valid checksum',
       //     () {
       //   final bad = Uint8List.fromList([0x78, 0x9c, 0xfc, 0, 0, 0, 0, 1]);
       //   for (final (verify, throwOnError)
@@ -560,7 +572,7 @@ void main() {
 
       // dart:io passes these streams without second inflate pass in Dart,
       // which made zlib verify 3.4x slower on enwik8, so tests stay off
-      // test('strict native zlib requires a final deflate block', () {
+      // test('native zlib with verify rejects stream without final deflate block', () {
       //   final bad = Uint8List.fromList([0x78, 0x9c, 0x9c, 0, 0, 0, 1, 0, 1]);
       //   expect(() => const ZLibDecoder().decodeBytes(bad, verify: true),
       //       throwsA(isA<ArchiveException>()));
@@ -588,7 +600,7 @@ void main() {
       //   }
       // });
 //
-      // test('strict native zlib rejects a cut final block with its checksum',
+      // test('native zlib with verify rejects truncated final block followed by checksum',
       //     () {
       //   final bad = Uint8List.fromList([0x78, 0x9c, 0x03, 0, 0, 0, 1]);
       //   expect(() => const ZLibDecoder().decodeBytes(bad, verify: true),
@@ -599,7 +611,7 @@ void main() {
       //       throwsA(isA<ArchiveException>()));
       // });
 //
-      // test('strict native zlib requires a final stored block', () {
+      // test('native zlib with verify rejects stream without final stored block', () {
       //   final valid = Uint8List.fromList([
       //     0x78, 0x01, 0, 1, 0, 0xfe, 0xff, 0x41,
       //     1, 1, 0, 0xfe, 0xff, 0x42, 0, 0xc6, 0, 0x84
@@ -615,7 +627,7 @@ void main() {
       //       throwsA(isA<ArchiveException>()));
       // });
 
-      test('zlib web rejects an oversubscribed Huffman table', () {
+      test('web zlib rejects oversubscribed Huffman table', () {
         final source = Uint8List.fromList(List.generate(16384, (i) => i & 255));
         final packed = ZLibEncoder().encodeBytes(source);
         final bad = Uint8List.fromList(packed)..[8] ^= 0xff;
@@ -638,7 +650,7 @@ void main() {
 
       // dart:io passes this input without second inflate pass in Dart,
       // too costly for verify as in zlib tests above, so test stays off
-      // test('strict native gzip rejects output larger than one member', () {
+      // test('native gzip with verify rejects output larger than member ISIZE', () {
       //   final bad = Uint8List.fromList([
       //     0x1f,
       //     0x8b,
@@ -686,7 +698,9 @@ void main() {
       //   }
       // });
 
-      test('zlib verify on dart:io refuses over 4 KB after the stream', () {
+      test(
+          'dart:io zlib verify throws on more than 4 KB after stream, web accepts',
+          testOn: 'vm', () {
         final padded = Uint8List.fromList([...zlib, ...Uint8List(4097)]);
         expect(
             const ZLibDecoder().decodeBytes(padded, throwOnError: true), data);
@@ -695,7 +709,8 @@ void main() {
         expect(const ZLibDecoderWeb().decodeBytes(padded, verify: true), data);
       });
 
-      test('stream decode reads members whose trailer a read splits', () {
+      test('decodeStream reads members whose trailer is split between 2 reads',
+          () {
         final second = GZipEncoder().encodeBytes(List.filled(3000, 7));
         for (var k = 1; k <= 9; k++) {
           final data = Uint8List.fromList(
@@ -724,7 +739,7 @@ void main() {
         }
       });
 
-      test('members after an empty member are decoded', () {
+      test('members after empty member are decoded', () {
         final first = GZipEncoder().encodeBytes(List.filled(5000, 65));
         final empty = GZipEncoder().encodeBytes(const <int>[]);
         final last = GZipEncoder().encodeBytes(List.filled(3000, 66));
@@ -765,7 +780,8 @@ void main() {
         }
       });
 
-      test('a member after an empty one is kept when a read ends at a member',
+      test(
+          'member after empty member is kept when read ends on member boundary',
           () {
         final random = Random(1);
         final empty = GZipEncoder().encodeBytes(const <int>[]);
@@ -791,7 +807,9 @@ void main() {
             [...data, ...List.filled(300, 67), ...List.filled(3000, 68)]);
       });
 
-      test('stored data that looks like an empty member is not a boundary', () {
+      test(
+          'stored bytes that look like empty gzip member are not member boundary',
+          () {
         final random = Random(4);
         final nested = GZipEncoder()
             .encodeBytes(List.generate(1000, (_) => random.nextInt(256)));
@@ -837,7 +855,8 @@ void main() {
         }
       });
 
-      test('web raw inflate reads a last code that ends the data', () {
+      test('web raw inflate decodes last code that ends exactly at end of data',
+          () {
         final raw = Uint8List.fromList([155, 48, 113, 210, 228, 41, 0]);
         for (final throwOnError in [false, true]) {
           expect(
@@ -847,13 +866,14 @@ void main() {
         }
       });
 
-      test('zlib web keeps a whole stream that bytes follow', () {
+      test('web zlib decodes complete stream followed by extra bytes', () {
         final padded = Uint8List.fromList([...zlib, 0, 0, 0, 0]);
         expect(const ZLibDecoderWeb().decodeBytes(padded), data);
         expect(const ZLibDecoder().decodeBytes(padded), data);
       });
 
-      test('web decoders refuse a cut stream read from a file', () {
+      test('web decoders reject truncated stream read from file', testOn: 'vm',
+          () {
         for (final (decoder, whole) in [
           (const GZipDecoderWeb(), gzip),
           (const ZLibDecoderWeb(), zlib),
@@ -876,7 +896,8 @@ void main() {
         }
       });
 
-      test('zlib web refuses a cut raw stream with either flag', () {
+      test('web zlib rejects truncated raw stream with verify or throwOnError',
+          () {
         final raw = Deflate(data).getBytes();
         expect(const ZLibDecoderWeb().decodeBytes(raw, raw: true, verify: true),
             data);
@@ -892,7 +913,9 @@ void main() {
         }
       });
 
-      test('without flags decodeBytes returns what decodeStream writes', () {
+      test(
+          'without flags decodeBytes returns same bytes as decodeStream writes',
+          () {
         final padded = Uint8List.fromList([...gzip, ...Uint8List(600)]);
         final output = OutputMemoryStream();
         expect(
@@ -902,7 +925,7 @@ void main() {
         expect(const GZipDecoder().decodeBytes(padded), output.getBytes());
       });
 
-      test('strict web decoders validate empty stored block complements', () {
+      test('web decoders with verify check NLEN of empty stored block', () {
         for (final complement in [0, 1, 0x7fff, 0xfffe, 0xffff]) {
           final raw = [1, 0, 0, complement & 0xff, complement >> 8];
           final zlib = [0x78, 0x9c, ...raw, 0, 0, 0, 1];
@@ -941,7 +964,8 @@ void main() {
         }
       });
 
-      test('strict web zlib rejects a literal alphabet above 286 symbols', () {
+      test('web zlib with verify rejects literal alphabet above 286 symbols',
+          () {
         for (final encoded in [
           'eJz1wAUEAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAIAAAAAAAQ==',
           'eJz9wAUEAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAABAAAAAQ=='
@@ -960,7 +984,8 @@ void main() {
             const ZLibDecoderWeb().decodeBytes(valid, verify: true), isEmpty);
       });
 
-      test('strict web zlib requires a previous code length before a repeat',
+      test(
+          'web zlib with verify rejects repeat code without previous code length',
           () {
         final packed = base64Decode(
             'eJwFwAUEAAAAAKABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAAAAB');
@@ -976,7 +1001,7 @@ void main() {
             const ZLibDecoderWeb().decodeBytes(valid, verify: true), isEmpty);
       });
 
-      test('web decoders keep output when the zlib checksum is truncated', () {
+      test('web decoders keep output when zlib checksum is truncated', () {
         for (final decoder in [
           const ZLibDecoderWeb(),
           const GZipDecoderWeb()
@@ -1001,7 +1026,7 @@ void main() {
         }
       });
 
-      test('io decoders keep output when the trailer is cut', () {
+      test('dart:io decoders keep output when trailer is truncated', () {
         for (final (packed, trailer, decodeBytes, decodeStream) in [
           (
             gzip,
@@ -1027,7 +1052,8 @@ void main() {
         }
       });
 
-      test('decodeBytes of a cut gzip is not sized by the bytes at the cut',
+      test(
+          'decodeBytes of truncated gzip does not size output from bytes at cut',
           () {
         final random = Random(3);
         final text = Uint8List.fromList(
@@ -1043,13 +1069,13 @@ void main() {
         }
       });
 
-      test('verify finds a wrong gzip checksum through decodeBytes', () {
+      test('decodeBytes with verify throws on wrong gzip CRC', () {
         final damaged = Uint8List.fromList(gzip)..[gzip.length - 8] ^= 0xff;
         expect(() => const GZipDecoder().decodeBytes(damaged, verify: true),
             throwsA(isA<ArchiveChecksumException>()));
       });
 
-      test('without flags zlib decodeBytes keeps what decoded before damage',
+      test('without flags zlib decodeBytes returns bytes decoded before damage',
           () {
         final random = Random(3);
         final text = Uint8List.fromList(
@@ -1075,7 +1101,7 @@ void main() {
         fail('no damage made the stream fail after some output');
       });
 
-      test('gzip verify refuses one zero byte after the last member', () {
+      test('gzip verify throws on 1 zero byte after last member', () {
         final padded = Uint8List.fromList([...gzip, 0]);
         for (final (name, decode) in [
           (
@@ -1094,7 +1120,8 @@ void main() {
         }
       });
 
-      test('gzip verify refuses a cut header after an empty last member', () {
+      test('gzip verify throws on truncated header after empty last member',
+          () {
         final whole = Uint8List.fromList(
             [...gzip, ...GZipEncoder().encodeBytes(Uint8List(0))]);
         expect(const GZipDecoder().decodeBytes(whole, verify: true), data);
@@ -1114,7 +1141,9 @@ void main() {
         }
       });
 
-      test('zlib web ignores bytes after a whole stream with either flag', () {
+      test(
+          'web zlib ignores bytes after complete stream with verify or throwOnError',
+          () {
         for (final tail in [
           [0],
           [0, 0, 0, 0],
@@ -1132,7 +1161,8 @@ void main() {
       });
     });
 
-    test('the web decoder writes a file and a sink it cannot read back', () {
+    test('web decoder writes 2 members to file and to write-only sink',
+        testOn: 'vm', () {
       final data = Uint8List(3 * 1024 * 1024 + 12345);
       for (var i = 0; i < data.length; i++) {
         data[i] = (i * 31 + (i >> 11)) & 0xff;
@@ -1159,7 +1189,8 @@ void main() {
       expect(chunks!.expand((c) => c).toList(), want);
     });
 
-    test('a small decodeBytes result does not hold the output buffer', () {
+    test('small decodeBytes result is not view of larger output buffer',
+        testOn: 'vm', () {
       final data = [1, 2, 3, 4, 5];
       final packed = const GZipEncoder().encodeBytes(data);
       for (final (verify, throwOnError) in [

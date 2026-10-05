@@ -1,3 +1,6 @@
+@TestOn('vm')
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
@@ -131,7 +134,8 @@ void _matrix(
     String name, Map<String, _Encode> encoders, Map<String, _Decode> decoders,
     {List<int> sizes = _small,
     void Function(Uint8List archive, Uint8List source)? check}) {
-  test('$name: every encoder reads back through every decoder', () async {
+  test('$name: output of every encoder decodes through every decoder',
+      () async {
     for (final size in sizes) {
       for (final source in [_source(size), if (size == 100000) _noise(size)]) {
         for (final MapEntry(key: how, value: encode) in encoders.entries) {
@@ -260,7 +264,7 @@ void main() {
       });
     }
 
-    test('zstd levels change the output on every encoder', () async {
+    test('zstd level changes output of every encoder', () async {
       final source = _source(100000);
       Future<List<int>> sizes(int level) async => [
             ZstdEncoder(level: level).encodeBytes(source).length,
@@ -464,7 +468,7 @@ void main() {
             sizes: level == null ? _large : _small);
       }
 
-      test('$format levels change the output on every encoder', () {
+      test('$format level changes output of every encoder', () {
         final source = _source(100000);
         final paths = {
           'native encodeBytes': (int level) => f.nativeBytes(source, level),
@@ -483,7 +487,7 @@ void main() {
 
   group('tar', () {
     for (final (label, encoding) in [('utf8', utf8), ('latin1', latin1)]) {
-      test('tar $label: every encoder reads back through every decoder',
+      test('tar $label: output of every encoder decodes through every decoder',
           () async {
         final entries = _entries('café');
         final want = _describe(entries);
@@ -531,7 +535,7 @@ void main() {
           'password ${password ?? 'none'}, streamed $streamed, level $level';
       // Decryption dominates the time, so encrypted entries stay small
       final size = password == null ? 30000 : 3000;
-      test('zip $label: every encoder reads back through every decoder',
+      test('zip $label: output of every encoder decodes through every decoder',
           () async {
         final entries = [
           ..._entries('café', large: size * 3),
@@ -589,7 +593,7 @@ void main() {
       });
     }
 
-    test('zip levels change the output on every encoder', () async {
+    test('zip level changes output of every encoder', () async {
       final entries = [ArchiveFile.bytes('a.bin', _source(100000))];
       Future<List<int>> sizes(int level) async => [
             ZipEncoder().encodeBytes(_archive(entries), level: level).length,
@@ -604,7 +608,8 @@ void main() {
       }
     });
 
-    test('zip latin1 names: every encoder reads back through every decoder',
+    test(
+        'zip latin1 names: output of every encoder decodes through every decoder',
         () async {
       final entries = [ArchiveFile.bytes('café.txt', _source(100))];
       const codec = ZipCodec(filenameEncoding: latin1);

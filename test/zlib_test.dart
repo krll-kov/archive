@@ -32,7 +32,7 @@ void main() async {
       }
     });
 
-    test('encodeStream', () async {
+    test('encodeStream', testOn: 'vm', () async {
       {
         final outStream = OutputFileStream('$testOutputPath/zlib_stream.zlib')
           ..open();
@@ -54,7 +54,8 @@ void main() async {
       }
     });
 
-    test('a small decodeBytes result does not hold the output buffer', () {
+    test('small decodeBytes result is not view of larger output buffer',
+        testOn: 'vm', () {
       final data = [1, 2, 3, 4, 5];
       for (final raw in [false, true]) {
         final packed = raw

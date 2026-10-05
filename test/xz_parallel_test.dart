@@ -1,3 +1,6 @@
+@TestOn('vm')
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -174,7 +177,7 @@ void main() {
       expect(XZDecoder().decodeBytes(compressed), equals(expected));
     });
 
-    test('BCJ x86 filter in pieces matches the whole buffer', () {
+    test('BCJ x86 filter applied in pieces equals whole-buffer result', () {
       final random = Random(7);
       for (var round = 0; round < 2000; round++) {
         final data = Uint8List(random.nextInt(3000));
@@ -203,7 +206,7 @@ void main() {
       }
     });
 
-    test('x86 block streams through the converter in pieces', () async {
+    test('x86 block decodes through converter in pieces', () async {
       final compressed = fixture('x86-whole');
       var largest = 0;
       final out = BytesBuilder(copy: false);
@@ -218,7 +221,7 @@ void main() {
       expect(largest, lessThanOrEqualTo(1 << 16));
     });
 
-    test('x86 block decodes into a file output', () async {
+    test('x86 block decodes into file output', () async {
       final dir = Directory.systemTemp.createTempSync('archive_xz_x86');
       try {
         final path = p.join(dir.path, 'out.bin');
@@ -233,7 +236,7 @@ void main() {
       }
     });
 
-    test('decodeStream into a file output verifies every check type', () async {
+    test('decodeStream into file output verifies every check type', () async {
       final dir = Directory.systemTemp.createTempSync('archive_xz_check');
       try {
         final path = p.join(dir.path, 'out.bin');
@@ -282,14 +285,14 @@ void main() {
       expect(parallel, equals(expected));
     });
 
-    test('verifies SHA-256 while streaming the output back', () async {
+    test('verifies SHA-256 while streaming output', () async {
       final compressed = fixture('sha256');
       final parallel =
           await decodeBytesOnIsolates(compressed, verify: true, workers: 4);
       expect(parallel, equals(expected));
     });
 
-    test('a SHA-256 check that does not match is refused', () async {
+    test('wrong SHA-256 check throws ArchiveException', () async {
       final built = buildArchive('sha256');
       final data = Uint8List.fromList(built.bytes);
       data[built.blocks[1].checkOffset(32)] ^= 0xff;
@@ -300,7 +303,8 @@ void main() {
           throwsA(isA<ArchiveChecksumException>()));
     });
 
-    test('a check field cut short is a cut archive, not a wrong check',
+    test(
+        'truncated check field is reported as truncated archive, not wrong check',
         () async {
       final compressed = fixture('sha256');
       final cut = Uint8List.sublistView(compressed, 0, compressed.length - 130);
@@ -328,7 +332,8 @@ void main() {
         expect(blocks.length, greaterThan(4));
       });
 
-      test('index output lengths cannot overflow their total', () async {
+      test('index uncompressed sizes that overflow sum throw ArchiveException',
+          () async {
         final empty = emptyBlockStream();
         final block = empty.sublist(12, empty.length - 20);
         final length = [...List.filled(8, 0x80), 0x40];
@@ -360,7 +365,7 @@ void main() {
         expect(await decodeBytesOnIsolates(data, workers: 2), isEmpty);
       });
 
-      test('an error on the calling isolate follows the flags', () async {
+      test('error on main isolate follows verify and throwOnError', () async {
         expect(
             await decodeStreamOnIsolates(
                 _ThrowingInput(pristine, RangeError('cut')),
@@ -380,7 +385,7 @@ void main() {
             throwsA(same(failure)));
       });
 
-      test('nonzero index padding with a valid checksum is refused', () async {
+      test('nonzero index padding with valid checksum throws', () async {
         final backward = ByteData.sublistView(pristine)
             .getUint32(pristine.length - 8, Endian.little);
         final size = (backward + 1) * 4;
@@ -401,8 +406,7 @@ void main() {
             throwsA(isA<ArchiveException>()));
       });
 
-      test('excess zero index padding with a valid checksum is refused',
-          () async {
+      test('excess zero index padding with valid checksum throws', () async {
         final backward = ByteData.sublistView(pristine)
             .getUint32(pristine.length - 8, Endian.little);
         final size = (backward + 1) * 4;
@@ -434,7 +438,7 @@ void main() {
             throwsA(isA<ArchiveException>()));
       });
 
-      test('an overlong record count in the index is refused', () async {
+      test('overlong index record count throws', () async {
         final backward = ByteData.sublistView(pristine)
             .getUint32(pristine.length - 8, Endian.little);
         final size = (backward + 1) * 4;
@@ -465,7 +469,7 @@ void main() {
         expect(await completer.future, isA<ArchiveException>());
       });
 
-      test('a block shorter than its index entry is refused', () async {
+      test('block shorter than its index record throws', () async {
         final backward = ByteData.sublistView(pristine)
             .getUint32(pristine.length - 8, Endian.little);
         final size = (backward + 1) * 4;
@@ -526,8 +530,7 @@ void main() {
         expect(await fromStream.future, isA<ArchiveException>());
       });
 
-      test('a block whose compressed size differs from the index is refused',
-          () async {
+      test('block whose compressed size differs from index throws', () async {
         final backward = ByteData.sublistView(pristine)
             .getUint32(pristine.length - 8, Endian.little);
         final size = (backward + 1) * 4;
@@ -586,7 +589,8 @@ void main() {
         expect(await fromStream.future, isA<ArchiveException>());
       });
 
-      test('a block that decodes past its index size stays in its own place',
+      test(
+          'block decoding past its index size does not overwrite next block output',
           () async {
         final data = Uint8List.fromList([
           for (final text in ['one\n', 'two\n', 'three\n'])
@@ -614,7 +618,7 @@ void main() {
         }
       });
 
-      test('a truncated archive read from a file fails instead of hanging',
+      test('truncated archive read from file throws instead of hanging',
           () async {
         final dir = Directory.systemTemp.createTempSync('xz_truncated');
         addTearDown(() => dir.deleteSync(recursive: true));
@@ -652,7 +656,8 @@ void main() {
         }
       });
 
-      test('a file gone before the workers open it keeps its error', () async {
+      test('file deleted before workers open it reports original error',
+          () async {
         final dir = Directory.systemTemp.createTempSync('xz_gone');
         addTearDown(() => dir.deleteSync(recursive: true));
         final path = '${dir.path}/a.xz';
@@ -671,7 +676,7 @@ void main() {
             isA<FileSystemException>());
       }, testOn: '!windows');
 
-      group('an error of the input in a worker job', () {
+      group('input error in worker job', () {
         final archive = XZEncoder().encodeBytes(Uint8List(1000));
         final block = parseXZLayout(XZMemorySource(archive))!.blocks.single;
         final bytes = Uint8List.sublistView(archive, block.compressedOffset,
@@ -692,13 +697,13 @@ void main() {
                 unpaddedLength: null,
                 onPiece: (_, __) => onPiece());
 
-        test('keeps its type while the block decodes', () {
+        test('keeps error type while block decodes', () {
           final failure = _ReadFailure();
           final input = _FailingInput(bytes, failure)..armed = true;
           expect(() => decode(input, () {}), throwsA(same(failure)));
         });
 
-        test('keeps its type while the check field is read', () {
+        test('keeps error type while check field is read', () {
           final failure = _ReadFailure();
           final input = _FailingInput(bytes, failure,
               seekTo: bytes.length - xzCheckSize(block.streamFlags & 0xf));
@@ -706,8 +711,7 @@ void main() {
         });
       });
 
-      test('a range coder that does not start at zero is refused on workers',
-          () async {
+      test('range coder not starting at zero throws on workers', () async {
         final data = Uint8List.fromList(pristine);
         final at = blocks[1].dataOffset;
         expect(data[at], greaterThanOrEqualTo(0xe0));
@@ -775,7 +779,7 @@ void main() {
       // The output ends at the first failed block. Blocks after it are wasted
       // work. The second worker can hold one block when the failure arrives.
       // That one block is allowed to finish
-      test('a failed block stops the pool handing out blocks', () async {
+      test('failed block stops pool from starting more blocks', () async {
         final data = damaged(blocks[0].dataOffset + 8);
         var failed = false;
         var afterFailure = 0;
@@ -974,7 +978,7 @@ void main() {
       });
     });
 
-    test('decodeStream on workers consumes the input', () async {
+    test('decodeStream on workers reads input to end', () async {
       final compressed = fixture('blocks');
       final memory = InputMemoryStream(compressed);
       expect(
@@ -998,7 +1002,9 @@ void main() {
           equals(expected));
     });
 
-    test('one worker writes a block that starts on a piece boundary', () async {
+    test(
+        '1 worker decodes 2 blocks when second starts on staging buffer boundary',
+        () async {
       final part = XZEncoder().encodeBytes(Uint8List(xzStagingSize));
       final compressed = Uint8List.fromList([...part, ...part]);
       final output = OutputMemoryStream();
@@ -1018,7 +1024,7 @@ void main() {
       expect(await completer.future, hasLength(2 * xzStagingSize));
     });
 
-    test('a block that decodes to nothing keeps the blocks after it', () async {
+    test('empty block does not drop blocks after it', () async {
       final first =
           XZEncoder().encodeBytes(Uint8List(300000)..fillRange(0, 300000, 1));
       final last =
@@ -1669,7 +1675,7 @@ void main() {
     // the same header bytes, and a check that lives in one of them shows up
     // here as a disagreement. The block header carries the fields the wrapper
     // sweep above never reaches: the block flags and the filter properties
-    group('a damaged archive reaches the same verdict on every path', () {
+    group('damaged archive gives same result on every decode path', () {
       late Uint8List pristine;
       late List<int> offsets;
 
@@ -1717,7 +1723,8 @@ void main() {
         }
       }
 
-      test('every wrapper, block header and sampled payload byte', () async {
+      test('every changed wrapper, block header and sampled payload byte',
+          () async {
         for (final at in offsets) {
           final data = Uint8List.fromList(pristine)..[at] ^= 0xff;
 
@@ -1740,7 +1747,7 @@ void main() {
         }
       });
 
-      test('a reserved bit in the flags is refused on every path', () async {
+      test('reserved flag bit throws on every decode path', () async {
         final blockHeader = (pristine[12] + 1) * 4;
         final cases = <String, Uint8List>{
           'stream flags': Uint8List.fromList(pristine)..[7] |= 0x10,
@@ -1769,7 +1776,7 @@ void main() {
 
   // The converter on isolates has to write what the converter on one thread
   // writes, and on a failure no more than the whole blocks before it
-  group('xz stream decoder on isolates', () {
+  group('xz stream decoder on workers', () {
     final expected = sampleData(1200000);
     const options = XZMultithreadOptions<Object?>.converter(workers: 4);
 
@@ -1819,7 +1826,7 @@ void main() {
     bool agreeSoFar(List<int> a, List<int> b) =>
         a.length <= b.length ? isPrefix(a, b) : isPrefix(b, a);
 
-    test('every archive decodes as it does on one thread', () async {
+    test('every archive decodes same as on 1 thread', () async {
       final files = [
         ...Directory('test/_data/xz/parallel').listSync(),
         ...Directory('test/_data/xz').listSync(),
@@ -1842,7 +1849,7 @@ void main() {
       }
     });
 
-    test('one byte at a time', () async {
+    test('input in 1-byte pieces decodes same as on 1 thread', () async {
       for (final name in ['x86.xz', 'concatenated.xz', 'stream_padding.xz']) {
         final bytes = File('test/_data/xz/$name').readAsBytesSync();
         expect((await threaded(pieces(bytes, 1))).bytes,
@@ -1851,7 +1858,7 @@ void main() {
       }
     });
 
-    test('blocks without lengths come out in order between the others',
+    test('blocks without declared sizes keep their order between sized blocks',
         () async {
       // A stream whose blocks declare their lengths, one whose blocks do not,
       // and another that does, back to back
@@ -1867,7 +1874,7 @@ void main() {
       expect(many.bytes, one.bytes);
     });
 
-    test('a budget that affords one worker writes the same bytes', () async {
+    test('memory budget for 1 worker gives same output', () async {
       final bytes = fixture('blocks');
       final many = await threaded(
           pieces(bytes, 1 << 16),
@@ -1877,8 +1884,7 @@ void main() {
       expect(many.bytes, expected);
     });
 
-    test('an input that stops part way is refused with whole blocks out',
-        () async {
+    test('truncated input throws after sending complete blocks', () async {
       final built = buildArchive('blocks');
       final bytes = built.bytes;
       final blocks = built.blocks;
@@ -1905,7 +1911,7 @@ void main() {
       }
     });
 
-    test('a source that fails part way ends with that error', () async {
+    test('source error part way ends stream with same error', () async {
       final bytes = fixture('blocks');
       for (final at in [100, bytes.length ~/ 2, bytes.length - 20]) {
         final source = StreamController<List<int>>();
@@ -1920,7 +1926,7 @@ void main() {
       }
     });
 
-    test('a paused consumer stops the decode', () async {
+    test('paused listener stops decoding', () async {
       // The pump sent the next block whatever the consumer was doing, so a
       // paused stream decoded the archive into memory. Over 64 blocks of 4 MiB
       // of zeros RSS grew by 272 MB while the consumer held 64 KiB, the same
@@ -1965,7 +1971,7 @@ void main() {
           reason: 'decoded ${burst >> 20} MiB while the consumer was paused');
     });
 
-    test('a silent input can be cancelled and is let go', () async {
+    test('cancel over silent input releases input', () async {
       // Nothing sent, and a header followed by part of a block: in both the
       // decoder is parked waiting on an input that neither sends nor closes
       for (final start in [<int>[], fixture('blocks').sublist(0, 1000)]) {
@@ -1983,7 +1989,7 @@ void main() {
       }
     });
 
-    test('whole archives come out before the input closes', () async {
+    test('complete archives are decoded before input closes', () async {
       for (final archive in [
         fixture('x86'),
         XZEncoder().encodeBytes(Uint8List.sublistView(expected, 0, 3000)),
@@ -2012,7 +2018,7 @@ void main() {
       }
     });
 
-    test('cancelling the output cancels the input', () async {
+    test('cancel of output cancels input', () async {
       final source = StreamController<List<int>>();
       final bytes = fixture('blocks');
       final first = Completer<void>();
@@ -2030,7 +2036,8 @@ void main() {
       await source.close();
     });
 
-    test('a damaged archive reaches the same verdict', () async {
+    test('damaged archive gives same result as single-thread decoder',
+        () async {
       final built = buildArchive('blocks');
       final pristine = built.bytes;
       final ends = {
@@ -2060,7 +2067,7 @@ void main() {
       }
     });
 
-    test('a sink refuses the options, since it cannot wait for a worker', () {
+    test('startChunkedConversion with multithread throws ArgumentError', () {
       const codec = XzCodec(multithread: options);
       expect(() => codec.decoder.startChunkedConversion(BytesBuilderSink()),
           throwsArgumentError);
@@ -2068,7 +2075,7 @@ void main() {
           () => codec.decoder.convert(fixture('whole')), throwsArgumentError);
     });
 
-    test('settings that cannot be honoured are refused', () async {
+    test('invalid workers or memoryBudget throws ArgumentError', () async {
       for (final bad in [
         const XZMultithreadOptions<Object?>.converter(workers: 0),
         const XZMultithreadOptions<Object?>.converter(memoryBudget: 0),
@@ -2078,7 +2085,7 @@ void main() {
       }
     });
 
-    test('decodeBytes still needs onDone', () {
+    test('decodeBytes with multithread but no onDone throws ArgumentError', () {
       expect(
           () => XZDecoder().decodeBytes(fixture('whole'),
               multithread:

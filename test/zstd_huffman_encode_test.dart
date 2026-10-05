@@ -80,30 +80,30 @@ Uint8List _fromWeights(List<int> weights, int length, Random random) {
 
 void main() {
   group('zstd Huffman encoder', () {
-    test('a short run of two symbols round trips', () {
+    test('short run of 2 symbols decodes back', () {
       _roundTrip(
           Uint8List.fromList(List.generate(100, (i) => i % 7 == 0 ? 65 : 66)));
     });
 
-    test('one stream of text round trips', () {
+    test('single stream of text decodes back', () {
       const text = 'the quick brown fox jumps over the lazy dog, again and '
           'again, until the letters settle into a shape worth coding';
       _roundTrip(Uint8List.fromList(text.codeUnits));
     });
 
-    test('four streams round trip', () {
+    test('4 streams decode back', () {
       final random = Random(11);
       _roundTrip(_fromWeights(
           List.generate(60, (i) => 1 + (60 - i) * (60 - i)), 20000, random));
     });
 
-    test('symbols above 128 round trip', () {
+    test('symbols above 128 decode back', () {
       final random = Random(12);
       final weights = List.generate(256, (i) => i < 200 ? 1 : 400);
       _roundTrip(_fromWeights(weights, 30000, random));
     });
 
-    test('a tree deeper than eleven bits is flattened', () {
+    test('tree deeper than 11 bits is limited to 11', () {
       // Fibonacci counts make the natural tree one bit deeper per symbol, so
       // thirty of them ask for a code far past the eleven the format allows
       final counts = Uint32List(256);
@@ -135,7 +135,7 @@ void main() {
           _fromWeights(List.generate(30, (s) => counts[s]), 40000, random));
     });
 
-    test('random distributions round trip', () {
+    test('random distributions decode back', () {
       final random = Random(20260909);
       for (var round = 0; round < 60; round++) {
         final used = 2 + random.nextInt(254);

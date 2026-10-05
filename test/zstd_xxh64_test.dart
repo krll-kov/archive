@@ -36,7 +36,7 @@ void main() {
     data[i] = (i * 31 + 7) & 0xff;
   }
 
-  test('matches the reference digest', () {
+  test('digest matches reference', () {
     for (final entry in _reference.entries) {
       final hash = Xxh64();
       hash.update(data, 0, entry.key);
@@ -44,7 +44,7 @@ void main() {
     }
   });
 
-  test('splitting the input does not change the digest', () {
+  test('input split into pieces gives same digest', () {
     for (final entry in _reference.entries) {
       final size = entry.key;
       for (final chunk in const [1, 5, 7, 32, 33, 64]) {
@@ -59,7 +59,7 @@ void main() {
     }
   });
 
-  test('reset returns a used instance to its initial state', () {
+  test('reset returns used instance to initial state', () {
     final hash = Xxh64();
     hash.update(data, 0, 1000);
     hash.reset();

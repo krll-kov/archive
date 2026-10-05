@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:archive/archive_io.dart';
-import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -212,7 +211,7 @@ var tarTests = [
 void main() {
   group('tar', () {
     // bsdtar makes a real hard link, Python tarfile and 7-Zip 26 write a copy
-    test('a hard link keeps its target from the archive root', () {
+    test('hard link target is relative to archive root', () {
       final out = OutputMemoryStream();
       final tar = TarEncoder()..start(out);
       tar.add(ArchiveFile.string('usr/bin/gcc', 'compiler'));
@@ -236,8 +235,7 @@ void main() {
       expect(again.files.single.nameOfLinkedFile, 'usr/bin/gcc');
     });
 
-    test('a zip entry that cannot be read keeps the entries after it',
-        () async {
+    test('unreadable zip entry does not drop entries after it', () async {
       final data = Uint8List.fromList(List.generate(3000, (i) => i * 7 % 251));
       final zip = ZipEncoder().encodeBytes(Archive()
         ..add(ArchiveFile.bytes('odd', data))
@@ -274,8 +272,8 @@ void main() {
       }
     });
 
-    test('an entry whose stream was written to a file is tarred whole',
-        () async {
+    test('entry whose stream was written to file is encoded whole',
+        testOn: 'vm', () async {
       final directory = Directory.systemTemp.createTempSync('archive-tar-');
       addTearDown(() => directory.deleteSync(recursive: true));
       final data = Uint8List.fromList(List.generate(3000, (i) => i * 7 % 251));
@@ -312,7 +310,7 @@ void main() {
       }
     });
 
-    test('an entry whose stream was read from is tarred as for memory',
+    test('entry whose stream was read is encoded same as from memory',
         testOn: 'vm', () async {
       final directory = Directory.systemTemp.createTempSync('archive-tar-');
       addTearDown(() => directory.deleteSync(recursive: true));
@@ -352,7 +350,8 @@ void main() {
       expect(contents['file tarCodec'], contents['memory tarCodec']);
     });
 
-    test('a hard link from an old tar has no data whatever its size', () async {
+    test('hard link in v7 or GNU tar has no data regardless of size field',
+        () async {
       for (final magic in ['', 'ustar  \u0000']) {
         final bytes = Uint8List.fromList([
           ..._tarHeader('docs/README', '0', 321, magic: magic),
@@ -388,7 +387,7 @@ void main() {
       }
     });
 
-    test('a hard link in a pax archive keeps its data', () async {
+    test('hard link in pax archive keeps its data', () async {
       final records = utf8.encode(_paxRecord('mtime', '1'));
       for (final type in ['x', 'g']) {
         final bytes = Uint8List.fromList([
@@ -430,7 +429,7 @@ void main() {
       }
     });
 
-    test('a hard link has data only where libarchive reads it', () async {
+    test('hard link has data only where libarchive reads data', () async {
       const ustar = 'ustar\u000000';
       const gnu = 'ustar  \u0000';
       final records = utf8.encode(_paxRecord('mtime', '1'));
@@ -509,8 +508,7 @@ void main() {
       }
     });
 
-    test('a hard link whose header fails the libarchive bid keeps its data',
-        () {
+    test('hard link whose header fails libarchive bid keeps its data', () {
       const ustar = 'ustar\u000000';
       final badSum = _tarHeader('link', '1', 3, link: 'p', magic: ustar);
       badSum[148] = 0x37;
@@ -537,7 +535,7 @@ void main() {
       }
     });
 
-    test('a directory, link, device or fifo has no data whatever its size',
+    test('directory, link, device or fifo has no data regardless of size field',
         () async {
       final records = utf8.encode(_paxRecord('mtime', '1'));
       for (final (name, type) in [
@@ -584,7 +582,7 @@ void main() {
       }
     });
 
-    test('a sparse file is read with its holes', () async {
+    test('sparse file decodes with zero-filled holes', () async {
       final data = [...List.filled(512, 0x61), ...List.filled(512, 0x62)];
       final expanded = [
         ...List.filled(512, 0x61),
@@ -640,7 +638,7 @@ void main() {
       }
     });
 
-    test('a cut sparse file gives the regions that arrived', () {
+    test('truncated sparse file gives regions that arrived', () {
       final data = [...List.filled(512, 0x61), ...List.filled(512, 0x62)];
       final expanded = [
         ...List.filled(512, 0x61),
@@ -678,7 +676,7 @@ void main() {
       }
     });
 
-    test('a sparse map that does not fit leaves the entry as stored', () async {
+    test('sparse map that does not fit leaves entry as stored', () async {
       final data = [...List.filled(512, 0x61), ...List.filled(512, 0x62)];
       List<int> pax(String type, Map<String, String> records) {
         final bytes = utf8.encode(
@@ -769,7 +767,7 @@ void main() {
       }
     });
 
-    test('a GNU sparse header cut before its extension is read as stored', () {
+    test('GNU sparse header truncated before extension is read as stored', () {
       final bytes =
           _tarHeader('gnu.bin', 'S', 1024, magic: 'ustar  \u0000', fields: {
         386: '00000000000\u0000',
@@ -786,7 +784,7 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a GNU sparse entry stored as is streams as a file', () async {
+    test('GNU sparse entry stored as is streams as regular file', () async {
       final bytes = Uint8List.fromList([
         ..._tarHeader('gnu.bin', 'S', 1024, magic: 'ustar  \u0000', fields: {
           386: '00000000000\u0000',
@@ -808,7 +806,7 @@ void main() {
       expect(types, [TarEntryType.file]);
     });
 
-    test('a sparse map is read the way libarchive reads it', () async {
+    test('sparse map decodes as libarchive decodes it', () async {
       const ustar = 'ustar\u000000';
       final data = [...List.filled(512, 0x61), ...List.filled(512, 0x62)];
       final expanded = [
@@ -1015,7 +1013,7 @@ void main() {
       }
     });
 
-    test('a sparse map applies only to a regular file', () async {
+    test('sparse map applies only to regular file', () async {
       final records = utf8.encode(_paxRecord('GNU.sparse.size', '2048') +
           _paxRecord('GNU.sparse.map', '0,512,1536,512') +
           _paxRecord('GNU.sparse.name', 'real.bin'));
@@ -1062,8 +1060,8 @@ void main() {
       expect(streamed[1].$3, data);
     });
 
-    test('sparse files from GNU tar read as Go and libarchive read them',
-        () async {
+    test('GNU tar sparse files decode as Go and libarchive decode them',
+        testOn: 'vm', () async {
       final cases = {
         'sparse-formats.tar': [
           ('sparse-gnu', 200, 0x5375e1d2),
@@ -1130,8 +1128,7 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a sparse entry streams in pieces what its content holds',
-        testOn: 'vm', () async {
+    test('sparse entry streams its content in pieces', testOn: 'vm', () async {
       final data = List.generate(950, (i) => (i * 7 + 3) % 251);
       final expanded = Uint8List(3000)
         ..setRange(100, 400, data)
@@ -1263,7 +1260,7 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a header checksum is checked with either flag', () {
+    test('header checksum is checked with verify or throwOnError', () {
       final bytes = TarEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'content')));
       bytes[0] = 98;
@@ -1287,7 +1284,7 @@ void main() {
       }
     });
 
-    test('strict decoding rejects missing entry padding', () {
+    test('verify rejects missing entry padding', () {
       final bytes = TarEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'data')));
       for (final length in [516, 517, 1023, 1024]) {
@@ -1311,7 +1308,7 @@ void main() {
       }
     });
 
-    test('file', () {
+    test('file', testOn: 'vm', () {
       final tar = TarEncoder()
           .encodeBytes(Archive()..add(ArchiveFile.bytes('file.txt', [100])));
       File(p.join(testOutputPath, 'tar_encoded.tar'))
@@ -1319,7 +1316,7 @@ void main() {
         ..writeAsBytesSync(tar);
     });
 
-    test('file with symlink', () {
+    test('file with symlink', testOn: 'vm', () {
       ArchiveFile symlink = ArchiveFile.symlink('file.txt', 'file2.txt');
       final tar = TarEncoder().encodeBytes(Archive()..add(symlink));
       File(p.join(testOutputPath, 'tar_encoded.tar'))
@@ -1330,7 +1327,7 @@ void main() {
     });
 
     test('file GNU tar files store extra long file names in a separate file.',
-        () {
+        testOn: 'vm', () {
       var longFileName =
           'GNU tar files store extra long file names in a separate file. gt100 gt100 gt100 gt100 gt100 gt100 gt100.txt';
       final tar = TarEncoder()
@@ -1345,7 +1342,7 @@ void main() {
       expect(tarDecoded[0].name, longFileName);
     });
 
-    test('long file name', () {
+    test('long file name', testOn: 'vm', () {
       final file = File('test/_data/tar/x.tar');
       final bytes = file.readAsBytesSync();
       final archive = TarDecoder().decodeBytes(bytes, verify: true);
@@ -1359,7 +1356,7 @@ void main() {
       expect(archive[0].name, equals(x));
     });
 
-    test('pax header with binary xattr record', () {
+    test('pax header with binary xattr record', testOn: 'vm', () {
       // Vendor extensions like SCHILY.xattr store raw binary values, which
       // can contain invalid UTF-8 and embedded newlines. Those must not
       // prevent the records around them, like 'path', from being read.
@@ -1375,7 +1372,7 @@ void main() {
       expect(archive[0].lastModTime, equals(1788382072));
     });
 
-    test('a GNU dumpdir entry is a directory', () {
+    test('GNU dumpdir entry is directory', testOn: 'vm', () {
       final file = File('test/_data/tar/gnu-incremental.tar');
       final archive = TarDecoder().decodeBytes(file.readAsBytesSync());
       final dir = archive.findFile('test2/')!;
@@ -1383,7 +1380,7 @@ void main() {
       expect(archive.findFile('test2/foo')!.content.length, 64);
     });
 
-    test('GNU long link name', () {
+    test('GNU long link name', testOn: 'vm', () {
       // GNU writes both a long name and a long link target as an entry called
       // '././@LongLink', and only the type flag says which one it is: 'L' for
       // the name, 'K' for the link target.
@@ -1397,7 +1394,7 @@ void main() {
       expect(link.symbolicLink, equals('${'n' * 160}.txt'));
     });
 
-    test('a regular file named ././@LongLink renames only its own long name',
+    test('regular file with path ././@LongLink sets only its own long name',
         () async {
       List<int> entry(List<int> name, List<int> data,
           {int mode = 420, String type = TarFile.normalFile, int? size}) {
@@ -1506,7 +1503,9 @@ void main() {
           ['././@LongLink=${'z' * 120}', 'victim.txt=hello']);
     });
 
-    test('cut or foreign data throws with either flag and not without', () {
+    test(
+        'truncated or foreign data throws with verify or throwOnError, not without',
+        testOn: 'vm', () {
       final tar = TarEncoder().encodeBytes(Archive()
         ..add(ArchiveFile.bytes('a.txt', Uint8List(100)))
         ..add(ArchiveFile.bytes('b.txt', Uint8List(5000))));
@@ -1527,7 +1526,7 @@ void main() {
       }
     });
 
-    test('strict decoding refuses an end block cut short, as the stream does',
+    test('verify rejects truncated end block, as stream decoder does',
         () async {
       final tar = TarEncoder().encodeBytes(
           Archive()..add(ArchiveFile.bytes('a.txt', Uint8List(100))));
@@ -1546,9 +1545,11 @@ void main() {
       }
     });
 
-    test('empty input is no archive, as one byte is not, with either flag',
-        () async {
-      for (final bytes in [<int>[], <int>[0]]) {
+    test('empty or 1-byte input throws with verify or throwOnError', () async {
+      for (final bytes in [
+        <int>[],
+        <int>[0]
+      ]) {
         expect(TarDecoder().decodeBytes(bytes).files, isEmpty);
         await expectLater(
             Stream<List<int>>.value(bytes)
@@ -1567,7 +1568,7 @@ void main() {
       }
     });
 
-    test('an error thrown by the callback reaches the caller unchanged', () {
+    test('callback error is rethrown unchanged', () {
       final tar = TarEncoder().encodeBytes(Archive()
         ..add(ArchiveFile.bytes('a.txt', Uint8List(100)))
         ..add(ArchiveFile.bytes('b.txt', Uint8List(5000))));
@@ -1586,7 +1587,7 @@ void main() {
       }
     });
 
-    test('verify rejects what is not a tar', () {
+    test('verify rejects what is not a tar', testOn: 'vm', () {
       // Without a checksum check nothing tells a tar apart from an unrelated
       // file: every other header field reads as something.
       final zip = File('test/_data/tar/folder.zip').readAsBytesSync();
@@ -1608,7 +1609,7 @@ void main() {
       }
     });
 
-    test('pax header size, mtime, uid and gid records', () {
+    test('pax header size, mtime, uid and gid records', testOn: 'vm', () {
       // A pax 'size' record overrides the entry's own header field, which is
       // left at 0 in this archive. Missing it doesn't just lose the size, it
       // makes the file's content be read as the next entry's header.
@@ -1624,7 +1625,7 @@ void main() {
       expect(archive[0].groupId, equals(1717));
     });
 
-    test('a pax size is read the way libarchive reads it', () async {
+    test('pax size decodes as libarchive decodes it', () async {
       Uint8List archive(String size) {
         final records = utf8.encode(_paxRecord('size', size));
         return Uint8List.fromList([
@@ -1732,7 +1733,7 @@ void main() {
       expect(archive[0].readBytes(), equals(content));
     });
 
-    test('a v7 directory with a trailing slash reads as a directory', () async {
+    test('v7 entry with trailing slash decodes as directory', () async {
       Uint8List header(String name, int size) {
         final h = Uint8List(512);
         void put(int off, String s) =>
@@ -1774,7 +1775,7 @@ void main() {
       expect(entries, ['dir/ directory', 'dir/a.txt file']);
     });
 
-    test('pax header without storing data', () {
+    test('pax header without storing data', testOn: 'vm', () {
       // The pax header's own content has to be read even when file data is
       // being skipped, since it carries the next entry's name.
       final file = File('test/_data/tar/pax.tar');
@@ -1786,7 +1787,7 @@ void main() {
       expect(archive[1].symbolicLink, equals(_paxLongName));
     });
 
-    test('base 256 encoded header fields', () {
+    test('base 256 encoded header fields', testOn: 'vm', () {
       // GNU tar encodes values too large for the octal field in base 256.
       final decoder = TarDecoder();
       final archive = decoder.decodeBytes(
@@ -1863,27 +1864,28 @@ void main() {
 
       // Reaching the marker and sign bits of the first byte is refused
       final tooWide = ArchiveFile.bytes('a.txt', Uint8List.fromList([1]));
-      tooWide.ownerId = 1 << 62;
+      tooWide.ownerId = 4611686018427387904;
       expect(() => TarEncoder().encodeBytes(Archive()..add(tooWide)),
           throwsA(isA<ArchiveException>()));
 
       // As is anything the decoder would refuse to read back: it stops at
       // 2^53-1, the widest integer that is exact on every platform
       final unreadable = ArchiveFile.bytes('a.txt', Uint8List.fromList([1]));
-      unreadable.ownerId = 1 << 53;
+      unreadable.ownerId = 9007199254740992;
       expect(() => TarEncoder().encodeBytes(Archive()..add(unreadable)),
           throwsA(isA<ArchiveException>()));
       final widestExact = ArchiveFile.bytes('a.txt', Uint8List.fromList([1]));
-      widestExact.ownerId = (1 << 53) - 1;
-      widestExact.groupId = -(1 << 53);
+      widestExact.ownerId = (9007199254740992) - 1;
+      widestExact.groupId = -(9007199254740992);
       final exact = TarEncoder().encodeBytes(Archive()..add(widestExact));
       expect(TarDecoder().decodeBytes(exact, verify: true)[0].ownerId,
-          equals((1 << 53) - 1));
+          equals((9007199254740992) - 1));
       expect(TarDecoder().decodeBytes(exact, verify: true)[0].groupId,
-          equals(-(1 << 53)));
+          equals(-(9007199254740992)));
     });
 
-    test('an entry given as a stream is not pulled into memory to encode', () {
+    test('an entry given as a stream is not pulled into memory to encode',
+        testOn: 'vm', () {
       // Reading an entry whole fails past the size one read can return
       final data = Uint8List.fromList(List.generate(4096, (i) => i & 0xff));
       final file = ArchiveFile.stream('a.txt', _RefusesBulkRead(data));
@@ -1898,7 +1900,8 @@ void main() {
       expect(back[0].readBytes(), equals(data));
     });
 
-    test('encoding a stream entry leaves its stream where it was', () {
+    test('encoding a stream entry leaves its stream where it was', testOn: 'vm',
+        () {
       // A file output copies the stream in chunks, which used to advance it,
       // so a second encode or a read of the entry afterwards saw nothing
       final data = Uint8List.fromList(List.generate(3000, (i) => i & 0xff));
@@ -2028,7 +2031,7 @@ void main() {
       expect(back.symbolicLink, equals(target));
     });
 
-    test('a non-ASCII name and target are written as pax records', () {
+    test('non-ASCII name and link target are written as pax records', () {
       final name = 'unicode/Größe ${'é' * 80}.txt';
       const target = 'unicode/ünïcödé.txt';
       final tar = TarEncoder().encodeBytes(Archive()
@@ -2077,9 +2080,9 @@ void main() {
       expect(TarDecoder().decodeBytes(ended, verify: true).length, equals(1));
     });
 
-    test('long file name not null terminated', () async {
-      final bytes = await http.readBytes(Uri.parse(
-          'https://pub.dev/packages/firebase_messaging/versions/10.0.8.tar.gz'));
+    test('long file name not null terminated', testOn: 'vm', () {
+      final bytes = File('test/_data/tar/firebase_messaging-10.0.8.tar.gz')
+          .readAsBytesSync();
       final tarBytes = GZipDecoder().decodeBytes(bytes, verify: true);
       final archive = TarDecoder().decodeBytes(tarBytes, verify: true);
       expect(archive.length, equals(129));
@@ -2089,7 +2092,7 @@ void main() {
               'android/src/main/java/io/flutter/plugins/firebase/messaging/FlutterFirebaseMessagingBackgroundExecutor.java'));
     });
 
-    test('symlink', () {
+    test('symlink', testOn: 'vm', () {
       var file = File('test/_data/tar/symlink_tar.tar');
       final bytes = file.readAsBytesSync();
       final archive = TarDecoder().decodeBytes(bytes, verify: true);
@@ -2098,7 +2101,7 @@ void main() {
       expect(archive[1].symbolicLink, equals('b/b.txt'));
     });
 
-    test('decode test2.tar', () {
+    test('decode test2.tar', testOn: 'vm', () {
       final file = File('test/_data/test2.tar');
       final bytes = file.readAsBytesSync();
       final archive = TarDecoder().decodeBytes(bytes, verify: true);
@@ -2109,7 +2112,7 @@ void main() {
       expect(archive.length, equals(4));
     });
 
-    test('decode test2.tar.gz', () {
+    test('decode test2.tar.gz', testOn: 'vm', () {
       final file = File('test/_data/test2.tar.gz');
       var bytes = file.readAsBytesSync();
 
@@ -2165,7 +2168,7 @@ void main() {
     });
 
     for (Map<String, dynamic> t in tarTests) {
-      test('untar ${t['file']}', () {
+      test('untar ${t['file']}', testOn: 'vm', () {
         final file = File(p.join('test', t['file'] as String));
         final bytes = file.readAsBytesSync();
 

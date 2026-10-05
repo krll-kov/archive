@@ -47,7 +47,7 @@ class _ZLibEncoder extends ZLibEncoderBase {
 
   void _zlibStream(
       InputStream input, OutputStream output, int? level, int? windowBits) {
-    final wb = (windowBits ?? 15).clamp(0, 15);
+    final wb = windowBits == 8 ? 9 : windowBits ?? 15;
 
     // Compression Method and Flags
     const cm = _deflate;

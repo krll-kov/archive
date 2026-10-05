@@ -5,7 +5,7 @@ import 'package:archive/src/codecs/zstd/zstd_web.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('streaming jobs and their tail emit at most 64 KiB per piece', () async {
+  test('streaming jobs and tail send at most 64 KiB per piece', () async {
     final input = Uint8List(600001);
     var state = 1;
     for (var i = 0; i < input.length; i++) {
@@ -35,8 +35,8 @@ void main() {
     9: [236, 2451839013],
   }.entries) {
     test(
-        'contentSize matches loadDictionary streaming with a short dictionary at level ${entry.key}',
-        () async {
+        'contentSize gives loadDictionary output with 7-byte dictionary, '
+        'level ${entry.key}', () async {
       final source = Uint8List.fromList(
           List<int>.generate(16383, (i) => (i * 7 + i ~/ 23) % 11));
       final dictionary = ZstdDictionary(Uint8List(7));
@@ -66,7 +66,7 @@ void main() {
     });
   }
 
-  test('FSE fixed-point rounding retains bits beyond JS precision', () {
+  test('FSE fixed-point rounding keeps bits beyond JS precision', () {
     const roundUp = [0, 473195, 504333, 520860, 550000, 700000, 750000, 830000];
     const cases = [
       [10, 5, 1, 3],
@@ -126,7 +126,7 @@ void main() {
     22: [5814, 3822642021],
   };
   for (var level = 1; level <= 22; level++) {
-    test('encoder level $level preserves matches and entropy on web', () {
+    test('encoder level $level gives same matches and entropy on web', () {
       final encoded = ZstdEncoder().encodeBytes(input, level: level);
       if (golden.containsKey(level)) {
         expect([encoded.length, getCrc32(encoded)], golden[level]);
@@ -135,7 +135,8 @@ void main() {
           ZstdDecoder().decodeBytes(encoded, verify: true, throwOnError: true),
           input);
     });
-    test('unknown-size stream and dictionary level $level work on web', () {
+    test('stream of unknown size with dictionary at level $level works on web',
+        () {
       final dictionary = ZstdDictionary(seed);
       final held = _Held();
       final stream = ZstdChunkedEncoder(held, level: level);

@@ -31,13 +31,13 @@ void main() {
         .encodeBytes(Archive()..add(ArchiveFile.bytes('a.bin', sample))),
   };
 
-  group('codecs recognizer', () {
+  group('CodecsRecognizer', () {
     archives.forEach((format, bytes) {
       test('$format is recognised', () {
         expect(CodecsRecognizer.recognize(bytes, withZLib: true), format);
       });
 
-      test('$format is not taken for anything else', () {
+      test('$format is not recognised as any other format', () {
         final checks = <ArchiveFormat, bool Function(List<int>)>{
           ArchiveFormat.gzip: CodecsRecognizer.isGZip,
           ArchiveFormat.bzip2: CodecsRecognizer.isBZip2,
@@ -53,7 +53,7 @@ void main() {
       });
     });
 
-    test('a zstd skippable frame at the start is still zstd', () {
+    test('zstd skippable frame at start is recognised as zstd', () {
       final frame = Uint8List.fromList([
         0x50, 0x2a, 0x4d, 0x18, // skippable magic, low byte first
         4, 0, 0, 0, // the size of what it holds
@@ -64,14 +64,14 @@ void main() {
           ArchiveFormat.zstd);
     });
 
-    test('an empty zip archive is recognised', () {
+    test('empty zip archive is recognised as zip', () {
       expect(
           CodecsRecognizer.recognize(ZipEncoder().encodeBytes(Archive()),
               withZLib: true),
           ArchiveFormat.zip);
     });
 
-    test('an empty ZIP64 archive is recognised from its end record', () {
+    test('empty ZIP64 archive is recognised from end record', () {
       final bytes = Uint8List(98);
       final fields = ByteData.sublistView(bytes);
       for (final entry in {
@@ -98,8 +98,7 @@ void main() {
       }
     });
 
-    test('a tar filename beginning with ZIP64 magic does not hide its format',
-        () {
+    test('tar whose filename starts with ZIP64 magic is recognised as tar', () {
       final name = String.fromCharCodes([0x50, 0x4b, 0x06, 0x06]);
       final bytes = TarEncoder().encodeBytes(
           Archive()..add(ArchiveFile.bytes(name, Uint8List.fromList([1]))));
@@ -107,7 +106,7 @@ void main() {
       expect(CodecsRecognizer.recognize(bytes), ArchiveFormat.tar);
     });
 
-    test('the archives in the test data are recognised', () {
+    test('every archive in test data is recognised', testOn: 'vm', () {
       expect(
           CodecsRecognizer.recognize(
               File(p.join('test/_data/xz/cat.jpg.xz')).readAsBytesSync(),
@@ -130,7 +129,7 @@ void main() {
           ArchiveFormat.tar);
     });
 
-    test('what is none of them is unknown', () {
+    test('data matching no format is unknown', () {
       expect(CodecsRecognizer.recognize(Uint8List(0), withZLib: true),
           ArchiveFormat.unknown);
       expect(
@@ -141,7 +140,7 @@ void main() {
           ArchiveFormat.unknown);
     });
 
-    test('zlib needs a deflate block header that could be real', () {
+    test('zlib is not recognised without valid deflate block header', () {
       // A git ref passes the two byte check. Its "0" sets the preset
       // dictionary bit
       expect(CodecsRecognizer.isZLib('80cc39b4'.codeUnits), isFalse);
@@ -160,7 +159,7 @@ void main() {
       }
     });
 
-    test('reserved header bits and a missing bzip2 block are refused', () {
+    test('reserved header bits or missing bzip2 block are not recognised', () {
       final gzip = Uint8List.fromList(archives[ArchiveFormat.gzip]!)
         ..[3] |= 0x20;
       expect(CodecsRecognizer.isGZip(gzip), isFalse);
@@ -177,7 +176,7 @@ void main() {
       expect(CodecsRecognizer.isBZip2(BZip2Encoder().encodeBytes([])), isTrue);
     });
 
-    test('a header shorter than the check needs is not a match', () {
+    test('header shorter than check needs is not recognised', () {
       final xz = archives[ArchiveFormat.xz]!;
       expect(CodecsRecognizer.isXZ(Uint8List.sublistView(xz, 0, 5)), isFalse);
       final tar = archives[ArchiveFormat.tar]!;
@@ -185,7 +184,7 @@ void main() {
           CodecsRecognizer.isTar(Uint8List.sublistView(tar, 0, 262)), isFalse);
     });
 
-    test('six bytes decide every format but tar', () {
+    test('first 6 bytes recognise every format except tar', () {
       archives.forEach((format, bytes) {
         if (format == ArchiveFormat.tar) {
           return;
@@ -196,7 +195,8 @@ void main() {
       });
     });
 
-    test('a ustar tar is recognised from its magic, without the checksum', () {
+    test('ustar tar is recognised from magic without checksum', testOn: 'vm',
+        () {
       // What this package writes carries the ustar magic as well, and a tar
       // from elsewhere shows the short path for other writers
       final tar = File(p.join('test/_data/example.tar')).readAsBytesSync();
@@ -206,7 +206,7 @@ void main() {
           CodecsRecognizer.recognize(head, withZLib: true), ArchiveFormat.tar);
     });
 
-    test('a tar this package wrote is recognised from its magic', () {
+    test('tar written by TarEncoder is recognised from magic', () {
       final tar = archives[ArchiveFormat.tar]!;
       for (final length in [263, 300, 511, 512]) {
         final head = Uint8List.sublistView(tar, 0, length);
@@ -220,14 +220,14 @@ void main() {
           ArchiveFormat.tar);
     });
 
-    test('a damaged header does not pass the checksum', () {
+    test('tar with damaged header checksum is not recognised', () {
       final broken = Uint8List.fromList(archives[ArchiveFormat.tar]!)
         ..[100] ^= 0xff;
       expect(CodecsRecognizer.isTar(Uint8List.sublistView(broken, 0, 512)),
           isFalse);
     });
 
-    test('every format names the extension it is written with', () {
+    test('every format reports its file extension', () {
       expect(
           CodecsRecognizer.extensionOf(ArchiveFormat.zstd).toString(), 'zst');
       expect(CodecsRecognizer.extensionOf(ArchiveFormat.unknown), isNull);

@@ -24,10 +24,10 @@ Uint8List _chunked(List<int> source, ZstdCodec codec, {int piece = 997}) {
 }
 
 void main() {
-  group('zstd level at its edges', () {
+  group('zstd level limits', () {
     final source = _payload(200000);
 
-    test('level zero is the reference default, not the lowest level', () {
+    test('level 0 means reference default 3, not lowest level', () {
       // Data the two levels part on, since most inputs give the same bytes
       final parting = File('test/_data/cat.jpg').readAsBytesSync();
       for (final data in [source, parting]) {
@@ -38,13 +38,13 @@ void main() {
           isNot(ZstdEncoder(level: 1).encodeBytes(parting)));
     }, testOn: 'vm');
 
-    test('a level above the table is clamped to it', () {
+    test('level above 22 is clamped to 22', () {
       final top = ZstdEncoder(level: 22).encodeBytes(source);
       expect(ZstdEncoder(level: 23).encodeBytes(source), top);
       expect(ZstdEncoder(level: 1000).encodeBytes(source), top);
     });
 
-    test('a negative level is refused rather than read as level one', () {
+    test('negative level throws instead of becoming level 1', () {
       expect(() => ZstdEncoder(level: -1).encodeBytes(source),
           throwsA(isA<ArgumentError>()));
       expect(() => ZstdEncoder().encodeBytes(source, level: -3),
@@ -58,7 +58,7 @@ void main() {
           throwsA(isA<ArgumentError>()));
     });
 
-    test('every level round trips what it wrote', () {
+    test('output of every level decodes back', () {
       for (var level = 0; level <= 22; level++) {
         final frame = ZstdEncoder(level: level).encodeBytes(source);
         expect(
@@ -69,8 +69,8 @@ void main() {
     });
   });
 
-  group('zstd with nothing to compress', () {
-    test('an empty input writes a frame that reads back empty', () {
+  group('zstd with empty input', () {
+    test('empty input writes frame that decodes to empty', () {
       for (var level = 0; level <= 22; level++) {
         final frame = ZstdEncoder(level: level).encodeBytes(Uint8List(0));
         expect(frame, isNotEmpty, reason: 'level $level');
@@ -83,13 +83,13 @@ void main() {
       }
     });
 
-    test('an empty stream writes what an empty buffer writes', () {
+    test('empty stream output equals empty buffer output', () {
       final output = OutputMemoryStream();
       ZstdEncoder().encodeStream(InputMemoryStream(Uint8List(0)), output);
       expect(output.getBytes(), ZstdEncoder().encodeBytes(Uint8List(0)));
     });
 
-    test('no chunk and one empty chunk write the same frame', () {
+    test('no chunk and 1 empty chunk give same frame', () {
       const codec = ZstdCodec();
       final none = _chunked(<int>[], codec);
       expect(_chunked(<int>[], codec, piece: 1), none);
@@ -97,7 +97,7 @@ void main() {
           isEmpty);
     });
 
-    test('empty chunks between the data change nothing', () {
+    test('empty chunks between data do not change output', () {
       final source = _payload(5000);
       const codec = ZstdCodec();
       final out = BytesBuilder();
@@ -113,7 +113,7 @@ void main() {
       expect(out.toBytes(), _chunked(source, codec, piece: 500));
     });
 
-    test('an empty dictionary is the same as none', () {
+    test('empty dictionary gives same output as none', () {
       final source = _payload(4000);
       final empty = ZstdDictionary(Uint8List(0));
       expect(empty.id, 0);
@@ -125,7 +125,7 @@ void main() {
           source);
     });
 
-    test('an empty archive is not a frame', () {
+    test('empty archive throws', () {
       expect(() => ZstdDecoder().decodeBytes(Uint8List(0), throwOnError: true),
           throwsA(isA<ArchiveException>()));
       expect(
@@ -137,8 +137,8 @@ void main() {
     });
   });
 
-  group('zstd settings that cannot be honoured', () {
-    test('a window limit below the smallest window', () {
+  group('zstd invalid settings', () {
+    test('window limit below smallest window throws', () {
       for (final limit in [0, 1, 1023]) {
         expect(() => ZstdDecoder(windowSizeLimit: limit),
             throwsA(isA<ArgumentError>()),
@@ -149,7 +149,7 @@ void main() {
 
     // The converter is const and cannot check the limit. The sink checks it
     // when the conversion starts
-    test('a window limit below the smallest window on the converter', () {
+    test('window limit below smallest window throws on converter', () {
       ByteConversionSink start(int limit) =>
           ZstdDecoderConverter(windowSizeLimit: limit)
               .startChunkedConversion(ByteConversionSink.withCallback((_) {}));
@@ -160,7 +160,7 @@ void main() {
       expect(start(1024), isA<ByteConversionSink>());
     });
 
-    test('a worker count or a budget of zero', () {
+    test('worker count or budget of 0 throws', () {
       final source = _payload(1 << 20);
       expect(
           () => ZstdEncoder().encodeBytes(source,
@@ -184,8 +184,7 @@ void main() {
           throwsA(isA<ArgumentError>()));
     });
 
-    test('a job size and an overlap of zero are the defaults, not a refusal',
-        () {
+    test('job size and overlap of 0 mean defaults, no error', () {
       final source = _payload(1 << 20);
       expect(
           () => ZstdEncoder().encodeBytes(source,

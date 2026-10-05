@@ -85,7 +85,7 @@ void main() {
     for (final MapEntry(key: name, value: (packed, decode))
         in callbackDecoders.entries) {
       for (final flags in ['default', 'throwOnError', 'verify']) {
-        test('$name finishes when progress throws, with $flags', () {
+        test('$name finishes when onProgress throws, with $flags', () {
           final failure = StateError('progress failed');
           final errors = <Object>[];
           final output = OutputMemoryStream();
@@ -105,7 +105,7 @@ void main() {
     }
 
     for (final synchronous in [false, true]) {
-      test('closes output when final progress throws (sync: $synchronous)',
+      test('closes output when last onProgress throws, sync: $synchronous',
           () async {
         final output = _CloseTrackingOutput();
         final failure = StateError('progress failed');
@@ -127,7 +127,7 @@ void main() {
 
     for (final MapEntry(key: name, value: (packed, decode))
         in decoders.entries) {
-      test('$name reports as it decodes', () {
+      test('$name reports progress during decode', () {
         final input = InputMemoryStream(packed);
         final total = input.length;
         final seen = <int>[];
@@ -152,7 +152,7 @@ void main() {
               : false);
     }
 
-    test('passes every write through', () {
+    test('passes every write to output', () {
       final seen = <int>[];
       final out =
           ProgressOutputStream(OutputMemoryStream(), seen.add, interval: 1);
@@ -175,7 +175,7 @@ void main() {
       expect(seen, [1, 3, 7, 15, 17, 19, 24, 27]);
     });
 
-    test('reports the remainder on flush and close only once', () {
+    test('reports remainder once on flush and close', () {
       final seen = <int>[];
       final out =
           ProgressOutputStream(OutputMemoryStream(), seen.add, interval: 100);
@@ -187,7 +187,7 @@ void main() {
       expect(seen, [250, 280]);
     });
 
-    test('a stream written through reports as it is copied', () {
+    test('writeStream reports progress during copy', () {
       final seen = <int>[];
       final out = ProgressOutputStream(OutputMemoryStream(), seen.add);
       out.writeStream(InputMemoryStream(data));
@@ -209,7 +209,7 @@ void main() {
           .single,
     };
     for (final MapEntry(key: name, value: entry) in stored.entries) {
-      test('a $name entry reports as it is written', () {
+      test('$name entry reports progress during write', () {
         final seen = <int>[];
         final out = ProgressOutputStream(OutputMemoryStream(), seen.add);
         entry().writeContent(out);

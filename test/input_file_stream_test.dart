@@ -1,3 +1,6 @@
+@TestOn('vm')
+library;
+
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -22,8 +25,21 @@ void main() {
       expect(fs.length, testData.length);
     });
 
+    test('FileBuffer read count near 2^63 stops at file end', () {
+      final buffer = FileBuffer(FileHandle(testPath), bufferSize: 8);
+      addTearDown(buffer.closeSync);
+      final bytes = Uint8List(testData.length + 2)
+        ..fillRange(0, testData.length + 2, 255);
+      expect(buffer.readInto(1, bytes, 1, 0x7fffffffffffffff),
+          testData.length - 1);
+      expect(bytes.sublist(1, testData.length), testData.sublist(1));
+      expect(bytes[0], 255);
+      expect(bytes[testData.length], 255);
+      expect(buffer.readBytes(1, 0x7fffffffffffffff), testData.sublist(1));
+    }, testOn: 'vm');
+
     for (final count in [8, 16, 127]) {
-      test('readInto completes short file reads for $count bytes', () {
+      test('readInto retries short file reads until $count bytes arrive', () {
         final input = InputFileStream.withFileBuffer(
             FileBuffer(_ShortReadHandle(testPath), bufferSize: 8));
         addTearDown(input.closeSync);
@@ -44,7 +60,7 @@ void main() {
       });
     }
 
-    test('toUint8List and readBytes complete short file reads', () {
+    test('toUint8List and readBytes retry short file reads', () {
       final input = InputFileStream.withFileBuffer(
           FileBuffer(_ShortReadHandle(testPath), bufferSize: 8));
       addTearDown(input.closeSync);
@@ -52,7 +68,7 @@ void main() {
       expect(input.readBytes(6).toUint8List(), testData.sublist(0, 6));
     });
 
-    test('readInto stays within a subset and stops at its end', () {
+    test('readInto on subset stops at subset end', () {
       final file = InputFileStream(testPath, bufferSize: 2);
       addTearDown(file.closeSync);
       final input = file.subset(position: 10, length: 3);
@@ -220,7 +236,7 @@ void main() {
       expect(fs.readUint32(), 116 | (117 << 8) | (118 << 16) | (119 << 24));
     });
 
-    test('reads multi-byte values in its own byte order', () {
+    test('reads multi-byte values in stream byte order', () {
       final memory =
           InputMemoryStream(testData, byteOrder: ByteOrder.bigEndian);
       final streams = [

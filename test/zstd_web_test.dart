@@ -174,7 +174,7 @@ const _dictionaries = <String>[
 
 void main() {
   for (final count in [0, 3, 4, 6, 8]) {
-    test('four Huffman streams validate a literal count of $count', () {
+    test('4 Huffman streams check literal count of $count', () {
       final segment = (count + 3) >> 2;
       final tail = count - 3 * segment;
       // Each zero literal consumes one bit from a two-symbol Huffman table
@@ -219,7 +219,7 @@ void main() {
   }
 
   for (final marker in [0, 1, 2, 4, 128, 255]) {
-    test('four Huffman streams validate an empty tail marker $marker', () {
+    test('4 Huffman streams check empty tail marker $marker', () {
       // The first three streams emit two literals each, leaving the fourth empty
       final frame = Uint8List.fromList([
         40,
@@ -261,7 +261,9 @@ void main() {
     });
   }
 
-  test('streamed matches survive wrapping a 1 KiB window on every backend', () {
+  test(
+      'streamed matches stay correct after 1 KiB window wraps on every platform',
+      () {
     final encoded = base64Decode(
         'KLUv/QQAZAAAKGFiY2RlAQD4URUtTAAAEGVhAQD7K4AFTAAAEGRlAQD7K4AF'
         'TAAAEGNkAQD7K4AFTAAAEGJjAQD7K4AFTAAAEGFiAQD7K4AFTAAAEGVhAQD7'
@@ -277,7 +279,7 @@ void main() {
     expect(output.getBytes(), source);
   });
 
-  test('highest bit handles every exact integer width', () {
+  test('highest bit works for every exact integer width', () {
     const native = bool.fromEnvironment('dart.library.isolate');
     final maximumBit = native ? 62 : 52;
     var power = 1;
@@ -313,7 +315,7 @@ void main() {
     });
   }
 
-  test('a damaged byte is caught by the checksum', () {
+  test('damaged byte throws on checksum mismatch', () {
     final bytes = Uint8List.fromList(base64.decode(_vectors[5][1] as String));
     bytes[bytes.length - 1] ^= 0x20;
     expect(
@@ -322,7 +324,7 @@ void main() {
         throwsA(isA<ArchiveChecksumException>()));
   });
 
-  test('XXH64 matches the reference on this platform', () {
+  test('XXH64 matches reference on this platform', () {
     final data = Uint8List(200);
     for (var i = 0; i < data.length; i++) {
       data[i] = (i * 31 + 7) & 0xff;
@@ -333,7 +335,7 @@ void main() {
     expect(hash.digestLow, 0x77b4b6fb);
   });
 
-  test('XXH64 takes a seed outside 32 bits on this platform', () {
+  test('XXH64 accepts seed above 32 bits on this platform', () {
     final data = Uint8List(100);
     for (var i = 0; i < data.length; i++) {
       data[i] = (i * 31) & 0xff;

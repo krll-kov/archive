@@ -34,21 +34,29 @@ class TarFileEncoder {
     }
 
     // Encode a directory from disk to disk, no memory
-    open(tarPath);
-    await addDirectory(Directory(dirPath),
-        followLinks: followLinks, filter: filter);
-    await close();
-
-    if (compression == gzip) {
-      final input = InputFileStream(tarPath);
-      final output = OutputFileStream(tgzPath);
+    try {
+      open(tarPath);
       try {
-        GZipEncoder().encodeStream(input, output, level: level ?? 6);
+        await addDirectory(Directory(dirPath),
+            followLinks: followLinks, filter: filter);
       } finally {
-        await input.close();
-        await output.close();
-        await tempDir!.delete(recursive: true);
+        await close();
       }
+
+      if (compression == gzip) {
+        InputFileStream? input;
+        OutputFileStream? output;
+        try {
+          input = InputFileStream(tarPath);
+          output = OutputFileStream(tgzPath);
+          GZipEncoder().encodeStream(input, output, level: level ?? 6);
+        } finally {
+          await input?.close();
+          await output?.close();
+        }
+      }
+    } finally {
+      await tempDir?.delete(recursive: true);
     }
   }
 

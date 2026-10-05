@@ -79,7 +79,7 @@ void _roundTripSymbols(
 
 void main() {
   group('zstd FSE encoder', () {
-    test('a skewed distribution round trips', () {
+    test('skewed distribution decodes back', () {
       final counts = Uint32List(36);
       counts[0] = 4000;
       counts[1] = 900;
@@ -90,7 +90,7 @@ void main() {
       _roundTripTable(counts, 35, 9);
     });
 
-    test('a flat distribution round trips', () {
+    test('flat distribution decodes back', () {
       final counts = Uint32List(52);
       for (var s = 0; s < 52; s++) {
         counts[s] = 100;
@@ -98,7 +98,7 @@ void main() {
       _roundTripTable(counts, 51, 9);
     });
 
-    test('long runs of unused symbols round trip', () {
+    test('long runs of unused symbols decode back', () {
       final counts = Uint32List(52);
       counts[0] = 500;
       counts[1] = 400;
@@ -106,21 +106,21 @@ void main() {
       _roundTripTable(counts, 51, 9);
     });
 
-    test('two symbols round trip', () {
+    test('2 symbols decode back', () {
       final counts = Uint32List(4);
       counts[1] = 700;
       counts[3] = 3;
       _roundTripTable(counts, 3, 6);
     });
 
-    test('one symbol taking everything is refused', () {
+    test('single symbol with all probability is refused', () {
       final counts = Uint32List(8);
       counts[5] = 1000;
       final normalized = Int16List(8);
       expect(zstdNormalizeCount(normalized, counts, 1000, 7, 6), isFalse);
     });
 
-    test('random distributions round trip, table and symbols', () {
+    test('random distributions decode back, table and symbols', () {
       final random = Random(20260908);
       for (var round = 0; round < 200; round++) {
         final maxSymbol = 1 + random.nextInt(51);

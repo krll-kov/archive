@@ -6,12 +6,12 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
-  test('bin/tar.dart list test2.tar.gz', () {
+  test('bin/tar.dart list test2.tar.gz', testOn: 'vm', () {
     // Test that 'tar --list' does not throw.
     listTarFiles('test/_data/test2.tar.gz');
   });
 
-  test('bin/tar.dart list test2.tar.gz2', () {
+  test('bin/tar.dart list test2.tar.gz2', testOn: 'vm', () {
     // Test that 'tar --list' does not throw.
     listTarFiles('test/_data/test2.tar.bz2');
   });
@@ -24,12 +24,12 @@ void main() {
     return lines;
   }
 
-  test('list reads a plain tar as well', () {
+  test('list reads uncompressed tar', testOn: 'vm', () {
     expect(printed(() => listTarFiles('test/_data/test2.tar')),
         printed(() => listTarFiles('test/_data/test2.tar.gz')));
   });
 
-  test('list and extract leave no temporary folder', () {
+  test('list and extract leave no temporary folder', testOn: 'vm', () {
     final temp = Directory.systemTemp.createTempSync('commands_temp');
     final out = Directory.systemTemp.createTempSync('commands_out');
     addTearDown(() {
@@ -46,7 +46,8 @@ void main() {
     expect(temp.listSync(), isEmpty);
   });
 
-  test('extract of a damaged tar.gz throws and leaves no temporary folder', () {
+  test('extract of damaged tar.gz throws and leaves no temporary folder',
+      testOn: 'vm', () {
     final temp = Directory.systemTemp.createTempSync('commands_temp');
     final out = Directory.systemTemp.createTempSync('commands_out');
     addTearDown(() {
@@ -64,7 +65,7 @@ void main() {
     expect(temp.listSync(), isEmpty);
   });
 
-  test('tar extract', () {
+  test('tar extract', testOn: 'vm', () {
     final dir = Directory.systemTemp.createTempSync('foo');
 
     try {

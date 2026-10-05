@@ -8,7 +8,7 @@ import '_test_util.dart';
 
 void main() {
   group('OutputFileStream', () {
-    test('InputFileStream/OutputFileStream', () async {
+    test('InputFileStream/OutputFileStream', testOn: 'vm', () async {
       final input = InputFileStream('test/_data/folder.zip')..open();
       final output = OutputFileStream('$testOutputPath/folder.zip')..open();
 
@@ -29,7 +29,7 @@ void main() {
       }
     });
 
-    test('InputMemoryStream/OutputFileStream', () async {
+    test('InputMemoryStream/OutputFileStream', testOn: 'vm', () async {
       final bytes = List<int>.generate(256, (index) => index);
       final input = InputMemoryStream.fromList(bytes)..open();
       final output = OutputFileStream('$testOutputPath/test.bin')..open();
@@ -50,7 +50,7 @@ void main() {
       }
     });
 
-    test('InputFileStream/OutputMemoryStream', () async {
+    test('InputFileStream/OutputMemoryStream', testOn: 'vm', () async {
       final input = InputFileStream('test/_data/folder.zip')..open();
       final output = OutputMemoryStream()..open();
 
@@ -73,7 +73,7 @@ void main() {
 
   // A RAM file once read start and end as file positions rather than indices
   // into the buffer, which only a range starting past zero shows
-  group('OutputFileStream over a RAM file', () {
+  group('OutputFileStream over RamFileHandle', () {
     Uint8List readAll(RamFileHandle handle) {
       final out = Uint8List(handle.length);
       handle.position = 0;
@@ -81,7 +81,7 @@ void main() {
       return out;
     }
 
-    test('writeRange past the buffer keeps the range it was given', () {
+    test('writeRange larger than buffer writes exact range', () {
       final handle = RamFileHandle.asWritableRamBuffer();
       final out = OutputFileStream.toRamFile(handle, bufferSize: 16);
       final bytes = Uint8List.fromList(List.generate(100, (i) => i));
@@ -90,7 +90,7 @@ void main() {
       expect(readAll(handle), Uint8List.sublistView(bytes, 10));
     });
 
-    test('writeBytes of a view writes the bytes of the view', () {
+    test('writeBytes of view writes only bytes of view', () {
       final handle = RamFileHandle.asWritableRamBuffer();
       final out = OutputFileStream.toRamFile(handle, bufferSize: 16);
       final bytes = Uint8List.fromList(List.generate(100, (i) => i));
@@ -106,7 +106,7 @@ void main() {
       ]);
     });
 
-    test('zstd decodeStream into it is byte exact', () {
+    test('zstd decodeStream into it writes exact bytes', () {
       // Three megabytes, so the window flushes in ranges that start past zero
       var seed = 1;
       final data = Uint8List.fromList(List.generate(3 << 20, (_) {

@@ -161,8 +161,7 @@ class ZstdEncoderConverter extends ChunkedConverter {
     }
     return archiveStreamErrors(
         stream,
-        (Stream<List<int>> source) => subscribedOnListen(
-            source,
+        (Stream<List<int>> source) => subscribedOnListen(source,
             (Stream<List<int>> source) => _bindMultithread(source, options)));
   }
 

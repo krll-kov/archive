@@ -38,7 +38,7 @@ void main() {
       200000,
     ];
     for (final size in sizes) {
-      test('$size bytes come back byte for byte', () {
+      test('$size bytes decode back unchanged', () {
         final source = _sample(size);
         final archive = XZEncoder().encodeBytes(source);
         expect(
@@ -48,7 +48,7 @@ void main() {
     }
 
     for (final check in XZCheck.values) {
-      test('a $check archive of 1000 bytes reads back', () {
+      test('$check archive of 1000 bytes decodes back', () {
         final source = _sample(1000);
         final archive = XZEncoder().encodeBytes(source, check: check);
         expect(
@@ -58,7 +58,7 @@ void main() {
     }
 
     for (final check in XZCheck.values) {
-      test('a $check archive is the same in a big endian output', () {
+      test('$check archive is same in big-endian output', () {
         final source = _sample(1000);
         final expected = XZEncoder().encodeBytes(source, check: check);
         final output = OutputMemoryStream(byteOrder: ByteOrder.bigEndian);
@@ -69,7 +69,7 @@ void main() {
       });
     }
 
-    test('an archive written behind other bytes is the same archive', () {
+    test('archive written after other bytes is unchanged', () {
       final source = _sample(1001);
       final expected = XZEncoder().encodeBytes(source);
       final output = OutputMemoryStream()..writeBytes([1, 2, 3]);
@@ -77,7 +77,7 @@ void main() {
       expect(Uint8List.sublistView(output.getBytes(), 3), expected);
     });
 
-    test('encodeStream reads the input one chunk at a time', () {
+    test('encodeStream reads input chunk by chunk', () {
       final source = _sample(200000);
       for (final check in XZCheck.values) {
         final expected = XZEncoder().encodeBytes(source, check: check);
@@ -107,7 +107,7 @@ void main() {
     }
 
     for (final size in [0, 6, 1000, 65535, 65536, 65537, 200000]) {
-      test('$size bytes give the archive the whole input would', () {
+      test('$size bytes in pieces give same archive as whole input', () {
         final source = _sample(size);
         // The pieces the input arrives in must not reach the archive
         final whole = XZEncoder().encodeBytes(source);
@@ -123,7 +123,7 @@ void main() {
       XZCheck.crc64,
       XZCheck.sha256
     ]) {
-      test('a $check archive reads back', () {
+      test('$check archive decodes back', () {
         final source = _sample(5000);
         final archive = encode(source, 700, check: check);
         expect(
@@ -132,7 +132,7 @@ void main() {
       });
     }
 
-    test('a SHA-256 archive is the one XZEncoder writes', () {
+    test('SHA-256 archive equals XZEncoder output', () {
       final source = _sample(200000);
       final whole = XZEncoder().encodeBytes(source, check: XZCheck.sha256);
       for (final piece in [1, 7, 4096, 65536, source.length + 1]) {
@@ -146,7 +146,7 @@ void main() {
       expect(held.bytes, whole);
     });
 
-    test('the stream decoder with workers reads what this writes', () async {
+    test('threaded stream decoder decodes this output', () async {
       // Without isolates, on the web, the same options fall back to one thread
       final source = _sample(300000);
       final decoded =
@@ -159,7 +159,7 @@ void main() {
       expect(decoded, source);
     });
 
-    test('any sizes and any cuts give an archive that reads back', () {
+    test('any input size and piece size give archive that decodes back', () {
       final random = Random(20260911);
       for (var round = 0; round < 60; round++) {
         final size = random.nextInt(200000);
@@ -184,7 +184,7 @@ void main() {
       }
     });
 
-    test('a Stream encodes and decodes back through the two converters',
+    test('Stream encodes and decodes back through xzCodec converters',
         () async {
       final source = _sample(300000);
       final pieces = <List<int>>[];

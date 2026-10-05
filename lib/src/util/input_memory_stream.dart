@@ -16,6 +16,7 @@ class InputMemoryStream extends InputStream {
       {super.byteOrder = ByteOrder.littleEndian, int? offset, int? length})
       : _position = 0 {
     offset ??= 0;
+    RangeError.checkNotNegative(offset, 'offset');
     length ??= bytes.length - offset;
     if (length > bytes.length - offset) {
       length = bytes.length - offset;
@@ -88,15 +89,25 @@ class InputMemoryStream extends InputStream {
   /// Rewind the read head of the stream by the given number of bytes.
   @override
   void rewind([int length = 1]) {
-    _position -= length;
-    _position = _position.clamp(0, _length);
+    if (length >= _position) {
+      _position = 0;
+    } else if (length <= _position - _length) {
+      _position = _length;
+    } else {
+      _position -= length;
+    }
   }
 
   /// Move the read position by [count] bytes.
   @override
   void skip(int count) {
-    _position += count;
-    _position = _position.clamp(0, _length);
+    if (count >= _length - _position) {
+      _position = _length;
+    } else if (count <= -_position) {
+      _position = 0;
+    } else {
+      _position += count;
+    }
   }
 
   /// Access the buffer relative from the current position.
@@ -128,7 +139,7 @@ class InputMemoryStream extends InputStream {
   @override
   Uint8List? viewBytes(int count) {
     final source = buffer;
-    if (source == null || _position + count > source.length) {
+    if (source == null || count > source.length - _position) {
       return null;
     }
     final view = Uint8List.sublistView(source, _position, _position + count);
@@ -143,7 +154,7 @@ class InputMemoryStream extends InputStream {
       return 0;
     }
     var got = count;
-    if (_position + got > source.length) {
+    if (got > source.length - _position) {
       got = source.length - _position;
     }
     if (got <= 0) {
@@ -164,6 +175,9 @@ class InputMemoryStream extends InputStream {
       len = buffer!.length - _position;
     }
 
+    if (_position < 0) {
+      throw RangeError.range(_position, 0, buffer!.length, 'position');
+    }
     final bytes =
         Uint8List.view(buffer!.buffer, buffer!.offsetInBytes + _position, len);
 

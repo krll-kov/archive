@@ -14,7 +14,8 @@ Uint8List _source(int length, int seed) {
   final bytes = Uint8List(length);
   var state = seed;
   for (var i = 0; i < length; i++) {
-    state = (state * 1103515245 + 12345) & 0x7fffffff;
+    state =
+        (state * 20077 + state * 16838 % 0x8000 * 0x10000 + 12345) % 0x80000000;
     bytes[i] = (state >> 16) % 5 == 0 ? 0x41 : (state >> 8) & 0xff;
   }
   return bytes;
@@ -48,13 +49,13 @@ Uint8List _zip(List<ArchiveFile> entries,
 
 void main() {
   group('zip chunked encoder', () {
-    test('with the sizes in front it writes what one archive writes', () {
+    test('with sizes in local header output equals ZipEncoder.encodeBytes', () {
       final held = OutputMemoryStream();
       ZipEncoder().encodeStream(_archiveOf(_entries()), held);
       expect(_zip(_entries(), streamed: false), held.getBytes());
     });
 
-    test('what it writes reads back', () {
+    test('output decodes back', () {
       // The encoder reads an entry's content, so what it should be has to be
       // held before it goes in
       final want = _source(70000, 3);
@@ -63,13 +64,13 @@ void main() {
       expect(back.files[1].content, want);
     });
 
-    test('an empty archive is still an archive', () {
+    test('empty archive writes valid zip', () {
       final held = _Held();
       ZipChunkedEncoder(held).close();
       expect(ZipDecoder().decodeBytes(held.bytes).files, isEmpty);
     });
 
-    test('a stored entry above 1 MiB is written a step at a time', () {
+    test('stored entry above 1 MiB is written in steps', () {
       final data = _source(3 << 20, 9);
       for (final streamed in [false, true]) {
         final held = _Held();
@@ -92,13 +93,13 @@ void main() {
       }
     });
 
-    test('adding after close is refused', () {
+    test('add after close throws StateError', () {
       final encoder = ZipChunkedEncoder(_Held())..close();
       expect(() => encoder.add(ArchiveFile.string('a', 'b')),
           throwsA(isA<StateError>()));
     });
 
-    test('the bytes go out as the entries are added', () {
+    test('bytes reach sink as entries are added', testOn: 'vm', () {
       final held = _Held();
       final encoder = ZipChunkedEncoder(held);
       expect(held.pieces, 0);
@@ -110,7 +111,8 @@ void main() {
       encoder.close();
     });
 
-    test('with autoClose off a file entry goes into a second archive', () {
+    test('with autoClose false same file entry encodes into second archive',
+        testOn: 'vm', () {
       final dir = Directory.systemTemp.createTempSync('zip_reuse');
       addTearDown(() => dir.deleteSync(recursive: true));
       final want = _source(70000, 13);
@@ -130,8 +132,8 @@ void main() {
       }
     });
 
-    test('a large zstd, xz or bzip2 entry is read from its file once',
-        testOn: 'vm', () async {
+    test('large zstd, xz or bzip2 entry reads its file only once', testOn: 'vm',
+        () async {
       final dir = Directory.systemTemp.createTempSync('zip_read_once');
       addTearDown(() => dir.deleteSync(recursive: true));
       final want = _source(3 << 20, 17);
@@ -159,10 +161,9 @@ void main() {
     });
   });
 
-  group('zip with the sizes behind the data, which is the default', () {
+  group('zip with sizes in data descriptor (default)', () {
     for (final useAddLevel in [false, true]) {
-      test('the ${useAddLevel ? 'add' : 'entry'} level override is respected',
-          () {
+      test('${useAddLevel ? 'add' : 'entry'} level override is respected', () {
         Uint8List payload(bool streamed) {
           final file = ArchiveFile.bytes('a', Uint8List(128 * 1024))
             ..compressionLevel = useAddLevel ? null : 0;
@@ -187,7 +188,8 @@ void main() {
     // Deflate grows data that does not compress. 4293656835 bytes is the
     // largest entry whose worst case still fits 32 bits. One byte more is
     // written the way Info-ZIP writes a zip64 entry to a pipe
-    test('an entry deflate may grow past 4 GB is written with zip64', () {
+    test('entry that deflate may grow past 4 GB is written with zip64',
+        testOn: 'vm', () {
       ByteData written(int size) {
         final output = OutputMemoryStream();
         ZipEncoder(streamed: true)
@@ -218,7 +220,7 @@ void main() {
     });
 
     // An entry over 4 GB is streamed too, not held in memory
-    test('an entry over 4 GB is streamed with zip64', () {
+    test('entry over 4 GB is streamed with zip64', testOn: 'vm', () {
       final output = OutputMemoryStream();
       final encoder = ZipEncoder(streamed: true)..startEncode(output);
       final body = encoder.addHeader(
@@ -246,7 +248,7 @@ void main() {
       expect(view.getUint64(zip64 + 4, Endian.little), 5000000000);
     });
 
-    test('it emits before the compression pass reads an entire entry', () {
+    test('encoder sends first bytes before compression reads whole entry', () {
       final bytes = _source(1024 * 1024, 17);
       final input = _ObservedInput(bytes);
       final output = _ObservedOutput(input);
@@ -258,7 +260,7 @@ void main() {
       expect(output.firstRead!, lessThan(2 * bytes.length));
     });
 
-    test('a streamed entry is read once', () {
+    test('streamed entry is read once', testOn: 'vm', () {
       final bytes = _source(1024 * 1024, 17);
       final input = _ObservedInput(bytes);
       final output = _Held();
@@ -270,7 +272,7 @@ void main() {
       expect(back.files.single.content, bytes);
     });
 
-    test('an entry without content is a valid empty file', () {
+    test('entry without content decodes as empty file', () {
       final bytes = _zip([ArchiveFile.noData('empty')]);
       final archive = ZipDecoder().decodeBytes(bytes);
       final file = archive.files.single.rawContent! as ZipFile;
@@ -281,14 +283,14 @@ void main() {
       expect(archive.files.single.content, isEmpty);
     });
 
-    test('what it writes reads back', () {
+    test('output decodes back', () {
       final want = _source(70000, 3);
       final back = ZipDecoder().decodeBytes(_zip(_entries()), verify: true);
       expect(back.files.map((f) => f.name), _entries().map((e) => e.name));
       expect(back.files[1].content, want);
     });
 
-    test('the central directory carries bit 3 as well', () {
+    test('central directory sets bit 3 like local header', () {
       // A reader that compares the two headers, 7-zip among them, calls the
       // pair broken when only one of them says the sizes follow the data
       final bytes = _zip([ArchiveFile.bytes('a.bin', _source(60000, 7))]);
@@ -303,7 +305,7 @@ void main() {
       expect(bytes[6] & 0x08, 0x08, reason: 'the local header too');
     });
 
-    test('the local header defers the check and the sizes', () {
+    test('local header has CRC and sizes set to 0 with bit 3', () {
       final bytes = _zip([ArchiveFile.bytes('a.bin', _source(60000, 7))]);
       // General purpose bit 3, then zeros where the check and sizes go
       expect(bytes[6] & 0x08, 0x08);
@@ -312,7 +314,8 @@ void main() {
       }
     });
 
-    test('an entry is not held whole', () async {
+    test('large entry is written in many pieces, not in one', testOn: 'vm',
+        () async {
       final directory = await Directory.systemTemp.createTemp('zip_stream');
       try {
         final path = '${directory.path}/big.bin';
@@ -338,7 +341,7 @@ void main() {
   });
 
   group('zip codec', () {
-    test('entries transform into an archive', () async {
+    test('entries transform into archive equal to ZipEncoder output', () async {
       final bytes = await Stream.fromIterable(_entries())
           .transform(zipCodec.encoder)
           .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
@@ -347,7 +350,7 @@ void main() {
           _entries().length);
     });
 
-    test('a source that goes silent can be cancelled and is let go', () async {
+    test('cancel of encoder over silent source releases source', () async {
       // Parked waiting for an entry that never comes, which a cancel used to
       // wait on for good
       final source = StreamController<ArchiveFile>();
@@ -366,8 +369,8 @@ void main() {
 
     for (final streamed in [true, false]) {
       test(
-          'streamed $streamed: a source that fails ends the archive with '
-          'that error', () async {
+          'streamed $streamed: source error ends archive stream with same '
+          'error', () async {
         final source = StreamController<ArchiveFile>();
         final events = <String>[];
         final ended = Completer<void>();
@@ -388,7 +391,7 @@ void main() {
     }
 
     for (final autoClose in [false, true]) {
-      test('autoClose $autoClose decides whether a written entry is closed',
+      test('autoClose $autoClose decides whether written entry is closed',
           () async {
         final content = _ClosingInput(_source(300000, 21));
         final bytes = await Stream.value(ArchiveFile.stream('big.bin', content))
@@ -399,7 +402,7 @@ void main() {
       });
     }
 
-    test('autoClose closes an entry cut off by a cancel', () async {
+    test('autoClose closes entry interrupted by cancel', () async {
       final content = _ClosingInput(_source(8 << 20, 23));
       final source = StreamController<ArchiveFile>();
       final written = Completer<void>();
@@ -420,7 +423,9 @@ void main() {
       CompressionType.bzip2
     ]) {
       for (final streamed in [true, false]) {
-        test('a cancel in a ${type.name} entry, streamed $streamed', () async {
+        test(
+            'cancel inside ${type.name} entry closes input, streamed $streamed',
+            () async {
           final content = _ClosingInput(_source(3 << 20, 29));
           final source = StreamController<ArchiveFile>();
           final written = Completer<void>();
@@ -433,7 +438,8 @@ void main() {
               written.complete();
             }
           });
-          source.add(ArchiveFile.stream('big.bin', content)..compression = type);
+          source
+              .add(ArchiveFile.stream('big.bin', content)..compression = type);
           await written.future.timeout(const Duration(seconds: 20));
           await subscription.cancel().timeout(const Duration(seconds: 10));
           await source.close();
@@ -443,7 +449,7 @@ void main() {
     }
 
     for (final streamed in [true, false]) {
-      test('streamed $streamed: an entry is out before the next one arrives',
+      test('streamed $streamed: entry is sent before next entry arrives',
           () async {
         final codec = ZipCodec(streamed: streamed);
         ArchiveFile entry() => ArchiveFile.string('a.txt', 'hello ' * 200)
@@ -470,7 +476,7 @@ void main() {
       });
     }
 
-    test('the bytes of an entry survive the transformer', () async {
+    test('entry bytes are unchanged after encode transformer', () async {
       final archive = Archive()..add(ArchiveFile.string('a.txt', 'hello'));
       Future<List<int>> once() => Stream.fromIterable(archive.files)
           .transform(zipCodec.encoder)
@@ -480,7 +486,7 @@ void main() {
       expect(await once(), first);
     });
 
-    test('the bytes of a stream entry survive the transformer', () async {
+    test('stream entry bytes are unchanged after encode transformer', () async {
       final want = _source(70000, 19);
       final entry = ArchiveFile.stream('a.bin', InputMemoryStream(want));
       await Stream.value(entry).transform(zipCodec.encoder).drain<void>();
@@ -488,7 +494,7 @@ void main() {
     });
 
     for (final streamed in [true, false]) {
-      test('streamed $streamed: a level out of range is an ArgumentError',
+      test('streamed $streamed: level out of range throws ArgumentError',
           () async {
         expect(
             () => ZipEncoder(streamed: streamed).encodeBytes(
@@ -504,7 +510,7 @@ void main() {
     }
 
     for (final streamed in [false, true]) {
-      test('encodeBytes leaves a stream entry readable, streamed $streamed',
+      test('stream entry stays readable after encodeBytes, streamed $streamed',
           () {
         final want = _source(70000, 23);
         final entry = ArchiveFile.stream('a.bin', InputMemoryStream(want));
@@ -514,11 +520,11 @@ void main() {
     }
   });
 
-  group('zip on disk', () {
+  group('zip written to disk', () {
     // The stream writes an archive nothing reads back as it goes, so it is read
     // back afterwards the way a reader gets it: off disk, through the file
     // stream, and then extracted entry by entry
-    test('what the stream writes reads back off disk', () async {
+    test('stream output read from disk decodes back', testOn: 'vm', () async {
       final directory = await Directory.systemTemp.createTemp('zip_stream');
       try {
         final want = _source(70000, 3);
@@ -536,7 +542,7 @@ void main() {
       }
     });
 
-    test('extractFileToDisk writes the entries back as files', () async {
+    test('extractFileToDisk writes entries as files', testOn: 'vm', () async {
       final directory = await Directory.systemTemp.createTemp('zip_stream');
       try {
         final want = _source(70000, 3);
@@ -555,7 +561,7 @@ void main() {
   });
 
   group('back pressure inside one entry', () {
-    test('an entry is handed over as it is compressed', () async {
+    test('first bytes of large entry arrive before compression ends', () async {
       final content = _source(16 << 20, 11);
       final started = DateTime.now();
       var first = -1;
@@ -573,8 +579,8 @@ void main() {
     });
   });
 
-  group('a streamed entry that starts past four gigabytes', () {
-    test('only its central record carries zip64', () {
+  group('streamed entry starting past 4 GB', () {
+    test('only central record has zip64 field', testOn: 'vm', () {
       // The entry is small. Its offset is past 4 GB. The output already
       // reports a length of 4 GB before the first write
       final out = _OffsetOutput(0x100000000);
@@ -607,8 +613,8 @@ void main() {
     });
   });
 
-  group('an entry whose length does not agree with its isEOS', () {
-    test('the body ends instead of stepping forever', () {
+  group('entry whose length disagrees with isEOS', () {
+    test('body ends instead of looping forever', () {
       final encoder = ZipEncoder(streamed: true);
       encoder.startEncode(OutputMemoryStream());
       final body =

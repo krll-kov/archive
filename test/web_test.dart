@@ -29,7 +29,7 @@ void main() {
           isFalse);
     });
 
-    test('decodeStream verifies a little-endian input', () {
+    test('decodeStream with verify reads little-endian input', () {
       final origData = Uint8List.fromList(List.generate(5000, (i) => i * 7));
       final compressed = ZLibEncoder().encodeBytes(origData);
       final out = OutputMemoryStream();
@@ -155,8 +155,8 @@ void main() {
     });
   });
 
-  group('zip web', () {
-    test('an encoder is built without secure randomness', () {
+  group('zip on web', () {
+    test('ZipEncoder and zipCodec are created without Random.secure', () {
       // Random.secure() throws on dart2js and Node, and the field used to be
       // eager, so no ZipEncoder and no zipCodec could be built at all there
       expect(ZipEncoder.new, returnsNormally);
@@ -167,7 +167,7 @@ void main() {
           'hello'.codeUnits);
     });
 
-    test('a deflated entry whose last code ends its data reads whole', () {
+    test('deflated entry whose last code ends at data end decodes whole', () {
       final data = [155, 48, 113, 210, 228, 41, 0];
       final content = [0x90, 0x91, 0x92, 0x93, 0x94];
       final crc = getCrc32(content);
@@ -217,8 +217,8 @@ void main() {
           content);
     });
   });
-  group('zip web', () {
-    test('ZipCrypto keys decrypt as on the VM', () {
+  group('zip on web', () {
+    test('ZipCrypto keys decrypt same as on VM', () {
       final cases = <(String, String, String)>[
         (
           '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',

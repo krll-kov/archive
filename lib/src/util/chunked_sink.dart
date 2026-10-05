@@ -224,6 +224,9 @@ abstract class ChunkedConverter extends Converter<List<int>, List<int>> {
           stream, (sink) => _FailOnce(startChunkedConversion(sink), sink));
 }
 
+/// [FailOnceSink] cannot replace this class. Its `add` calls addSlice, and
+/// default ByteConversionSink.addSlice copies each chunk, so ChunkedConverter
+/// subclasses outside this package would receive copies
 class _FailOnce implements EventSink<List<int>> {
   final ByteConversionSink _input;
   final EventSink<List<int>> _output;

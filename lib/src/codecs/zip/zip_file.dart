@@ -129,11 +129,13 @@ class ZipFile extends FileContent {
       throw ArchiveException(
           'zip: local header of ${header?.filename} is damaged');
     }
-    filename =
-        zipName(input.readBytes(fnLen).toUint8List(), flags, filenameEncoding);
-    if (verify && header != null && filename != header!.filename) {
-      throw ArchiveException(
-          'zip: local header of ${header?.filename} is damaged');
+    final central = header;
+    if (central != null) {
+      input.skip(fnLen);
+      filename = central.filename;
+    } else {
+      filename = zipName(
+          input.readBytes(fnLen).toUint8List(), flags, filenameEncoding);
     }
     extraField = input.readBytes(exLen).toUint8List();
 

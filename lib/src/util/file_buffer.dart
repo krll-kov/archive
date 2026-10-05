@@ -206,7 +206,7 @@ class FileBuffer {
   /// Reads [count] bytes at [position] into [into] at [at], without a buffer of
   /// its own. Returns how many were read. It is short only at end of file
   int readInto(int position, Uint8List into, int at, int count) {
-    if (position + count > _fileSize) {
+    if (count > _fileSize - position) {
       count = _fileSize - position;
     }
     if (count <= 0) {
@@ -248,7 +248,7 @@ class FileBuffer {
   Uint8List readBytes(int position, int count,
       [@Deprecated('Ignored') int? fileSize]) {
     if (count > buffer.length) {
-      if (position + count >= _fileSize) {
+      if (count >= _fileSize - position) {
         count = _fileSize - position;
       }
       final bytes = Uint8List(count);

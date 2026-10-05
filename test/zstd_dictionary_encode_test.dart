@@ -62,8 +62,8 @@ void main() {
         List<int>.generate(60000, (i) => 32 + ((i * 7 + i ~/ 61) % 90))),
   };
 
-  group('zstd encoding with a dictionary', () {
-    test('a dictionary shorter than eight bytes matches the reference', () {
+  group('zstd encode with dictionary', () {
+    test('dictionary shorter than 8 bytes gives reference output', () {
       const reference = [
         40,
         181,
@@ -91,7 +91,7 @@ void main() {
       expect(encoded, reference);
     });
 
-    test('a dictionary shorter than eight bytes still sizes the parameters',
+    test('dictionary shorter than 8 bytes still affects compression parameters',
         () {
       final content = Uint8List.fromList(
           List<int>.generate(16383, (i) => (i * 7 + i ~/ 23) % 11));
@@ -108,7 +108,7 @@ void main() {
       }
     });
 
-    test('a block of only literals is priced like the reference', () {
+    test('literal-only block gets same price as in reference', () {
       final header = base64Decode(
           'N6Qw7DkwAAAMEPhsB/+7OP9CSClTIyAgICAgEAgEAoFAIBAIBAKBQCAQCAQCgUAgEPwD'
           'JECAAAECBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB'
@@ -131,7 +131,7 @@ void main() {
       }
     });
 
-    test('a literal-only block preserves dictionary sequence tables', () {
+    test('literal-only block keeps dictionary sequence tables', () {
       List<int> encode(bool literalOnlyFirst) {
         final encoder = ZstdSequencesEncoder()..strategy = zstdStrategyFast;
         encoder.loadDictionary(trained);
@@ -152,7 +152,8 @@ void main() {
       expect(encode(true), encode(false));
     });
 
-    test('row matches cannot reuse offsets after the dictionary expires', () {
+    test('row matcher does not reuse offsets after dictionary leaves window',
+        () {
       final dictionaryBytes = Uint8List(262144);
       var state = 937;
       for (var i = 0; i < dictionaryBytes.length; i++) {
@@ -181,7 +182,7 @@ void main() {
       }
     });
 
-    test('the optimal parser rejects repeat offsets beyond its window', () {
+    test('optimal parser rejects repeat offsets beyond window', () {
       const window = 1 << 22;
       const distance = window + 76;
       final content = Uint8List(window + 256);
@@ -233,7 +234,7 @@ void main() {
       final dictionary = entry.value;
       for (final sample in samples.entries) {
         for (final level in const [1, 3, 5, 9, 12, 15, 19, 22]) {
-          test('${entry.key} ${sample.key} at level $level round trips', () {
+          test('${entry.key} ${sample.key} at level $level decodes back', () {
             final frame = ZstdEncoder(level: level, dictionary: dictionary)
                 .encodeBytes(sample.value);
             final back = ZstdDecoder(dictionary: dictionary)
@@ -245,7 +246,7 @@ void main() {
       }
     }
 
-    test('a frame carries the dictionary id, and only that dictionary reads it',
+    test('frame stores dictionary id and decodes only with that dictionary',
         () {
       final frame =
           ZstdEncoder(level: 3, dictionary: trained).encodeBytes(raw.content);
@@ -258,7 +259,7 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
-    test('a raw dictionary names no id, so any decoder can read the frame', () {
+    test('raw dictionary writes no id, so any decoder with it reads frame', () {
       final frame = ZstdEncoder(level: 3, dictionary: raw)
           .encodeBytes(Uint8List.fromList(raw.content.sublist(0, 500)));
       final back = ZstdDecoder(dictionary: raw)
@@ -266,7 +267,7 @@ void main() {
       expect(back.length, 500);
     });
 
-    test('the dictionary is what makes the frame small', () {
+    test('frame with dictionary is smaller than without it', () {
       final content = Uint8List.sublistView(raw.content);
       final withDictionary =
           ZstdEncoder(level: 9, dictionary: raw).encodeBytes(content);

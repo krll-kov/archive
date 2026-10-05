@@ -206,7 +206,7 @@ void expectTable(Uint64List rows, int base, Uint32List expected,
 }
 
 void main() {
-  test('a compressed FSE table containing only symbol zero', () {
+  test('compressed FSE table with only symbol 0 decodes', () {
     const encoded = [
       40,
       181,
@@ -234,8 +234,8 @@ void main() {
   final rows = io.ZstdSequences().rows;
   final web = html.ZstdSequences();
 
-  group('predefined FSE tables match the specification', () {
-    test('literals length', () {
+  group('predefined FSE tables match specification', () {
+    test('literals length table', () {
       expectTable(
           rows,
           zstdPredefinedLiteralsLengthTableBase,
@@ -244,16 +244,16 @@ void main() {
           zstdLiteralsLengthCodeMax,
           'literals length');
     });
-    test('match length', () {
+    test('match length table', () {
       expectTable(rows, zstdPredefinedMatchLengthTableBase, expectedMatchLength,
           zstdMatchLengthBaseline, zstdMatchLengthCodeMax, 'match length');
     });
-    test('offset', () {
+    test('offset table', () {
       expectTable(rows, zstdPredefinedOffsetTableBase, expectedOffset,
           zstdOffsetBaseline, zstdPredefinedOffsetCodeMax, 'offset');
     });
 
-    test('the split rows the web build uses say the same thing', () {
+    test('split rows used by web build equal full table rows', () {
       for (var state = zstdBuiltTableRows; state < zstdSeqTableRows; state++) {
         final row = rows[state];
         expect(web.next[state], row & 0xffff, reason: 'next at $state');

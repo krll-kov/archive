@@ -36,7 +36,7 @@ const _nist = {
 };
 
 void main() {
-  test('matches the NIST SP 800-38A vectors', () {
+  test('output matches NIST SP 800-38A vectors', () {
     for (final entry in _nist.entries) {
       final data = _bytes(_plain);
       AesCtr(_bytes(entry.key), _bytes(_iv)).process(data);
@@ -44,7 +44,7 @@ void main() {
     }
   });
 
-  test('decrypts what it encrypted', () {
+  test('decrypting encrypted bytes restores original bytes', () {
     final key = _bytes(_nist.keys.last);
     final data = _bytes(_plain);
     AesCtr(key, _bytes(_iv)).process(data);
@@ -52,7 +52,7 @@ void main() {
     expect(_hex(data), _plain);
   });
 
-  test('pieces of any length continue the key stream', () {
+  test('input processed in pieces of any length matches NIST vectors', () {
     final key = _bytes(_nist.keys.first);
     for (final piece in const [1, 5, 15, 16, 17, 31, 33]) {
       final data = _bytes(_plain);
@@ -65,7 +65,7 @@ void main() {
     }
   });
 
-  test('a little-endian counter matches the WinZip key stream', () {
+  test('little-endian counter matches WinZip key stream', () {
     // Key stream from openssl aes-256-ecb over the counter blocks
     final key = Uint8List.fromList(List.generate(32, (i) => i));
     final fromOne = Uint8List(64);
@@ -89,7 +89,7 @@ void main() {
         '55c88b2088550f02e256bb586438631567f1a1c590ddd30d63a93f7c415cc372');
   });
 
-  test('the counter wraps around after all 16 bytes', () {
+  test('counter wraps to zero when all 16 bytes overflow', () {
     // Key stream from openssl aes-128-ecb over ff..ff, 00..00 and one
     final key = Uint8List.fromList(List.generate(16, (i) => i));
     final iv = Uint8List(16)..fillRange(0, 16, 0xff);
@@ -107,7 +107,7 @@ void main() {
         'e37cd363dd7c87a09aff0e3e60e09c82');
   });
 
-  test('a key or iv of the wrong length is an ArgumentError', () {
+  test('key or iv of wrong length throws ArgumentError', () {
     expect(() => AesCtr(Uint8List(20), Uint8List(16)), throwsArgumentError);
     expect(() => AesCtr(Uint8List(16), Uint8List(12)), throwsArgumentError);
   });

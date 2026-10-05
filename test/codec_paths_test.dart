@@ -14,7 +14,8 @@ Uint8List _source(int length, int seed) {
   final bytes = Uint8List(length);
   var state = seed;
   for (var i = 0; i < length; i++) {
-    state = (state * 1103515245 + 12345) & 0x7fffffff;
+    state =
+        (state * 20077 + state * 16838 % 0x8000 * 0x10000 + 12345) % 0x80000000;
     // Compressible, with runs, so every path has real work to do
     bytes[i] = (state >> 16) % 4 == 0 ? 0x41 : (state >> 8) & 0xff;
   }
@@ -80,12 +81,12 @@ void main() {
     final name = entry.key;
     final paths = entry.value;
 
-    group('$name, the three ways in', () {
-      test('the older stream writes what the whole buffer writes', () {
+    group('$name: bytes, stream and converter paths', () {
+      test('encodeStream output equals encodeBytes output', () {
         expect(paths.old(), paths.whole());
       });
 
-      test('the converter writes the same whatever the pieces', () {
+      test('converter output does not depend on input piece sizes', () {
         final want = _chunked(paths.converter, source, source.length);
         for (final piece in [1, 4095, 65536]) {
           expect(_chunked(paths.converter, source, piece), want,
@@ -98,7 +99,7 @@ void main() {
         }
       });
 
-      test('all three read back as the original', () {
+      test('output of all 3 paths decodes to original', () {
         for (final archive in [
           paths.whole(),
           paths.old(),
@@ -109,7 +110,8 @@ void main() {
         }
       });
 
-      test('all three read back off disk as the original', () {
+      test('output of all 3 paths read from disk decodes to original',
+          testOn: 'vm', () {
         // The way a reader gets an archive: a file, decoded a piece at a time
         // into another file, neither side ever held whole
         final directory = Directory.systemTemp.createTempSync('codec_paths');

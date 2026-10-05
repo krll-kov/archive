@@ -261,6 +261,9 @@ class HmacSha1 {
 /// PBKDF2-HMAC-SHA1, [length] bytes of key from [password]
 Uint8List pbkdf2HmacSha1(
     Uint8List password, Uint8List salt, int iterations, int length) {
+  if (iterations < 1) {
+    throw ArgumentError.value(iterations, 'iterations', 'Must be positive');
+  }
   final mac = HmacSha1(password);
   final sha = mac._digest;
   final w = sha._w;

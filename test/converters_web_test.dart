@@ -8,7 +8,8 @@ Uint8List _sample(int length, int seed) {
   final bytes = Uint8List(length);
   var state = seed;
   for (var i = 0; i < length; i++) {
-    state = (state * 1103515245 + 12345) & 0x7fffffff;
+    state =
+        (state * 20077 + state * 16838 % 0x8000 * 0x10000 + 12345) % 0x80000000;
     bytes[i] = (state >> 16) % 5 == 0 ? 0x41 : (state >> 8) & 0xff;
   }
   return bytes;
@@ -50,8 +51,67 @@ List<ArchiveFile> _entries() => [
 void main() {
   final data = _sample(300000, 7);
 
-  group('gzip verification on the web', () {
-    test('strict browser decoders reject malformed DEFLATE', () {
+  group('Deflate encoder parameters', () {
+    test('invalid level or window throws ArgumentError', () {
+      for (final (level, windowBits) in [(-1, 15), (10, 15), (6, 7), (6, 16)]) {
+        expect(() => Deflate([1, 2, 3], level: level, windowBits: windowBits),
+            throwsArgumentError);
+        expect(
+            () => Deflate.stream(InputMemoryStream([1, 2, 3]),
+                level: level, windowBits: windowBits),
+            throwsArgumentError);
+        for (final encoder in [
+          const GZipEncoderWeb(),
+          const ZLibEncoderWeb()
+        ]) {
+          expect(
+              () => encoder
+                  .encodeBytes([1, 2, 3], level: level, windowBits: windowBits),
+              throwsArgumentError);
+          expect(
+              () => encoder.encodeStream(
+                  InputMemoryStream([1, 2, 3]), OutputMemoryStream(),
+                  level: level, windowBits: windowBits),
+              throwsArgumentError);
+        }
+      }
+    });
+
+    test('zlib encodeBytes and encodeStream write requested window size', () {
+      final source = Uint8List.fromList(List.generate(20000, (i) => i % 511));
+      for (final windowBits in [8, 9, 10, 11, 12, 13, 14, 15]) {
+        final encoded =
+            const ZLibEncoder().encodeBytes(source, windowBits: windowBits);
+        final output = OutputMemoryStream();
+        const ZLibEncoder().encodeStream(InputMemoryStream(source), output,
+            windowBits: windowBits);
+        expect(encoded, output.getBytes(), reason: 'windowBits $windowBits');
+        expect(encoded[0] >> 4, (windowBits == 8 ? 9 : windowBits) - 8,
+            reason: 'windowBits $windowBits');
+        expect(ZLibDecoder().decodeBytes(encoded, verify: true), source);
+        final web =
+            const ZLibEncoderWeb().encodeBytes(source, windowBits: windowBits);
+        expect(web[0] >> 4, (windowBits == 8 ? 9 : windowBits) - 8,
+            reason: 'web windowBits $windowBits');
+        expect(ZLibDecoder().decodeBytes(web, verify: true), source);
+        expect(
+            ZLibDecoder().decodeBytes(
+                Deflate(source, windowBits: windowBits).getBytes(),
+                raw: true,
+                verify: true),
+            source);
+        expect(
+            GZipDecoder().decodeBytes(
+                const GZipEncoderWeb()
+                    .encodeBytes(source, windowBits: windowBits),
+                verify: true),
+            source);
+      }
+    });
+  });
+
+  group('gzip verify on web', () {
+    test('web decoders with verify reject malformed deflate', () {
       final header = Uint8List.fromList(ZLibEncoder().encodeBytes([1, 2, 3]));
       header[0] = 0x79;
       header[1] = (31 - ((header[0] << 8) % 31)) % 31;
@@ -102,7 +162,9 @@ void main() {
           throwsA(isA<ArchiveException>()));
     });
 
-    test('members verify with a write-only output that already has bytes', () {
+    test(
+        'verify of 2 members works with write-only output that already has bytes',
+        () {
       final encoded = GZipEncoder().encodeBytes(data);
       final collected = _Collect();
       final output = SinkOutputStream(collected)..writeBytes([1, 2, 3]);
@@ -114,7 +176,7 @@ void main() {
       expect(collected.bytes.takeBytes(), [1, 2, 3, ...data, ...data]);
     });
 
-    test('the last member checksum is checked', () {
+    test('verify throws on wrong CRC of last member', () {
       final encoded = GZipEncoder().encodeBytes(data);
       final damaged = [...encoded, ...encoded];
       damaged[damaged.length - 8] ^= 1;
@@ -123,13 +185,13 @@ void main() {
     });
   });
 
-  group('zstd converters on the web', () {
-    test('codec round trips whole', () {
+  group('zstd converters on web', () {
+    test('codec encodes and decodes whole buffer back', () {
       expect(zstdCodec.decode(zstdCodec.encode(data)), data);
     });
 
     for (final size in [1, 4096, 65536]) {
-      test('stream round trips in pieces of $size', () async {
+      test('stream in pieces of $size encodes and decodes back', () async {
         final input = size == 1 ? data.sublist(0, 20000) : data;
         final compressed =
             await _collect(_pieces(input, size).transform(zstdCodec.encoder));
@@ -140,7 +202,7 @@ void main() {
       });
     }
 
-    test('decoder reads what the whole buffer encoder writes', () async {
+    test('decoder reads output of encodeBytes', () async {
       final compressed = ZstdEncoder().encodeBytes(data);
       expect(
           await _collect(
@@ -149,13 +211,13 @@ void main() {
     });
   });
 
-  group('bzip2 converters on the web', () {
-    test('codec round trips whole', () {
+  group('bzip2 converters on web', () {
+    test('codec encodes and decodes whole buffer back', () {
       expect(bzip2Codec.decode(bzip2Codec.encode(data)), data);
     });
 
     for (final size in [1, 4096, 65536]) {
-      test('stream round trips in pieces of $size', () async {
+      test('stream in pieces of $size encodes and decodes back', () async {
         final input = size == 1 ? data.sublist(0, 20000) : data;
         final compressed =
             await _collect(_pieces(input, size).transform(bzip2Codec.encoder));
@@ -166,7 +228,7 @@ void main() {
       });
     }
 
-    test('decoder reads what the whole buffer encoder writes', () async {
+    test('decoder reads output of encodeBytes', () async {
       final compressed = BZip2Encoder().encodeBytes(data, blockSize100k: 1);
       expect(
           await _collect(
@@ -175,8 +237,8 @@ void main() {
     });
   });
 
-  group('tar converters on the web', () {
-    test('TarChunkedEncoder writes what TarDecoder reads', () {
+  group('tar converters on web', () {
+    test('TarDecoder reads TarChunkedEncoder output', () {
       final sink = _Collect();
       final encoder = TarChunkedEncoder(sink);
       for (final entry in _entries()) {
@@ -192,7 +254,7 @@ void main() {
       }
     });
 
-    test('tarCodec round trips through streams', () async {
+    test('tarCodec encodes and decodes back through streams', () async {
       final bytes = await _collect(Stream<ArchiveFile>.fromIterable(_entries())
           .transform(tarCodec.encoder));
       final got = <String, List<int>>{};
@@ -212,9 +274,9 @@ void main() {
     });
   });
 
-  group('zip converters on the web', () {
+  group('zip converters on web', () {
     for (final streamed in [true, false]) {
-      test('ZipChunkedEncoder streamed: $streamed writes what ZipDecoder reads',
+      test('ZipDecoder reads ZipChunkedEncoder output, streamed: $streamed',
           () {
         final sink = _Collect();
         final encoder = ZipChunkedEncoder(sink, streamed: streamed);
@@ -233,7 +295,7 @@ void main() {
       });
     }
 
-    test('zipCodec encoder writes what ZipDecoder reads', () async {
+    test('ZipDecoder reads zipCodec encoder output', () async {
       final bytes = await _collect(Stream<ArchiveFile>.fromIterable(_entries())
           .transform(zipCodec.encoder));
       final archive = ZipDecoder().decodeBytes(bytes, verify: true);
@@ -245,7 +307,7 @@ void main() {
     });
   });
 
-  group('CodecsRecognizer on the web', () {
+  group('CodecsRecognizer on web', () {
     final small = _sample(5000, 11);
     final archive = Archive()..add(ArchiveFile.bytes('a.dat', small));
     final formats = <ArchiveFormat, Uint8List>{
@@ -263,7 +325,7 @@ void main() {
       });
     }
 
-    test('recognizes zlib only when asked', () {
+    test('recognizes zlib only with withZLib', () {
       final zlib = ZLibEncoder().encodeBytes(small);
       expect(CodecsRecognizer.isZLib(zlib), isTrue);
       expect(

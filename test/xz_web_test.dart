@@ -27,7 +27,7 @@ class _Collect implements Sink<List<int>> {
 
 void main() {
   group('xz web', () {
-    test('the index records a size that does not fit in 32 bits', () {
+    test('index records size above 32 bits', () {
       // XzChunkedEncoder writes a stream of 4 GiB as one block, so the index
       // holds this record. `>>` gave 0x80 0x00, the encoding of zero
       expect(xzMultibyteInteger(4294967296),
@@ -39,7 +39,7 @@ void main() {
           equals(Uint8List.fromList([0x80, 0x80, 0x80, 0x80, 0x80, 0x20])));
     });
 
-    test('the index records a size that fits in 32 bits', () {
+    test('index records size within 32 bits', () {
       expect(xzMultibyteInteger(0), equals(Uint8List.fromList([0])));
       expect(xzMultibyteInteger(127), equals(Uint8List.fromList([0x7f])));
       expect(xzMultibyteInteger(128), equals(Uint8List.fromList([0x80, 0x01])));
@@ -47,7 +47,7 @@ void main() {
           equals(Uint8List.fromList([0xff, 0xff, 0xff, 0xff, 0x0f])));
     });
 
-    test('a CRC64 check is verified while streaming', () {
+    test('CRC64 check is verified while streaming', () {
       final data = Uint8List.fromList(
           List<int>.generate(300000, (i) => (i * 31 + (i >> 9)) & 0xff));
       final archive = XZEncoder().encodeBytes(data, check: XZCheck.crc64);

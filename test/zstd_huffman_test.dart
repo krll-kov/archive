@@ -41,12 +41,12 @@ Uint8List _literals(int length, int spread) {
 }
 
 void main() {
-  group('zstd fixed-width stream ends', () {
+  group('zstd fixed-width stream end', () {
     for (final slow in [false, true]) {
       for (final symbols in [8, 32, 64]) {
         for (final count in [symbols - 1, symbols, symbols + 1]) {
           test(
-              'slow $slow accepts exactly $symbols one-bit symbols, count $count',
+              'slow $slow accepts exactly $symbols 1-bit symbols, count $count',
               () {
             final table = ZstdHuffmanTable();
             final tree = _direct([1]);
@@ -100,7 +100,7 @@ void main() {
         66,
         67
       ]) {
-        test('slow $slow count $count consumes exactly its stream', () {
+        test('slow $slow count $count reads exactly its stream', () {
           final fixture = _SingleStreamFixture(count);
           final decoded = fixture.decode(slow: slow);
           expect(Uint8List.sublistView(decoded, 7, 7 + count), fixture.source);
@@ -110,7 +110,8 @@ void main() {
       }
       for (final count in [2, 3, 14, 15, 16, 17, 66, 67]) {
         for (final delta in [-1, 1]) {
-          test('slow $slow count $count rejects a $delta symbol mismatch', () {
+          test('slow $slow count $count rejects symbol count off by $delta',
+              () {
             final fixture = _SingleStreamFixture(count);
             expect(() => fixture.decode(slow: slow, count: count + delta),
                 throwsA(isA<ZstdHuffmanException>()));
@@ -124,7 +125,7 @@ void main() {
     for (final wide in [false, true]) {
       for (final segment in [65, 66, 67, 68, 129, 130, 131, 132]) {
         for (var missing = 0; missing < 4; missing++) {
-          test('wide $wide segment $segment missing $missing', () {
+          test('wide $wide segment $segment missing $missing throws', () {
             final fixture = _FourStreamFixture(segment, missing, wide: wide);
             final decoded = fixture.decode();
             expect(Uint8List.sublistView(decoded, 7, 7 + fixture.source.length),
@@ -136,7 +137,7 @@ void main() {
         }
       }
       for (var stream = 0; stream < 4; stream++) {
-        test('wide $wide stream $stream requires its end marker', () {
+        test('wide $wide stream $stream without end marker throws', () {
           final fixture = _FourStreamFixture(66, 0, wide: wide);
           final broken = Uint8List.fromList(fixture.encoded);
           broken[fixture.starts[stream] + fixture.lengths[stream] - 1] = 0;
@@ -147,7 +148,8 @@ void main() {
     }
     for (final segment in [66, 67]) {
       for (var stream = 0; stream < 4; stream++) {
-        test('segment $segment stream $stream rejects a truncated prefix', () {
+        test('segment $segment stream $stream with truncated prefix throws',
+            () {
           final fixture = _FourStreamFixture(segment, 0, wide: false);
           final starts = Uint32List.fromList(fixture.starts);
           final lengths = Uint32List.fromList(fixture.lengths);
@@ -158,7 +160,7 @@ void main() {
         });
       }
     }
-    test('coded symbols beyond the declared output are rejected', () {
+    test('coded symbols beyond declared output throw', () {
       final fixture = _FourStreamFixture(66, 0, wide: false);
       expect(() => fixture.decode(total: 260, segment: 65),
           throwsA(isA<ZstdHuffmanException>()));
@@ -175,7 +177,7 @@ void main() {
           reason: reason);
     }
 
-    test('a description of three weights builds its table', () {
+    test('description of 3 weights builds table', () {
       final bytes = _direct([2, 1, 1]);
       final read = readHuffmanTable(bytes, 0, bytes.length, table, scratch);
       expect(read, bytes.length);
@@ -189,47 +191,47 @@ void main() {
       expect(filled, greaterThan(0));
     });
 
-    test('an empty description', () {
+    test('empty description throws', () {
       rejects(Uint8List(0), 'nothing to read');
     });
 
-    test('direct weights cut short', () {
+    test('truncated direct weights throw', () {
       final bytes = _direct(List.filled(17, 1));
       rejects(Uint8List.sublistView(bytes, 0, 4), 'nibbles are missing');
     });
 
-    test('compressed weights cut short', () {
+    test('truncated compressed weights throw', () {
       rejects(
           Uint8List.fromList([5, 0, 0]), 'the description claims five bytes');
     });
 
-    test('a weight past the longest code', () {
+    test('weight past longest code throws', () {
       rejects(_direct([15, 1]), 'fifteen is above the twelve allowed');
     });
 
-    test('weights that are all zero', () {
+    test('all-zero weights throw', () {
       rejects(_direct([0, 0]), 'no symbol carries anything');
     });
 
-    test('weights with no weight-one symbols', () {
+    test('weights without weight-1 symbols throw', () {
       rejects(_direct([2]), 'the completed tree has no weight-one symbols');
     });
 
-    test('a weight above the longest code allowed', () {
+    test('weight above maximum code length throws', () {
       rejects(_direct([12, 12]), 'twelve is above the eleven allowed');
     });
 
     // Two of the heaviest weight the format does allow still add up past the
     // widest table, which is caught after the weights themselves pass
-    test('weights that overflow the table log', () {
+    test('weights overflowing table log throw', () {
       rejects(_direct([11, 11]), 'the total needs a table log of twelve');
     });
 
-    test('weights that leave a gap', () {
+    test('weights that leave gap throw', () {
       rejects(_direct([1, 1, 1, 1, 1]), 'what is left is not a power of two');
     });
 
-    test('a weight count of one symbol', () {
+    test('weight count of 1 symbol throws', () {
       rejects(_direct([]), 'a description covers at least one weight');
     });
   });
@@ -238,7 +240,7 @@ void main() {
   // form the encoder picked for the weights is the one under test
   group('zstd huffman round trip', () {
     for (final spread in [3, 12, 60, 200]) {
-      test('a tree over $spread symbols reads back', () {
+      test('tree over $spread symbols decodes back', () {
         final source = _literals(20000, spread);
         final counts = Uint32List(zstdHuffmanSymbolCount);
         for (final b in source) {
@@ -258,7 +260,7 @@ void main() {
       });
     }
 
-    test('a description cut anywhere is rejected or reads short', () {
+    test('description truncated anywhere throws or decodes shorter', () {
       final source = _literals(20000, 60);
       final counts = Uint32List(zstdHuffmanSymbolCount);
       for (final b in source) {
@@ -283,7 +285,7 @@ void main() {
       }
     });
 
-    test('a description with a changed byte is rejected or reads back', () {
+    test('description with changed byte throws or decodes', () {
       final source = _literals(20000, 60);
       final counts = Uint32List(zstdHuffmanSymbolCount);
       for (final b in source) {
@@ -318,7 +320,7 @@ void main() {
   group('zstd literals round trip', () {
     for (final size in [8, 40, 64, 200, 1000, 5000, 60000, 131072]) {
       for (final spread in [4, 90]) {
-        test('$size literals over $spread symbols read back', () {
+        test('$size literals over $spread symbols decode back', () {
           final source = _literals(size, spread);
           final encoder = ZstdLiteralsEncoder()..minSize = 6;
           final out = Uint8List(size + (size >> 1) + 1024);
@@ -338,7 +340,7 @@ void main() {
 
     // One stream is written whenever the literals are few, and the header is
     // three bytes: ten bits of regenerated size, ten of compressed
-    test('the slow loop decodes what the wide one decodes', () {
+    test('slow loop decodes same as wide loop', () {
       for (final size in [12, 40, 200, 900]) {
         final source = _literals(size, 30);
         final encoder = ZstdLiteralsEncoder()..minSize = 6;
@@ -367,7 +369,7 @@ void main() {
       }
     });
 
-    test('the slow loop with nothing to decode writes nothing', () {
+    test('slow loop with nothing to decode writes nothing', () {
       final table = ZstdHuffmanTable();
       final scratch = ZstdHuffmanScratch();
       final bytes = _direct([2, 1, 1]);
@@ -377,7 +379,7 @@ void main() {
       expect(dst, Uint8List(4));
     });
 
-    test('a literals section cut anywhere is rejected', () {
+    test('literals section truncated anywhere throws', () {
       final source = _literals(5000, 60);
       final encoder = ZstdLiteralsEncoder()..minSize = 6;
       final out = Uint8List(8192);

@@ -48,12 +48,13 @@ void main() {
   // stream, and every zip field written behind the data came out reversed.
   // On the VM `platformZLibEncoder` never touches the order, so this only ever
   // failed once compiled for the browser or node
-  group('a deflate does not change the order of the stream it writes into', () {
+  group('deflate keeps byte order of output stream', () {
     // `ZipEncoder` builds a `Random.secure()` whatever the password, and that
     // constructor throws under the node runner, so the archive itself is only
     // built here on the VM. The two order checks below are what cover the web
-    test('the streamed encoder still ends in a central directory', testOn: 'vm',
-        () async {
+    test(
+        'streamed encoder in big-endian output still ends with central directory',
+        testOn: 'vm', () async {
       final bytes = await _encode(zipCodec.encoder);
       expect(_contains(bytes, _descriptor), isTrue,
           reason: 'bit 3 is set, so a data descriptor has to follow the data');
@@ -61,8 +62,7 @@ void main() {
           reason: 'without this signature no reader can open the archive');
     });
 
-    test('the streamed encoder round trips through the decoder', testOn: 'vm',
-        () async {
+    test('streamed encoder output decodes back', testOn: 'vm', () async {
       final bytes = await _encode(zipCodec.encoder);
       final archive = ZipDecoder().decodeBytes(bytes);
       expect(archive.files.map((f) => f.name), ['one.txt', 'two.txt']);
@@ -70,14 +70,14 @@ void main() {
       expect(archive.files[1].readBytes(), _entries()[1].readBytes());
     });
 
-    test('the buffered encoder is unchanged', testOn: 'vm', () async {
+    test('buffered encoder output is unchanged', testOn: 'vm', () async {
       final bytes = await _encode(const ZipCodec(streamed: false).encoder);
       expect(_contains(bytes, _eocd), isTrue);
       final archive = ZipDecoder().decodeBytes(bytes);
       expect(archive.files.map((f) => f.name), ['one.txt', 'two.txt']);
     });
 
-    test('a raw deflate leaves the order the caller set', () {
+    test('raw deflate keeps byte order set on output', () {
       final output = OutputMemoryStream(byteOrder: ByteOrder.littleEndian);
       platformZLibEncoder.encodeStream(
           InputMemoryStream(utf8.encode('payload ' * 100)), output,
@@ -85,7 +85,7 @@ void main() {
       expect(output.byteOrder, ByteOrder.littleEndian);
     });
 
-    test('a zlib deflate puts the order back', () {
+    test('zlib deflate restores byte order of output', () {
       final output = OutputMemoryStream(byteOrder: ByteOrder.littleEndian);
       platformZLibEncoder.encodeStream(
           InputMemoryStream(utf8.encode('payload ' * 100)), output,

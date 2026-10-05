@@ -17,20 +17,21 @@ void main() {
   final plain =
       allOf(isA<ArchiveException>(), isNot(isA<ArchiveChecksumException>()));
 
-  test('without flags nothing is thrown', () {
+  test('without flags guardDecode returns false and does not throw', () {
     for (final decode in [fails, checksum, damage, range]) {
       expect(guardDecode('x', false, false, decode), isFalse);
     }
     expect(guardDecode('x', false, false, () => true), isTrue);
   });
 
-  test('throwOnError throws ArchiveException, never the checksum one', () {
+  test('throwOnError throws ArchiveException, never ArchiveChecksumException',
+      () {
     for (final decode in [fails, checksum, damage, range]) {
       expect(() => guardDecode('x', false, true, decode), throwsA(plain));
     }
   });
 
-  test('verify throws ArchiveChecksumException only for a checksum', () {
+  test('verify throws ArchiveChecksumException only for checksum errors', () {
     expect(() => guardDecode('x', true, false, checksum),
         throwsA(isA<ArchiveChecksumException>()));
     for (final decode in [fails, damage, range]) {
@@ -38,14 +39,14 @@ void main() {
     }
   });
 
-  test('a failed null check counts as damaged data', () {
+  test('failed null check counts as damaged data', () {
     bool nullCheck() => throw TypeError();
     expect(guardDecode('x', false, false, nullCheck), isFalse);
     expect(() => guardDecode('x', false, true, nullCheck), throwsA(plain));
     expect(() => guardDecode('x', true, false, nullCheck), throwsA(plain));
   });
 
-  test('throwIfStrict follows the rules of guardDecode', () {
+  test('throwIfStrict follows guardDecode rules', () {
     String outcome(void Function() f) {
       try {
         f();
@@ -75,7 +76,7 @@ void main() {
     }
   });
 
-  group('an error of the output stream', () {
+  group('output stream error', () {
     final data = Uint8List.fromList(List.generate(5000, (i) => i * 7 % 251));
     final decoders = <String, (List<int>, _Decode)>{
       'gzip': (
@@ -112,7 +113,7 @@ void main() {
       final flags = 'verify $verify, throwOnError $throwOnError';
       for (final MapEntry(key: name, value: (packed, decode))
           in decoders.entries) {
-        test('$name reaches the caller unchanged with $flags', () {
+        test('$name rethrows it unchanged with $flags', () {
           final failure = _DiskFull();
           expect(
               () => decode(InputMemoryStream(packed), _FullOutput(failure),
@@ -121,7 +122,7 @@ void main() {
         });
       }
 
-      test('a zip entry reaches the caller unchanged with $flags', () {
+      test('zip entry rethrows it unchanged with $flags', () {
         final failure = _DiskFull();
         final entry = ZipDecoder()
             .decodeBytes(zip, verify: verify, throwOnError: throwOnError)
@@ -131,7 +132,7 @@ void main() {
             throwsA(same(failure)));
       });
 
-      test('a zip LZMA entry reaches the caller unchanged with $flags', () {
+      test('zip LZMA entry rethrows it unchanged with $flags', () {
         final failure = _DiskFull();
         final entry = ZipDecoder()
             .decodeBytes(File('test/_data/zip/lzma_near.zip').readAsBytesSync(),
@@ -140,10 +141,10 @@ void main() {
             .firstWhere((file) => file.isFile);
         expect(() => entry.writeContent(_FullOutput(failure)),
             throwsA(same(failure)));
-      });
+      }, testOn: 'vm');
     }
 
-    test('Inflate.addBytes lets it through', () {
+    test('Inflate.addBytes rethrows it unchanged', () {
       final failure = _DiskFull();
       final inflate = Inflate.stream(null, output: _FullOutput(failure));
       expect(() => inflate.addBytes(Deflate(data).getBytes()),
