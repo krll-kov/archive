@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../../util/archive_exception.dart';
+import '../../util/cancellable_stream.dart';
 import '../../util/chunked_sink.dart';
 import '../../util/crc32.dart';
 import '../../util/crc64.dart';
@@ -43,9 +44,9 @@ class XzDecoderConverter extends ChunkedConverter {
               'its output before '
               'it returns');
     }
-    return XzChunkedDecoder(
+    return FailOnceSink(XzChunkedDecoder(
         sink is ByteConversionSink ? sink : ByteConversionSink.from(sink),
-        verify: verify);
+        verify: verify));
   }
 
   @override
@@ -54,8 +55,11 @@ class XzDecoderConverter extends ChunkedConverter {
     if (options == null) {
       return super.bind(stream);
     }
-    return archiveStreamErrors(stream,
-        (Stream<List<int>> source) => _bindMultithread(source, options));
+    return archiveStreamErrors(
+        stream,
+        (Stream<List<int>> source) => subscribedOnListen(
+            source,
+            (Stream<List<int>> source) => _bindMultithread(source, options)));
   }
 
   Stream<List<int>> _bindMultithread(
@@ -700,9 +704,9 @@ class XzEncoderConverter extends ChunkedConverter {
 
   @override
   ByteConversionSink startChunkedConversion(Sink<List<int>> sink) =>
-      XzChunkedEncoder(
+      FailOnceSink(XzChunkedEncoder(
           sink is ByteConversionSink ? sink : ByteConversionSink.from(sink),
-          check: check);
+          check: check));
 }
 
 /// Sink for [XzEncoderConverter] - buffers at most one LZMA2 chunk of input

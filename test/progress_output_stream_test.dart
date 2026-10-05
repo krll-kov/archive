@@ -186,6 +186,39 @@ void main() {
       out.closeSync();
       expect(seen, [250, 280]);
     });
+
+    test('a stream written through reports as it is copied', () {
+      final seen = <int>[];
+      final out = ProgressOutputStream(OutputMemoryStream(), seen.add);
+      out.writeStream(InputMemoryStream(data));
+      out.closeSync();
+      expect(out.getBytes(), equals(data));
+      expect(seen.length, greaterThan(1));
+      expect(seen.last, data.length);
+    });
+
+    final stored = <String, ArchiveFile Function()>{
+      'tar': () => TarDecoder()
+          .decodeBytes(TarEncoder()
+              .encodeBytes(Archive()..add(ArchiveFile.bytes('a.bin', data))))
+          .single,
+      'stored zip': () => ZipDecoder()
+          .decodeBytes(ZipEncoder().encodeBytes(Archive()
+            ..add(ArchiveFile.bytes('a.bin', data)
+              ..compression = CompressionType.none)))
+          .single,
+    };
+    for (final MapEntry(key: name, value: entry) in stored.entries) {
+      test('a $name entry reports as it is written', () {
+        final seen = <int>[];
+        final out = ProgressOutputStream(OutputMemoryStream(), seen.add);
+        entry().writeContent(out);
+        out.closeSync();
+        expect(out.getBytes(), equals(data));
+        expect(seen.length, greaterThan(1));
+        expect(seen.last, data.length);
+      });
+    }
   });
 }
 

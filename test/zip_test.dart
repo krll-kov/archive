@@ -1563,6 +1563,40 @@ void main() async {
       }
     });
 
+    test('a password entry keeps its UT field in the central directory only',
+        testOn: 'vm', () {
+      List<int> extraIds(Uint8List bytes, int at, int nameAt, int header) {
+        final data = ByteData.sublistView(bytes);
+        final nameLength = data.getUint16(at + nameAt, Endian.little);
+        final extraLength = data.getUint16(at + nameAt + 2, Endian.little);
+        final ids = <int>[];
+        var offset = at + header + nameLength;
+        final end = offset + extraLength;
+        while (offset + 4 <= end) {
+          ids.add(data.getUint16(offset, Endian.little));
+          offset += 4 + data.getUint16(offset + 2, Endian.little);
+        }
+        return ids;
+      }
+
+      for (final password in [null, 'secret']) {
+        final bytes = ZipEncoder(password: password).encodeBytes(Archive()
+          ..add(ArchiveFile.string('a.txt', 'hello')
+            ..lastModTime = 157766400));
+        final central = latin1.decode(bytes).indexOf('PK\x01\x02');
+        expect(extraIds(bytes, 0, 26, 30),
+            password == null ? [0x5455] : [0x9901],
+            reason: 'local, password $password');
+        expect(extraIds(bytes, central, 28, 46),
+            password == null ? [0x5455] : [0x9901, 0x5455],
+            reason: 'central, password $password');
+        final entry = ZipDecoder()
+            .decodeBytes(bytes, password: password, verify: true)
+            .findFile('a.txt')!;
+        expect(utf8.decode(entry.readBytes()!), 'hello');
+      }
+    });
+
     test('an AES entry read without a password throws ArchiveException', () {
       final bytes = ZipEncoder(password: 'secret')
           .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'hello')));

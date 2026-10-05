@@ -56,7 +56,7 @@ class InputAhead<S> {
 /// completes, and the body's own wait is woken through [CancelSignal]
 Stream<T> cancellableStream<S, T>(Stream<S> input,
     Stream<T> Function(StreamIterator<S> input, CancelSignal signal) body) {
-  final iterator = StreamIterator<S>(input);
+  final iterator = _FromListen<S>(StreamIterator<S>(input));
   final signal = CancelSignal();
   StreamSubscription<T>? inner;
   late final StreamController<T> controller;
@@ -65,6 +65,7 @@ Stream<T> cancellableStream<S, T>(Stream<S> input,
     // body is past the event and a tar entry's content is already skipped
     sync: true,
     onListen: () {
+      iterator.start();
       inner = body(iterator, signal)
           .listen(controller.add, onError: controller.addError, onDone: () {
         // A body that failed part way has not read its input to the end
@@ -85,4 +86,89 @@ Stream<T> cancellableStream<S, T>(Stream<S> input,
     },
   );
   return controller.stream;
+}
+
+class _FromListen<S> implements StreamIterator<S> {
+  final StreamIterator<S> _inner;
+  Future<bool>? _first;
+
+  _FromListen(this._inner);
+
+  void start() => _first = _inner.moveNext()..ignore();
+
+  @override
+  Future<bool> moveNext() {
+    final first = _first;
+    if (first != null) {
+      _first = null;
+      return first;
+    }
+    return _inner.moveNext();
+  }
+
+  @override
+  S get current => _inner.current;
+
+  @override
+  Future<void> cancel() => _inner.cancel();
+}
+
+Stream<T> subscribedOnListen<S, T>(
+    Stream<S> input, Stream<T> Function(Stream<S> input) convert) {
+  late final StreamController<T> controller;
+  StreamSubscription<S>? source;
+  StreamSubscription<T>? inner;
+  controller = StreamController<T>(
+    sync: true,
+    onListen: () {
+      final subscription = input.listen(null)..pause();
+      source = subscription;
+      inner = convert(_Subscribed<S>(subscription))
+          .listen(controller.add, onError: controller.addError, onDone: () {
+        unawaited(subscription.cancel());
+        unawaited(controller.close());
+      });
+    },
+    onPause: () => inner?.pause(),
+    onResume: () => inner?.resume(),
+    onCancel: () async {
+      final innerCancel = inner?.cancel();
+      await source?.cancel();
+      await innerCancel;
+    },
+  );
+  return controller.stream;
+}
+
+class _Subscribed<S> extends Stream<S> {
+  final StreamSubscription<S> _source;
+  var _taken = false;
+
+  _Subscribed(this._source);
+
+  @override
+  StreamSubscription<S> listen(void Function(S event)? onData,
+      {Function? onError, void Function()? onDone, bool? cancelOnError}) {
+    if (_taken) {
+      throw StateError('Stream has already been listened to.');
+    }
+    _taken = true;
+    _source
+      ..onData(onData)
+      ..onDone(onDone);
+    if (cancelOnError ?? false) {
+      _source.onError((Object error, StackTrace stack) {
+        unawaited(_source.cancel());
+        if (onError is void Function(Object, StackTrace)) {
+          onError(error, stack);
+        } else if (onError != null) {
+          (onError as void Function(Object))(error);
+        }
+      });
+    } else {
+      _source.onError(onError);
+    }
+    _source.resume();
+    return _source;
+  }
 }

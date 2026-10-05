@@ -262,6 +262,42 @@ class _FailOnce implements EventSink<List<int>> {
   }
 }
 
+class FailOnceSink extends ByteConversionSink {
+  final ByteConversionSink _input;
+  var _failed = false;
+
+  FailOnceSink(this._input);
+
+  @override
+  void add(List<int> chunk) => addSlice(chunk, 0, chunk.length, false);
+
+  @override
+  void addSlice(List<int> chunk, int start, int end, bool isLast) {
+    if (_failed) {
+      return;
+    }
+    try {
+      _input.addSlice(chunk, start, end, isLast);
+    } catch (_) {
+      _failed = true;
+      rethrow;
+    }
+  }
+
+  @override
+  void close() {
+    if (_failed) {
+      return;
+    }
+    try {
+      _input.close();
+    } catch (_) {
+      _failed = true;
+      rethrow;
+    }
+  }
+}
+
 class _Collected implements Sink<List<int>> {
   final _pieces = <List<int>>[];
   var _length = 0;

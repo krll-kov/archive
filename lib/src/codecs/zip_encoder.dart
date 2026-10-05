@@ -77,6 +77,7 @@ class _ZipFileData {
   int mode = 0;
   bool isFile = true;
   bool unixHost = false;
+  int Function()? pendingCrc32;
 }
 
 DateTime _dosRange(DateTime t) => t.year < 1980
@@ -423,7 +424,9 @@ class ZipEncoder {
                 compressionType == CompressionType.bzip2) &&
             file.rawContent != null &&
             file.size > _bufferedMax;
-        if (!streamedDeflate) {
+        if (streamedOther) {
+          fileData.pendingCrc32 = () => getFileCrc32(file);
+        } else if (!streamedDeflate) {
           crc32 = getFileCrc32(file);
         }
 
@@ -697,10 +700,14 @@ class ZipEncoder {
       extra.addAll(const [0x01, 0x00, 0x10, 0x00, 0, 0, 0, 0, 0, 0, 0, 0]);
       extra.addAll(const [0, 0, 0, 0, 0, 0, 0, 0]);
     }
+    // archive 4.3.0 reads local extra 2 bytes at a time after AES record and
+    // throws RangeError on 9-byte UT field, so password entries keep UT only
+    // in central directory
     if (password != null) {
       extra.addAll(_getAexExtraData(fileData));
+    } else {
+      extra.addAll(_getUtExtraData(fileData));
     }
-    extra.addAll(_getUtExtraData(fileData));
 
     final compressedData = fileData.compressedData;
 
@@ -1002,7 +1009,9 @@ class ZipEntryBody {
       CompressionType.xz => XzChunkedEncoder(ZLibOutputSink(_output)),
       _ => BZip2ChunkedEncoder(ZLibOutputSink(_output)),
     };
-    encoder.add(_source.readBytes(take).toUint8List());
+    final bytes = _source.readBytes(take).toUint8List();
+    _data.crc32 = getCrc32(bytes, _data.crc32);
+    encoder.add(bytes);
     return true;
   }
 
@@ -1073,6 +1082,7 @@ class ZipEntryBody {
       encoder.close();
       return;
     }
+    _data.crc32 = _data.pendingCrc32?.call() ?? _data.crc32;
     // ZstdChunkedEncoder was 4% slower on 100 MB and wrote other frames than
     // the buffered path on 10 MB, so an entry without steps keeps encodeStream
     switch (_data.compression) {

@@ -1,9 +1,12 @@
 import 'dart:typed_data';
 
 import 'byte_order.dart';
+import 'input_memory_stream.dart';
 import 'input_stream.dart';
 import 'output_stream.dart';
 import 'report_progress.dart';
+
+const _streamPieceSize = 1 << 20;
 
 /// Passes every write to [output] and calls [onProgress] with the number of
 /// bytes written through it, once per [interval] bytes and on flush and close.
@@ -97,9 +100,38 @@ class ProgressOutputStream implements OutputStream {
 
   @override
   void writeStream(InputStream stream) {
-    final count = stream.length;
-    output.writeStream(stream);
-    _add(count);
+    var left = stream.length;
+    if (left <= _streamPieceSize) {
+      output.writeStream(stream);
+      _add(left);
+      return;
+    }
+    final held = stream.position;
+    output.reserve(output.length + left);
+    try {
+      if (stream is InputMemoryStream) {
+        while (left > 0) {
+          final count = left < _streamPieceSize ? left : _streamPieceSize;
+          output.writeBytes(stream.readBytes(count).toUint8List());
+          _add(count);
+          left -= count;
+        }
+        return;
+      }
+      final chunk = Uint8List(_streamPieceSize);
+      while (left > 0) {
+        final got = stream.readInto(
+            chunk, 0, left < _streamPieceSize ? left : _streamPieceSize);
+        if (got <= 0) {
+          return;
+        }
+        output.writeBytes(chunk, length: got);
+        _add(got);
+        left -= got;
+      }
+    } finally {
+      stream.setPosition(held);
+    }
   }
 
   @override

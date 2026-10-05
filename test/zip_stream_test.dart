@@ -129,6 +129,34 @@ void main() {
         expect(back.files.single.content, want);
       }
     });
+
+    test('a large zstd, xz or bzip2 entry is read from its file once',
+        testOn: 'vm', () async {
+      final dir = Directory.systemTemp.createTempSync('zip_read_once');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final want = _source(3 << 20, 17);
+      final path = '${dir.path}/a.bin';
+      File(path).writeAsBytesSync(want);
+      for (final type in [
+        CompressionType.zstd,
+        CompressionType.xz,
+        CompressionType.bzip2,
+      ]) {
+        final handle = _ByteCountingHandle(path);
+        final input = InputFileStream.withFileHandle(handle);
+        addTearDown(input.closeSync);
+        final bytes = await Stream.value(
+                ArchiveFile.stream('a.bin', input)..compression = type)
+            .transform(zipCodec.encoder)
+            .fold<List<int>>(<int>[], (held, piece) => held..addAll(piece));
+        expect(handle.bytes, lessThan(want.length * 3 ~/ 2), reason: type.name);
+        final back = ZipDecoder()
+            .decodeBytes(Uint8List.fromList(bytes), verify: true)
+            .files
+            .single;
+        expect(back.content, want, reason: type.name);
+      }
+    });
   });
 
   group('zip with the sizes behind the data, which is the default', () {
@@ -728,4 +756,44 @@ class _ClosingInput extends InputMemoryStream {
     closed = true;
     await super.close();
   }
+}
+
+/// Counts the bytes read from the file
+class _ByteCountingHandle extends AbstractFileHandle {
+  final FileHandle _inner;
+  int bytes = 0;
+
+  _ByteCountingHandle(String path) : _inner = FileHandle(path);
+
+  @override
+  int get position => _inner.position;
+
+  @override
+  set position(int p) => _inner.position = p;
+
+  @override
+  int get length => _inner.length;
+
+  @override
+  bool get isOpen => _inner.isOpen;
+
+  @override
+  bool open({FileAccess mode = FileAccess.read}) => _inner.open(mode: mode);
+
+  @override
+  Future<void> close() => _inner.close();
+
+  @override
+  void closeSync() => _inner.closeSync();
+
+  @override
+  int readInto(Uint8List buffer, [int? length]) {
+    final got = _inner.readInto(buffer, length);
+    bytes += got;
+    return got;
+  }
+
+  @override
+  void writeFromSync(List<int> buffer, [int start = 0, int? end]) =>
+      _inner.writeFromSync(buffer, start, end);
 }

@@ -51,9 +51,9 @@ class BZip2DecoderConverter extends ChunkedConverter {
   /// {@macro archive.codecs.chunked_conversion}
   @override
   ByteConversionSink startChunkedConversion(Sink<List<int>> sink) =>
-      BZip2ChunkedDecoder(
+      FailOnceSink(BZip2ChunkedDecoder(
           sink is ByteConversionSink ? sink : ByteConversionSink.from(sink),
-          verify: verify);
+          verify: verify));
 }
 
 /// {@macro archive.codecs.without_on_done}
@@ -65,9 +65,9 @@ class BZip2EncoderConverter extends ChunkedConverter {
 
   @override
   ByteConversionSink startChunkedConversion(Sink<List<int>> sink) =>
-      BZip2ChunkedEncoder(
+      FailOnceSink(BZip2ChunkedEncoder(
           sink is ByteConversionSink ? sink : ByteConversionSink.from(sink),
-          blockSize100k: blockSize100k);
+          blockSize100k: blockSize100k));
 }
 
 /// Writes a bzip2 archive over data that arrives in pieces.

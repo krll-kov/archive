@@ -601,6 +601,9 @@ class TarMetadata {
   TarFile? _orphan;
 
   TarFile? takeOrphan([bool atEnd = false]) {
+    // Throwing when L, K or x header is last rejects valid GNU tar volumes:
+    // gtar -M ends volume after such header and writes entry to next volume.
+    // 12 of 114 volumes of 2 to 11 KiB end this way, so we accept archive end
     if (atEnd) {
       _dropLegacy();
     }

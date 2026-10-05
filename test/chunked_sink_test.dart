@@ -43,6 +43,22 @@ Future<void> _expectLazySubscription<S, T>(
   expect(listens, 1);
 }
 
+Future<void> _expectBroadcastRead<S>(
+    Future<Object?> Function(Stream<S> source) read, List<S> events) async {
+  final expected = await read(Stream.fromIterable(events));
+  final source = StreamController<S>.broadcast();
+  final result = read(source.stream)
+      .then<Object?>((value) => value, onError: (Object error) => error);
+  events.forEach(source.add);
+  await source.close();
+  expect(await result.timeout(const Duration(seconds: 10)), expected);
+}
+
+List<List<int>> _slices(List<int> bytes) => [
+      for (var at = 0; at < bytes.length; at += 512)
+        bytes.sublist(at, at + 512 < bytes.length ? at + 512 : bytes.length),
+    ];
+
 Uint8List _sample(int size) {
   final data = Uint8List(size);
   for (var i = 0; i < size; i++) {
@@ -66,6 +82,52 @@ void main() {
         () => _expectLazySubscription(const ZstdCodec(
                 multithread: ZstdMultithreadOptions.converter(workers: 2))
             .encoder));
+  });
+
+  group('a broadcast source is read from its first event', () {
+    List<ArchiveFile> files() => [
+          for (var i = 0; i < 3; i++)
+            ArchiveFile.bytes('f$i.bin', _sample(3000 + i))
+              ..lastModTime = 1700000000,
+        ];
+    Future<Object?> bytesOf(Stream<List<int>> stream) =>
+        stream.expand((piece) => piece).toList();
+
+    test(
+        'tar decoder',
+        () => _expectBroadcastRead<List<int>>(
+            (source) => source
+                .transform(tarCodec.decoder)
+                .asyncMap((entry) async => [
+                      entry.name,
+                      await entry.content.expand((piece) => piece).toList()
+                    ])
+                .toList(),
+            _slices(TarEncoder().encodeBytes(Archive()
+              ..add(files()[0])
+              ..add(files()[1])))));
+    test(
+        'tar encoder',
+        () => _expectBroadcastRead<ArchiveFile>(
+            (source) => bytesOf(source.transform(tarCodec.encoder)), files()));
+    test(
+        'zip encoder',
+        () => _expectBroadcastRead<ArchiveFile>(
+            (source) => bytesOf(source.transform(zipCodec.encoder)), files()));
+    test(
+        'threaded xz decoder',
+        () => _expectBroadcastRead<List<int>>(
+            (source) => bytesOf(source.transform(const XzCodec(
+                    multithread: XZMultithreadOptions.converter(workers: 2))
+                .decoder)),
+            _slices(xzCodec.encode(_sample(3000)))));
+    test(
+        'threaded zstd encoder',
+        () => _expectBroadcastRead<List<int>>(
+            (source) => bytesOf(source.transform(const ZstdCodec(
+                    multithread: ZstdMultithreadOptions.converter(workers: 2))
+                .encoder)),
+            _slices(_sample(3000))));
   });
 
   final sinks = <String, ChunkedSink Function(Sink<List<int>>)>{
@@ -282,6 +344,27 @@ void main() {
         expect(errors, hasLength(2), reason: name);
         expect(errors.first, isA<StateError>(), reason: name);
         expect(errors.last, isA<FormatException>(), reason: name);
+      }
+    });
+
+    test('a fused decoder reports a failure to a stream once, as gzip does',
+        () async {
+      final codecs = <String, Codec<List<int>, List<int>>>{
+        'gzip': gzip,
+        'xz': xzCodec,
+        'zstd': zstdCodec,
+        'bzip2': bzip2Codec,
+      };
+      for (final MapEntry(key: name, value: codec) in codecs.entries) {
+        final archive = Uint8List.fromList(codec.encode(_sample(3000)));
+        archive[0] ^= 0xff;
+        final errors = <Object>[];
+        final subscription = Stream.fromIterable(_slices(archive))
+            .transform(codec.decoder.fuse(base64.encoder))
+            .listen((_) {}, onError: errors.add);
+        await pumpEventQueue();
+        await subscription.cancel();
+        expect(errors, hasLength(1), reason: name);
       }
     });
 

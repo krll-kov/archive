@@ -555,6 +555,12 @@ Stream<TarEntry> _held(TarFile file, CancelSignal signal) async* {
           Stream<List<int>>.value(Uint8List.sublistView(bytes, read)))),
       read: read);
   yield entry;
+  // On dart2js and DDC this generator resumes after yield* before listener
+  // receives entry, so content throws StateError. Web builds wait 1 microtask
+  // before setting _done, and on VM const condition removes this await
+  if (!const bool.fromEnvironment('dart.library.isolate')) {
+    await Future<void>.value();
+  }
   entry._done = true;
   signal.onCancel = () => entry._finish?.call();
   await entry._settled;

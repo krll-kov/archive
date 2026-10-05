@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../../util/archive_exception.dart';
+import '../../util/cancellable_stream.dart';
 import '../../util/chunked_sink.dart';
 import '../../util/decode_guard.dart';
 import '../../util/output_memory_stream.dart';
@@ -93,11 +94,11 @@ class ZstdDecoderConverter extends ChunkedConverter {
 
   @override
   ByteConversionSink startChunkedConversion(Sink<List<int>> sink) =>
-      ZstdChunkedDecoder(
+      FailOnceSink(ZstdChunkedDecoder(
           sink is ByteConversionSink ? sink : ByteConversionSink.from(sink),
           verify: verify,
           dictionary: dictionary,
-          windowSizeLimit: windowSizeLimit);
+          windowSizeLimit: windowSizeLimit));
 }
 
 /// {@macro archive.codecs.general}
@@ -137,12 +138,12 @@ class ZstdEncoderConverter extends ChunkedConverter {
               'its output before '
               'it returns');
     }
-    return ZstdChunkedEncoder(
+    return FailOnceSink(ZstdChunkedEncoder(
         sink is ByteConversionSink ? sink : ByteConversionSink.from(sink),
         level: level,
         checksum: checksum,
         dictionary: dictionary,
-        contentSize: contentSize);
+        contentSize: contentSize));
   }
 
   /// The dictionary as the reference sees it here, none where it is too short
@@ -158,8 +159,11 @@ class ZstdEncoderConverter extends ChunkedConverter {
     if (options == null) {
       return super.bind(stream);
     }
-    return archiveStreamErrors(stream,
-        (Stream<List<int>> source) => _bindMultithread(source, options));
+    return archiveStreamErrors(
+        stream,
+        (Stream<List<int>> source) => subscribedOnListen(
+            source,
+            (Stream<List<int>> source) => _bindMultithread(source, options)));
   }
 
   Stream<List<int>> _bindMultithread(Stream<List<int>> stream,
