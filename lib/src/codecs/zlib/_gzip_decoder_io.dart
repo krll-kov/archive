@@ -61,8 +61,8 @@ class _GZipDecoder extends ZLibDecoderBase {
         }
       }
       try {
-        out = _convertMembers(
-            bytes, seen - trailerLength, isGZip, verify && isGZip, partial);
+        out = _convertMembers(bytes, seen - trailerLength, isGZip,
+            verify && isGZip, partial, (verify || throwOnError) && isGZip);
       } on FormatException catch (error) {
         if (!verify || !isGZip) {
           rethrow;
@@ -134,7 +134,9 @@ class _GZipDecoder extends ZLibDecoderBase {
       return false;
     }
 
-    final outSink = ZLibOutputSink(output);
+    final probe =
+        (verify || throwOnError) && isGZip ? _ProbeSink(output) : null;
+    final outSink = probe ?? ZLibOutputSink(output);
     if (verify) {
       outSink
         ..value = isGZip ? 0 : 1
@@ -256,7 +258,20 @@ class _GZipDecoder extends ZLibDecoderBase {
     FormatException? trailerError;
     try {
       if (verify && isGZip) {
-        inSink.add(trailer);
+        _addTrailer(inSink, trailer);
+        if (!_endsAtMember(inSink, probe!)) {
+          throw ArchiveException('gzip: unexpected end of input');
+        }
+      } else if (throwOnError && isGZip) {
+        var read = true;
+        try {
+          _addTrailer(inSink, tail);
+        } on FormatException {
+          read = false;
+        }
+        if (read && !_endsAtMember(inSink, probe!)) {
+          throw ArchiveException('gzip: unexpected end of input');
+        }
       } else {
         addTrailerUnchecked(inSink, tail);
       }
@@ -396,8 +411,9 @@ int _toNextMember(InputStream input, int left) {
 }
 
 Uint8List _convertMembers(Uint8List bytes, int end, bool isGZip, bool checked,
-    OutputMemoryStream partial) {
-  final output = ZLibOutputSink(partial);
+    OutputMemoryStream partial, bool whole) {
+  var probe = whole ? _ProbeSink(partial) : null;
+  final output = probe ?? ZLibOutputSink(partial);
   var sink = GZipCodec().decoder.startChunkedConversion(output);
   final body = Uint8List.sublistView(bytes, 0, end);
   final trailer = Uint8List.sublistView(bytes, end);
@@ -406,7 +422,11 @@ Uint8List _convertMembers(Uint8List bytes, int end, bool isGZip, bool checked,
   // random data, and second decode after error reads input twice
   sink.addSlice(bytes, 0, end, false);
   try {
-    sink.add(trailer);
+    if (probe != null) {
+      _addTrailer(sink, trailer);
+    } else {
+      sink.add(trailer);
+    }
   } on FormatException {
     var from = isGZip ? _afterEmptyMember(_none, body, trailer, 1) : -1;
     while (from >= 0 && !_endsEmptyMember(body, from)) {
@@ -428,13 +448,63 @@ Uint8List _convertMembers(Uint8List bytes, int end, bool isGZip, bool checked,
     }
     sink.add(Uint8List.sublistView(body, from));
     if (checked) {
-      sink.add(trailer);
+      _addTrailer(sink, trailer);
     } else {
       addTrailerUnchecked(sink, trailer);
+      probe = null;
     }
+  }
+  if (probe != null && !_endsAtMember(sink, probe)) {
+    throw ArchiveException('gzip: unexpected end of input');
   }
   sink.close();
   return partial.getBytes();
+}
+
+class _ProbeSink extends ZLibOutputSink {
+  BytesBuilder? probe;
+
+  _ProbeSink(super.output);
+
+  @override
+  void add(List<int> data) {
+    final probe = this.probe;
+    if (probe != null) {
+      probe.add(data);
+      return;
+    }
+    super.add(data);
+  }
+}
+
+final _probeBytes =
+    Uint8List.fromList(List.generate(16, (i) => 0xa5 ^ (i * 37)));
+final _probeMember = GZipCodec(level: 0).encode(_probeBytes);
+
+void _addTrailer(Sink<List<int>> sink, Uint8List trailer) {
+  final last = trailer.length - 1;
+  sink.add(Uint8List.sublistView(trailer, 0, last));
+  sink.add(Uint8List.sublistView(trailer, last));
+}
+
+bool _endsAtMember(Sink<List<int>> sink, _ProbeSink output) {
+  final probe = output.probe = BytesBuilder(copy: false);
+  try {
+    sink.add(_probeMember);
+    final got = probe.takeBytes();
+    var ended = got.length == _probeBytes.length;
+    for (var i = 0; ended && i < got.length; i++) {
+      ended = got[i] == _probeBytes[i];
+    }
+    if (ended) {
+      output.probe = null;
+      return true;
+    }
+    sink.close();
+  } on FormatException {
+    return false;
+  }
+  return false;
 }
 
 final _none = Uint8List(0);

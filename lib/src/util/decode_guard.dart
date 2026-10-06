@@ -85,6 +85,8 @@ class _SourceError {
   _SourceError(this.error);
 }
 
+Object sourceError(Object error) => error is _SourceError ? error.error : error;
+
 Stream<T> archiveStreamErrors<S, T>(
         Stream<S> source, Stream<T> Function(Stream<S> source) convert) =>
     convert(source.handleError(

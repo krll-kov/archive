@@ -251,6 +251,32 @@ Future<bool> _clearPathAsync(String filePath) async {
   return false;
 }
 
+void _createDirectory(String filePath) {
+  try {
+    Directory(filePath).createSync(recursive: true);
+  } on FileSystemException {
+    if (FileSystemEntity.typeSync(filePath, followLinks: false) !=
+        FileSystemEntityType.file) {
+      rethrow;
+    }
+    File(filePath).deleteSync();
+    Directory(filePath).createSync(recursive: true);
+  }
+}
+
+Future<void> _createDirectoryAsync(String filePath) async {
+  try {
+    await Directory(filePath).create(recursive: true);
+  } on FileSystemException {
+    if (await FileSystemEntity.type(filePath, followLinks: false) !=
+        FileSystemEntityType.file) {
+      rethrow;
+    }
+    await File(filePath).delete();
+    await Directory(filePath).create(recursive: true);
+  }
+}
+
 bool _clearPath(String filePath) {
   final type = FileSystemEntity.typeSync(filePath, followLinks: false);
   if (type == FileSystemEntityType.link) {
@@ -353,7 +379,7 @@ void _extractArchiveEntryToDiskSync(
       }
       output.closeSync();
     } else {
-      Directory(filePath).createSync(recursive: true);
+      _createDirectory(filePath);
     }
   }
 }
@@ -439,7 +465,7 @@ Future<void> extractArchiveToDisk(Archive archive, String outputPath,
     }
 
     if (entry.isDirectory) {
-      await Directory(filePath).create(recursive: true);
+      await _createDirectoryAsync(filePath);
       continue;
     }
 
@@ -679,7 +705,7 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
       }
 
       if (file.isDirectory && !file.isSymbolicLink) {
-        await Directory(filePath).create(recursive: true);
+        await _createDirectoryAsync(filePath);
         continue;
       }
 

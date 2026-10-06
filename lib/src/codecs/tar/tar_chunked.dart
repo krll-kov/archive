@@ -399,7 +399,12 @@ class TarEntry {
   Stream<Uint8List> _stream(int count) async* {
     var need = count;
     while (need > 0) {
-      final piece = await _reader.some(need);
+      final Uint8List piece;
+      try {
+        piece = await _reader.some(need);
+      } catch (error, stack) {
+        Error.throwWithStackTrace(sourceError(error), stack);
+      }
       if (piece.isEmpty) {
         throw ArchiveException('tar: unexpected end of archive $name');
       }
@@ -449,6 +454,7 @@ Stream<TarEntry> _read(
           storeData: false,
           encoding: encoding,
           size: metadata.dataSize,
+          name: metadata.name,
           pax: metadata.pax);
       metadata.sawHeader(file);
       if (TarMetadata.describesNext(file)) {

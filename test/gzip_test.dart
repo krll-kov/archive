@@ -1141,6 +1141,89 @@ void main() {
         }
       });
 
+      test('gzip verify and throwOnError throw on input cut inside member', () {
+        final zeros = Uint8List(300000);
+        final text = Uint8List.fromList(
+            List.generate(50000, (i) => 97 + (i * 7 + i ~/ 13) % 26));
+        final none = Uint8List(0);
+        final inputs = [
+          [zeros],
+          [zeros, text],
+          [zeros, none],
+          [none, text],
+          [none, text, none, none],
+        ];
+        for (final members in inputs) {
+          final bytes = <int>[];
+          final ends = <int>[];
+          for (final member in members) {
+            bytes.addAll(GZipEncoder().encodeBytes(member));
+            ends.add(bytes.length);
+          }
+          final whole = Uint8List.fromList(bytes);
+          final expected = [for (final member in members) ...member];
+          final sizes = [for (final member in members) member.length];
+          for (final (v, t) in [(true, false), (false, true)]) {
+            expect(
+                const GZipDecoder()
+                    .decodeBytes(whole, verify: v, throwOnError: t),
+                expected,
+                reason: 'members $sizes, verify $v');
+            final output = OutputMemoryStream();
+            expect(
+                const GZipDecoder().decodeStream(
+                    InputMemoryStream(whole), output,
+                    verify: v, throwOnError: t),
+                isTrue,
+                reason: 'members $sizes, verify $v');
+            expect(output.getBytes(), expected);
+          }
+          for (var cut = 1; cut < whole.length; cut++) {
+            if (ends.contains(cut)) {
+              continue;
+            }
+            final part = Uint8List.sublistView(whole, 0, cut);
+            for (final (v, t) in [
+              (true, false),
+              if (members.first.isNotEmpty) (false, true)
+            ]) {
+              final reason = 'members $sizes, cut $cut, verify $v';
+              expect(
+                  () => const GZipDecoder()
+                      .decodeBytes(part, verify: v, throwOnError: t),
+                  throwsA(isA<ArchiveException>()),
+                  reason: 'bytes, $reason');
+              expect(
+                  () => const GZipDecoder().decodeStream(
+                      InputMemoryStream(part), OutputMemoryStream(),
+                      verify: v, throwOnError: t),
+                  throwsA(isA<ArchiveException>()),
+                  reason: 'stream, $reason');
+            }
+          }
+        }
+      });
+
+      test('gzip verify and throwOnError throw on member cut in extra field',
+          () {
+        const header = [0x1f, 0x8b, 8, 4, 0, 0, 0, 0, 0, 3, 0, 1, 0, 0, 0, 0];
+        final cut = Uint8List.fromList(
+            [...GZipEncoder().encodeBytes(Uint8List(300000)), ...header]);
+        for (final (v, t) in [(true, false), (false, true)]) {
+          expect(
+              () => const GZipDecoder()
+                  .decodeBytes(cut, verify: v, throwOnError: t),
+              throwsA(isA<ArchiveException>()),
+              reason: 'bytes, verify $v');
+          expect(
+              () => const GZipDecoder().decodeStream(
+                  InputMemoryStream(cut), OutputMemoryStream(),
+                  verify: v, throwOnError: t),
+              throwsA(isA<ArchiveException>()),
+              reason: 'stream, verify $v');
+        }
+      });
+
       test(
           'web zlib ignores bytes after complete stream with verify or throwOnError',
           () {

@@ -330,6 +330,11 @@ class ZipEncoder {
     if (!entry.isFile && !fileData.name.endsWith('/')) {
       fileData.name += '/';
     }
+    if (fileData.name.length > 0x3fff &&
+        filenameEncoding.encode(fileData.name).length > 0xffff) {
+      _data.files.removeLast();
+      throw ArchiveException('zip: name is longer than 65535 bytes');
+    }
     // If the archive modification time was overwritten, use that, otherwise
     // use the lastModTime from the file.
     fileData.time = _data.time ?? _getTime(lastModTime)!;

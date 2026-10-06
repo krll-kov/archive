@@ -95,6 +95,7 @@ class TarFile {
       {bool storeData = true,
       Encoding? encoding,
       int? size,
+      String? name,
       bool pax = false}) {
     final header = input.readBytes(512);
 
@@ -165,6 +166,9 @@ class TarFile {
         typeFlag == blockSpec ||
         typeFlag == directory ||
         typeFlag == fifo) {
+      fileSize = 0;
+    }
+    if (typeFlag == '' && (name ?? filename).endsWith('/')) {
       fileSize = 0;
     }
     if (_gnuMagic && !isMetadata && typeFlag != 'A' && typeFlag != 'V') {
@@ -844,6 +848,50 @@ class TarMetadata {
     return value < 0 || value == TarFile.maxNumericField ? null : value;
   }
 
+  static int? _paxId(List<int> records, int start, int end) {
+    if (start == end) {
+      return null;
+    }
+    final number = _paxNumber(records, start, end);
+    if (number == -1) {
+      throw ArchiveException('Invalid tar pax id');
+    }
+    return number;
+  }
+
+  static int? _paxTime(List<int> records, int start, int end) {
+    if (end - start > 128) {
+      throw ArchiveException('Invalid tar pax mtime');
+    }
+    if (start == end) {
+      return null;
+    }
+    var i = start;
+    final negative = records[i] == 0x2d;
+    if (negative) {
+      i++;
+    }
+    var seconds = 0;
+    for (; i < end && records[i] >= 0x30 && records[i] <= 0x39; i++) {
+      final digit = records[i] - 0x30;
+      if (seconds > (TarFile.maxNumericField - digit) ~/ 10) {
+        return null;
+      }
+      seconds = seconds * 10 + digit;
+    }
+    if (i < end) {
+      if (records[i] != 0x2e) {
+        return null;
+      }
+      for (i++; i < end; i++) {
+        if (records[i] < 0x30 || records[i] > 0x39) {
+          return null;
+        }
+      }
+    }
+    return negative ? -seconds : seconds;
+  }
+
   /// Records are "%d %s=%s\n", the length covering the whole record. Parsed by
   /// that length rather than split on newlines, and not decoded as UTF-8 up
   /// front: SCHILY.xattr and its kind hold raw bytes with embedded newlines
@@ -898,8 +946,13 @@ class TarMetadata {
       }
       // The values of these keywords are UTF-8, but don't let a malformed
       // one abort the whole archive
-      final value =
-          utf8.decode(records.sublist(eq + 1, valueEnd), allowMalformed: true);
+      final bytes = records.sublist(eq + 1, valueEnd);
+      String value;
+      try {
+        value = utf8.decode(bytes);
+      } on FormatException {
+        value = String.fromCharCodes(bytes);
+      }
       switch (keyword) {
         case 'path':
           name = value;
@@ -921,14 +974,13 @@ class TarMetadata {
           // archive has nowhere to keep. Truncated off the string rather
           // than through a double, which for a long enough fraction would
           // round up and report the wrong second.
-          final dot = value.indexOf('.');
-          modTime = int.tryParse(dot < 0 ? value : value.substring(0, dot));
+          modTime = _paxTime(records, eq + 1, valueEnd);
           break;
         case 'uid':
-          ownerId = int.tryParse(value);
+          ownerId = _paxId(records, eq + 1, valueEnd);
           break;
         case 'gid':
-          groupId = int.tryParse(value);
+          groupId = _paxId(records, eq + 1, valueEnd);
           break;
         case 'GNU.sparse.name':
           _sparseName = value;

@@ -405,6 +405,42 @@ void main() {
       expect(_stream(short, 256), throwsA(isA<ArchiveException>()));
     });
 
+    test('source error reaches entry content unchanged', () async {
+      final archive = Archive()
+        ..add(ArchiveFile.bytes('a.bin', _source(4000, 19)));
+      final bytes = TarEncoder().encodeBytes(archive);
+      Future<Object?> contentError(Stream<List<int>> source) async {
+        Object? seen;
+        try {
+          await for (final entry in source.transform(tarCodec.decoder)) {
+            try {
+              await entry.content.drain<void>();
+            } catch (error) {
+              seen = error;
+            }
+          }
+        } catch (_) {}
+        return seen;
+      }
+
+      final failure = StateError('source failed');
+      Stream<List<int>> failing() async* {
+        yield Uint8List.sublistView(bytes, 0, 1200);
+        throw failure;
+      }
+
+      expect(await contentError(failing()), same(failure));
+
+      final large = Archive()
+        ..add(ArchiveFile.bytes('b.bin', _source(400000, 23)));
+      final xz = XZEncoder().encodeBytes(TarEncoder().encodeBytes(large));
+      final cut = Uint8List.sublistView(xz, 0, xz.length ~/ 2);
+      expect(
+          await contentError(
+              Stream<List<int>>.value(cut).transform(xzCodec.decoder)),
+          isA<ArchiveException>());
+    });
+
     test('type flag decodes to TarEntryType', () async {
       final archive = Archive()
         ..add(ArchiveFile.directory('dir'))

@@ -109,6 +109,7 @@ class TarDecoder {
           storeData: storeData,
           encoding: filenameEncoding,
           size: metadata.dataSize,
+          name: metadata.name,
           pax: metadata.pax);
       metadata.sawHeader(tf);
       final blocks = 1 + (tf.sparse?.extensionBlocks ?? 0);

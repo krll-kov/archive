@@ -1063,6 +1063,22 @@ void main() {
       expect(File(p.join(output, 'full', 'a.txt')).readAsStringSync(), 'a');
     });
 
+    test('$method creates directory at path of file from earlier entry',
+        () async {
+      final root = Directory.systemTemp.createTempSync('archive-extract-path-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final output = p.join(root.path, 'out');
+      await extract(
+          Archive()
+            ..add(ArchiveFile.directory('a/'))
+            ..add(ArchiveFile.string('a/b', 'file'))
+            ..add(ArchiveFile.directory('a/b/'))
+            ..add(ArchiveFile.string('a/b/c', 'c')),
+          output,
+          root.path);
+      expect(File(p.join(output, 'a', 'b', 'c')).readAsStringSync(), 'c');
+    });
+
     // Python tarfile default filter and 7-Zip 26 also keep such link out,
     // bsdtar and Python filter='tar' create it as allowAbsoluteSymlinks does
     test('$method creates absolute symlinks only when allowed', () async {

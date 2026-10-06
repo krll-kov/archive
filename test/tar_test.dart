@@ -1675,6 +1675,71 @@ void main() {
       }
     });
 
+    test('pax mtime, uid and gid decode as libarchive decodes them', () async {
+      Uint8List archive(String key, String value) {
+        final records = utf8.encode(_paxRecord(key, value));
+        return Uint8List.fromList([
+          ..._tarHeader('PaxHeaders/a', 'x', records.length,
+              magic: 'ustar\u000000'),
+          ..._tarBlocks(records),
+          ..._tarHeader('a', '0', 0, magic: 'ustar\u000000', fields: const {
+            108: '0000007\u0000',
+            116: '0000011\u0000',
+            136: '00000000144\u0000',
+          }),
+          ...Uint8List(1024),
+        ]);
+      }
+
+      const keys = ['mtime', 'uid', 'gid'];
+      for (final (key, value, expected) in [
+        ('mtime', '1748089464', 1748089464),
+        ('mtime', '1748089464.951928467', 1748089464),
+        ('mtime', '123.', 123),
+        ('mtime', '-5', -5),
+        ('mtime', '1748089464.951928467a', 100),
+        ('mtime', '+5', 100),
+        ('mtime', ' 123', 100),
+        ('mtime', '1e3', 100),
+        ('mtime', '', 100),
+        ('mtime', '99999999999999999999', 100),
+        ('uid', ' 77', 77),
+        ('uid', '77xyz', 77),
+        ('uid', '-1', 7),
+        ('uid', '', 7),
+        ('uid', '99999999999999999999', 7),
+        ('gid', '\t88', 88),
+        ('gid', '-1', 9),
+      ]) {
+        final fields = [100, 7, 9]..[keys.indexOf(key)] = expected;
+        final bytes = archive(key, value);
+        final file = TarDecoder().decodeBytes(bytes, verify: true)[0];
+        expect([file.lastModTime, file.ownerId, file.groupId], fields,
+            reason: '$key=$value');
+        final entry = (await Stream<List<int>>.value(bytes)
+                .transform(tarCodec.decoder)
+                .toList())
+            .single;
+        expect([entry.lastModTime, entry.ownerId, entry.groupId], fields,
+            reason: '$key=$value');
+      }
+      for (final (key, value) in [
+        ('mtime', '1' * 129),
+        ('uid', '1' * 65),
+        ('gid', '1' * 65),
+      ]) {
+        final bytes = archive(key, value);
+        expect(TarDecoder().decodeBytes(bytes).files, isEmpty, reason: key);
+        expect(() => TarDecoder().decodeBytes(bytes, verify: true),
+            throwsA(isA<ArchiveException>()),
+            reason: key);
+        expect(
+            Stream<List<int>>.value(bytes).transform(tarCodec.decoder).toList(),
+            throwsA(isA<ArchiveException>()),
+            reason: key);
+      }
+    });
+
     test('pax size record survives a second metadata header', () {
       // The record describes the entry it precedes, not the pax header that
       // happens to sit in between. Applying it there reads the wrong number of
@@ -1773,6 +1838,106 @@ void main() {
         return '${e.name} ${e.type.name}';
       }).toList();
       expect(entries, ['dir/ directory', 'dir/a.txt file']);
+    });
+
+    test('v7 directory with nonzero size has no content blocks', () async {
+      Uint8List header(String name, int size, [String typeFlag = '']) {
+        final h = Uint8List(512);
+        void put(int off, String s) =>
+            h.setRange(off, off + s.length, ascii.encode(s));
+        put(0, name);
+        put(100, '0000755');
+        put(108, '0000000');
+        put(116, '0000000');
+        put(124, size.toRadixString(8).padLeft(11, '0'));
+        put(136, '00000000000');
+        put(148, '        ');
+        put(156, typeFlag);
+        var sum = 0;
+        for (final b in h) {
+          sum += b;
+        }
+        put(148, '${sum.toRadixString(8).padLeft(6, '0')}\x00 ');
+        return h;
+      }
+
+      final path = ascii.encode('14 path=long/\n');
+      final bytes = Uint8List.fromList([
+        ...header('directory1/', 1),
+        ...header('directory2/', 0),
+        ...header('PaxHeader', path.length, TarFile.exHeader),
+        ...path,
+        ...Uint8List(512 - path.length),
+        ...header('short', 1),
+        ...header('file.txt', 0),
+        ...Uint8List(1024),
+      ]);
+      const names = ['directory1/', 'directory2/', 'long/', 'file.txt'];
+
+      final archive = TarDecoder().decodeBytes(bytes);
+      expect(archive.map((file) => file.name), names);
+      expect(archive.map((file) => file.isFile), [false, false, false, true]);
+      expect(TarDecoder().decodeBytes(bytes, verify: true).length, 4);
+
+      final entries = await Stream<List<int>>.value(bytes)
+          .transform(tarCodec.decoder)
+          .asyncMap((e) async {
+        await e.content.drain<void>();
+        return e.name;
+      }).toList();
+      expect(entries, names);
+    });
+
+    test('pax path with invalid UTF-8 keeps its bytes', () async {
+      Uint8List header(String name, int size, String typeFlag) {
+        final h = Uint8List(512);
+        void put(int off, String s) =>
+            h.setRange(off, off + s.length, ascii.encode(s));
+        put(0, name);
+        put(100, '0000644');
+        put(108, '0000000');
+        put(116, '0000000');
+        put(124, size.toRadixString(8).padLeft(11, '0'));
+        put(136, '00000000000');
+        put(148, '        ');
+        put(156, typeFlag);
+        put(257, 'ustar');
+        put(263, '00');
+        var sum = 0;
+        for (final b in h) {
+          sum += b;
+        }
+        put(148, '${sum.toRadixString(8).padLeft(6, '0')}\x00 ');
+        return h;
+      }
+
+      List<int> entry(List<int> path) {
+        final record = [...ascii.encode('${path.length + 9} path='), ...path];
+        return [
+          ...header('PaxHeader', record.length + 1, TarFile.exHeader),
+          ...record,
+          0x0a,
+          ...Uint8List(511 - record.length),
+          ...header('short', 0, TarFile.normalFile),
+        ];
+      }
+
+      const damaged = [0x61, 0xcc, 0x8c, 0x6d, 0xfc, 0x78];
+      final bytes = Uint8List.fromList([
+        ...entry(damaged),
+        ...entry(utf8.encode('päth')),
+        ...Uint8List(1024),
+      ]);
+      final names = [String.fromCharCodes(damaged), 'päth'];
+
+      final archive = TarDecoder().decodeBytes(bytes);
+      expect(archive.map((file) => file.name), names);
+
+      final entries = await Stream<List<int>>.value(bytes)
+          .transform(tarCodec.decoder)
+          .map((e) => e.name)
+          .toList();
+      expect(entries, names);
     });
 
     test('pax header without storing data', testOn: 'vm', () {

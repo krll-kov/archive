@@ -3062,6 +3062,23 @@ void main() async {
       }
     });
 
+    test('name longer than 65535 bytes throws and next entry is written', () {
+      final encoder = ZipEncoder();
+      final output = OutputMemoryStream();
+      encoder.startEncode(output);
+      encoder.add(ArchiveFile.string('a' * 65535, 'x'));
+      encoder.add(ArchiveFile.string('密' * 21845, 'x'));
+      for (final name in ['a' * 65536, '密' * 21846]) {
+        expect(() => encoder.add(ArchiveFile.string(name, 'y')),
+            throwsA(isA<ArchiveException>()),
+            reason: '${name.length} code units');
+      }
+      encoder.add(ArchiveFile.string('b.txt', 'z'));
+      encoder.endEncode();
+      final archive = ZipDecoder().decodeBytes(output.getBytes(), verify: true);
+      expect(archive.map((file) => file.name.length), [65535, 21845, 5]);
+    });
+
     test('local and central headers set same filename encoding flag', () {
       final encoder = ZipEncoder(filenameEncoding: const Latin1Codec());
       final output = OutputMemoryStream();
