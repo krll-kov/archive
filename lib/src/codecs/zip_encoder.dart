@@ -335,6 +335,13 @@ class ZipEncoder {
       _data.files.removeLast();
       throw ArchiveException('zip: name is longer than 65535 bytes');
     }
+    final comment = entry.comment;
+    if (comment != null &&
+        comment.length > 0x3fff &&
+        filenameEncoding.encode(comment).length > 0xffff) {
+      _data.files.removeLast();
+      throw ArchiveException('zip: comment is longer than 65535 bytes');
+    }
     // If the archive modification time was overwritten, use that, otherwise
     // use the lastModTime from the file.
     fileData.time = _data.time ?? _getTime(lastModTime)!;
@@ -580,6 +587,11 @@ class ZipEncoder {
   }
 
   void endEncode({String? comment = ''}) {
+    if (comment != null &&
+        comment.length > 0x3fff &&
+        filenameEncoding.encode(comment).length > 0xffff) {
+      throw ArchiveException('zip: archive comment is longer than 65535 bytes');
+    }
     // Write Central Directory and End Of Central Directory
     _writeCentralDirectory(_data.files, comment, _output!);
     if (_output != null) {

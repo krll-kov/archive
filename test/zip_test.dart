@@ -1867,6 +1867,26 @@ void main() async {
       }
     });
 
+    test('AES entry shorter than its MAC follows decoder flags', () {
+      final bytes = base64.decode(
+          'UEsDBBQAAQhjAEJOR12LntnTFAAAAAEAAAAFAAsAYS50eHQBmQcAAQBBRQMAAPXfnPIO'
+          'A8LXXCntnbd0kvjkAWmRr1NkUtgsrPX/UEsBAhQAFAABCGMAQk5HXYue2dMUAAAAAQAA'
+          'AAUAFAAAAAAAAAAAAKQBAAAAAGEudHh0AZkHAAEAQUUDAABVVAUAAaz5xWpQSwUGAAAA'
+          'AAEAAQBHAAAASwAAAAAA');
+      expect(ZipDecoder().decodeBytes(bytes, password: 'pw').first.content,
+          isEmpty);
+      for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+        expect(
+            () => ZipDecoder()
+                .decodeBytes(bytes,
+                    password: 'pw', verify: verify, throwOnError: throwOnError)
+                .first
+                .content,
+            throwsA(isA<ArchiveException>()),
+            reason: 'verify $verify, throwOnError $throwOnError');
+      }
+    });
+
     test('empty directory', testOn: 'vm', () {
       final archive = Archive();
       archive.add(ArchiveFile.directory('empty'));
@@ -3077,6 +3097,55 @@ void main() async {
       encoder.endEncode();
       final archive = ZipDecoder().decodeBytes(output.getBytes(), verify: true);
       expect(archive.map((file) => file.name.length), [65535, 21845, 5]);
+    });
+
+    test(
+        'entry comment longer than 65535 bytes throws and next entry is written',
+        () {
+      final encoder = ZipEncoder();
+      final output = OutputMemoryStream();
+      encoder.startEncode(output);
+      encoder.add(ArchiveFile.string('a.txt', 'x')..comment = 'c' * 65535);
+      encoder.add(ArchiveFile.string('b.txt', 'x')..comment = '密' * 21845);
+      for (final comment in ['c' * 65536, '密' * 21846]) {
+        expect(
+            () => encoder
+                .add(ArchiveFile.string('c.txt', 'y')..comment = comment),
+            throwsA(isA<ArchiveException>()),
+            reason: '${comment.length} code units');
+      }
+      encoder.add(ArchiveFile.string('d.txt', 'z'));
+      encoder.endEncode();
+      final decoder = ZipDecoder();
+      final archive = decoder.decodeBytes(output.getBytes(), verify: true);
+      expect(archive.map((file) => file.name), ['a.txt', 'b.txt', 'd.txt']);
+      expect(
+          decoder.directory.fileHeaders
+              .map((header) => header.fileComment.length),
+          [65535, 21845, 0]);
+    });
+
+    test('archive comment longer than 65535 bytes throws and end is written',
+        () {
+      for (final (long, short) in [
+        ('c' * 65536, 'c' * 65535),
+        ('密' * 21846, '密' * 21845),
+      ]) {
+        final encoder = ZipEncoder();
+        final output = OutputMemoryStream();
+        encoder.startEncode(output);
+        encoder.add(ArchiveFile.string('a.txt', 'x'));
+        expect(() => encoder.endEncode(comment: long),
+            throwsA(isA<ArchiveException>()),
+            reason: '${long.length} code units');
+        encoder.endEncode(comment: short);
+        final decoder = ZipDecoder();
+        final archive = decoder.decodeBytes(output.getBytes(), verify: true);
+        expect(archive.map((file) => file.name), ['a.txt']);
+        expect(decoder.directory.zipFileComment.length, 65535);
+      }
+      expect(() => ZipEncoder().encodeBytes(Archive()..comment = 'c' * 65536),
+          throwsA(isA<ArchiveException>()));
     });
 
     test('local and central headers set same filename encoding flag', () {

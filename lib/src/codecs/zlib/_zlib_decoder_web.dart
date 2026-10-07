@@ -108,7 +108,7 @@ class _ZLibDecoder extends ZLibDecoderBase {
       }
 
       // Inflate
-      final inflate = Inflate.stream(input);
+      final inflate = Inflate.stream(input, throwOnError: true);
       buffer = inflate.getBytes();
       if (!inflate.isFinished) {
         output.writeBytes(buffer);

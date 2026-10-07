@@ -156,6 +156,11 @@ class TarDecoder {
         filename.endsWith('/');
     if (tf.isFile && !v7Directory && tf.typeFlag != 'D') {
       final sparse = tf.sparse;
+      if (storeData &&
+          sparse != null &&
+          tf.rawContent!.length < sparse.mapLength) {
+        throw ArchiveException('Unexpected end of tar data');
+      }
       final sparseContent = storeData && sparse != null
           ? FileContentSparse(
               tf.rawContent!.subset(

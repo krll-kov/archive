@@ -322,6 +322,9 @@ class TarFile {
       var at = 0;
       for (var n = 512; at < fileSize; n *= 2) {
         final length = n < fileSize - at ? n : fileSize - at;
+        if (at > data.length) {
+          throw ArchiveException('Unexpected end of tar data');
+        }
         final chunk = data.subset(position: at, length: length).toUint8List();
         at += length;
         if (sparse.readMap(chunk) != null) {

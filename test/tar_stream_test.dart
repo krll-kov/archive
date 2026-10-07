@@ -53,6 +53,41 @@ Uint8List _tar(List<ArchiveFile> entries) {
   return held.bytes;
 }
 
+Uint8List _paxSparse(String map, int dataLength) {
+  String record(String key, String value) {
+    final line = ' $key=$value\n';
+    var length = line.length + 1;
+    while ('$length$line'.length != length) {
+      length = '$length$line'.length;
+    }
+    return '$length$line';
+  }
+
+  final records = utf8.encode([
+    record('GNU.sparse.major', '1'),
+    record('GNU.sparse.minor', '0'),
+    record('GNU.sparse.name', 'pax.bin'),
+    record('GNU.sparse.realsize', '2048'),
+  ].join());
+  final output = OutputMemoryStream();
+  (TarFile()
+        ..filename = 'PaxHeaders/pax.bin'
+        ..typeFlag = TarFile.exHeader
+        ..fileSize = records.length
+        ..contentBytes = Uint8List.fromList(records))
+      .write(output);
+  final mapBlocks = (map.length + 511) & ~511;
+  final data = Uint8List(dataLength)
+    ..setRange(0, map.length, ascii.encode(map))
+    ..fillRange(mapBlocks, dataLength, 0x61);
+  (TarFile()
+        ..filename = 'GNUSparseFile.0/pax.bin'
+        ..fileSize = data.length
+        ..contentBytes = data)
+      .write(output);
+  return output.getBytes();
+}
+
 Stream<List<int>> _pieces(Uint8List bytes, int piece) async* {
   for (var at = 0; at < bytes.length; at += piece) {
     final end = at + piece < bytes.length ? at + piece : bytes.length;
@@ -403,6 +438,36 @@ void main() {
       final bytes = TarEncoder().encodeBytes(archive);
       final short = Uint8List.sublistView(bytes, 0, 1200);
       expect(_stream(short, 256), throwsA(isA<ArchiveException>()));
+    });
+
+    test('pax sparse entry cut inside its map block follows decoder flags', () {
+      final whole = _paxSparse('1\n0\n512\n', 1024);
+      final cut = Uint8List.sublistView(whole, 0, whole.length - 1024 + 100);
+      expect(() => TarDecoder().decodeBytes(cut), returnsNormally);
+      for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+        expect(
+            () => TarDecoder()
+                .decodeBytes(cut, verify: verify, throwOnError: throwOnError),
+            throwsA(isA<ArchiveException>()),
+            reason: 'verify $verify, throwOnError $throwOnError');
+      }
+    });
+
+    test('pax sparse entry cut before its map ends follows decoder flags', () {
+      final map = StringBuffer('100\n');
+      for (var i = 0; i < 100; i++) {
+        map.write('${i * 2}\n1\n');
+      }
+      final whole = _paxSparse(map.toString(), 1124);
+      final cut = Uint8List.sublistView(whole, 0, whole.length - 1536 + 100);
+      expect(() => TarDecoder().decodeBytes(cut), returnsNormally);
+      for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+        expect(
+            () => TarDecoder()
+                .decodeBytes(cut, verify: verify, throwOnError: throwOnError),
+            throwsA(isA<ArchiveException>()),
+            reason: 'verify $verify, throwOnError $throwOnError');
+      }
     });
 
     test('source error reaches entry content unchanged', () async {

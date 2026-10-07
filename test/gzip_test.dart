@@ -1224,6 +1224,52 @@ void main() {
         }
       });
 
+      test('gzip verify and throwOnError throw on junk after empty member', () {
+        final first = GZipEncoder().encodeBytes(List.filled(300, 65));
+        final empty = GZipEncoder().encodeBytes(const <int>[]);
+        final last = GZipEncoder().encodeBytes(List.filled(500, 66));
+        for (final junk in [
+          [0],
+          [...'junk'.codeUnits, ...Uint8List(8)]
+        ]) {
+          final bytes =
+              Uint8List.fromList([...first, ...empty, ...junk, ...last]);
+          for (final (v, t) in [(true, false), (false, true)]) {
+            final reason = 'junk ${junk.length} bytes, verify $v';
+            expect(
+                () => const GZipDecoder()
+                    .decodeBytes(bytes, verify: v, throwOnError: t),
+                throwsA(isA<ArchiveException>()),
+                reason: 'bytes, $reason');
+            expect(
+                () => const GZipDecoder().decodeStream(
+                    InputMemoryStream(bytes), OutputMemoryStream(),
+                    verify: v, throwOnError: t),
+                throwsA(isA<ArchiveException>()),
+                reason: 'stream, $reason');
+          }
+        }
+      }, skip: true);
+
+      test(
+          'gzip throwOnError throws on trailer 1 byte short after empty member',
+          () {
+        final first = GZipEncoder().encodeBytes(List.filled(300, 65));
+        final empty = GZipEncoder().encodeBytes(const <int>[]);
+        final last = GZipEncoder().encodeBytes(List.filled(500, 66));
+        final whole = [...first, ...empty, ...last];
+        final bytes = Uint8List.fromList(whole..removeAt(whole.length - 4));
+        expect(
+            () => const GZipDecoder().decodeStream(
+                InputMemoryStream(bytes), OutputMemoryStream(),
+                throwOnError: true),
+            throwsA(isA<ArchiveException>()),
+            reason: 'stream');
+        expect(() => const GZipDecoder().decodeBytes(bytes, throwOnError: true),
+            throwsA(isA<ArchiveException>()),
+            reason: 'bytes');
+      }, skip: true);
+
       test(
           'web zlib ignores bytes after complete stream with verify or throwOnError',
           () {

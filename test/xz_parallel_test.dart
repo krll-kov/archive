@@ -918,6 +918,21 @@ void main() {
             equals(blocks[1].uncompOffset + blocks[1].uncompSize));
       });
 
+      test('verify reports check failure of first block when next is damaged',
+          () async {
+        final data = damaged(blocks[0].checkOffset(8), 8);
+        data[blocks[1].dataOffset] = 0x03;
+
+        expect(() => XZDecoder().decodeBytes(data, verify: true),
+            throwsA(isA<ArchiveChecksumException>()));
+        for (var round = 0; round < 10; round++) {
+          await expectLater(
+              decodeBytesOnIsolates(data, verify: true, workers: 4),
+              throwsA(isA<ArchiveChecksumException>()),
+              reason: 'round $round');
+        }
+      });
+
       test('a truncated archive fails both modes', () async {
         // The index and the footer are gone, so the layout cannot be read and
         // the parallel path has to fall back to decoding the stream whole.

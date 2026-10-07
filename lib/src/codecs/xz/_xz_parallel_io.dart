@@ -440,6 +440,7 @@ Future<bool> _runJobs(
   String? failureReason;
   Object? failure;
   StackTrace? failureStack;
+  int? failedJob;
   var finished = false;
 
   void finish() {
@@ -501,21 +502,19 @@ Future<bool> _runJobs(
             if (job != null) {
               onBlockDone?.call(job, blockOk);
             }
-            if (!blockOk) {
+            final error = message[3];
+            if (!blockOk &&
+                (failedJob == null || (job != null && job < failedJob!))) {
+              failedJob = job ?? jobs.length;
               // The first block to be rejected is the one worth reporting:
               // later ones may only be failing because this one did.
               final reason = message[5];
-              if (reason != null) {
-                failureReason ??= reason as String;
-              }
-            }
-            final thrown = message[6];
-            if (thrown != null) {
-              failure ??= thrown;
-            }
-            final error = message[3];
-            if (error != null) {
-              failure ??= StateError('XZ decode failed: $error');
+              failureReason = reason as String?;
+              final thrown = message[6];
+              failure = thrown ??
+                  (error == null
+                      ? null
+                      : StateError('XZ decode failed: $error'));
             }
             // The output ends at the first failed block
             if (!blockOk || error != null) {

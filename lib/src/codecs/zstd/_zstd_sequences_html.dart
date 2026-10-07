@@ -203,6 +203,9 @@ class ZstdSequences extends ZstdSequencesBase {
         }
       }
 
+      if (out + literalsLength + matchLength > dstEnd) {
+        throw ZstdSequencesException('Sequences ran past the block');
+      }
       _copy(dstView, out, litAt, literalsLength);
       litAt += literalsLength;
       out += literalsLength;

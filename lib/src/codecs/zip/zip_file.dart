@@ -666,6 +666,10 @@ class ZipFile extends FileContent {
     }
 
     final verify = input.readBytes(2).toUint8List();
+    if (input.length < 10) {
+      input.setPosition(start);
+      throw ArchiveException('zip: content of $filename is truncated');
+    }
     final dataBytes = input.readBytes(input.length - 10);
     final dataMac = input.readBytes(10);
 

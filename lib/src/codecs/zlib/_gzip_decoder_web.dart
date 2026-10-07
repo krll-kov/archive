@@ -75,7 +75,8 @@ class _GZipDecoder extends ZLibDecoderBase {
           ? (SinkOutputStream(ZLibOutputSink(output))
             ..watch = (bytes) => sum = getCrc32(bytes, sum))
           : null;
-      final inflate = Inflate.stream(input, output: checked ?? output);
+      final inflate =
+          Inflate.stream(input, output: checked ?? output, throwOnError: true);
       checked?.flush();
       if (!inflate.isFinished) {
         return false;

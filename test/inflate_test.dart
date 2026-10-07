@@ -19,7 +19,7 @@ void main() {
     expect(inflatedDataString.length, equals(5259));
   });
 
-  test('incomplete Huffman code throws instead of hanging', () {
+  test('incomplete Huffman code stops or throws instead of hanging', () {
     // A code with gaps, so a lookup lands on an entry no symbol was assigned.
     // That used to read as symbol 0 with a length of 0, consuming no bits,
     // so the decoder emitted a zero literal until it ran out of memory
@@ -35,16 +35,23 @@ void main() {
       b.write(0xff, 8);
       b.write(0xff, 8);
     });
-    expect(() => Inflate(incomplete), throwsFormatException);
+    expect(Inflate(incomplete).getBytes(), isEmpty);
+    expect(Inflate.stream(InputMemoryStream(incomplete)).getBytes(), isEmpty);
+    expect(
+        () => Inflate(incomplete, throwOnError: true), throwsFormatException);
   });
 
-  test('incomplete code length code throws, as zlib does', () {
+  test('incomplete code length code stops or throws, as zlib does', () {
     final incomplete = _dynamicBlock({0: 1}, (b) {
       for (var i = 0; i < 258 + 16; ++i) {
         b.write(0, 1);
       }
     });
-    expect(() => Inflate(incomplete), throwsFormatException);
+    expect(Inflate(incomplete).getBytes(), isEmpty);
+    expect(Inflate.stream(InputMemoryStream(incomplete)).getBytes(), isEmpty);
+    expect(
+        () => Inflate.stream(InputMemoryStream(incomplete), throwOnError: true),
+        throwsFormatException);
   });
 
   test('a repeat past the end of the lengths is a short result, not thrown',

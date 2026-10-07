@@ -15,6 +15,7 @@ class Inflate {
   InputStream? _nextInput;
   OutputStream _output;
   OutputStream? _sink;
+  final bool _throwOnError;
   bool _finished = false;
 
   bool get isFinished => _finished;
@@ -25,9 +26,11 @@ class Inflate {
   /// If [uncompressedSize] is provided and [output] is not, then the
   /// internal memory buffer will be pre-allocated to that size, reducing the
   /// need to grow the uncompressed data buffer.
-  Inflate(List<int> bytes, {OutputStream? output, int? uncompressedSize})
+  Inflate(List<int> bytes,
+      {OutputStream? output, int? uncompressedSize, bool throwOnError = false})
       : _input = InputMemoryStream(bytes),
-        _output = output ?? OutputMemoryStream(size: uncompressedSize) {
+        _output = output ?? OutputMemoryStream(size: uncompressedSize),
+        _throwOnError = throwOnError {
     _inflate();
   }
 
@@ -38,8 +41,10 @@ class Inflate {
   /// immediately. Instead, you can call the [addBytes] or [addStream] method
   /// to add compressed byte chunks to be decompressed, allowing the compressed
   /// data to be streamed in without being stored entirely in memory.
-  Inflate.stream(this._input, {OutputStream? output, int? uncompressedSize})
-      : _output = output ?? OutputMemoryStream(size: uncompressedSize) {
+  Inflate.stream(this._input,
+      {OutputStream? output, int? uncompressedSize, bool throwOnError = false})
+      : _output = output ?? OutputMemoryStream(size: uncompressedSize),
+        _throwOnError = throwOnError {
     _inflate();
   }
 
@@ -322,7 +327,10 @@ class Inflate {
       codeLengths[_order[i]] = len;
     }
 
-    final codeLengthsTable = HuffmanTable(codeLengths, codeLengthCodes: true);
+    final codeLengthsTable = _table(codeLengths, codeLengthCodes: true);
+    if (codeLengthsTable == null) {
+      return -1;
+    }
 
     final litLenDistLengths = Uint8List(numLitLengthCodes + numDistanceCodes);
 
@@ -340,8 +348,23 @@ class Inflate {
       return -1;
     }
 
-    return _decodeHuffman(
-        HuffmanTable(litlenLengths), HuffmanTable(distLengths));
+    final litLen = _table(litlenLengths);
+    final dist = litLen == null ? null : _table(distLengths);
+    if (litLen == null || dist == null) {
+      return -1;
+    }
+    return _decodeHuffman(litLen, dist);
+  }
+
+  HuffmanTable? _table(List<int> lengths, {bool codeLengthCodes = false}) {
+    try {
+      return HuffmanTable(lengths, codeLengthCodes: codeLengthCodes);
+    } on FormatException {
+      if (_throwOnError) {
+        rethrow;
+      }
+      return null;
+    }
   }
 
   int _decodeHuffman(HuffmanTable litLen, HuffmanTable dist) {

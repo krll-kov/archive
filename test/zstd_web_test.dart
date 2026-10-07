@@ -324,6 +324,25 @@ void main() {
         throwsA(isA<ArchiveChecksumException>()));
   });
 
+  test(
+      'match copy beyond block output throws ArchiveException on this platform',
+      () {
+    final bytes = Uint8List.fromList(base64.decode(_vectors[1][1] as String));
+    bytes[46] ^= 0x80;
+    expect(ZstdDecoder().decodeBytes(bytes), isEmpty);
+    expect(
+        ZstdDecoder()
+            .decodeStream(InputMemoryStream(bytes), OutputMemoryStream()),
+        isFalse);
+    for (final (verify, throwOnError) in [(true, false), (false, true)]) {
+      expect(
+          () => ZstdDecoder()
+              .decodeBytes(bytes, verify: verify, throwOnError: throwOnError),
+          throwsA(isA<ArchiveException>()),
+          reason: 'verify $verify, throwOnError $throwOnError');
+    }
+  });
+
   test('XXH64 matches reference on this platform', () {
     final data = Uint8List(200);
     for (var i = 0; i < data.length; i++) {
