@@ -159,13 +159,43 @@ class _GZipDecoder extends ZLibDecoderBase {
       split = true;
     }
 
-    void addPieces(Uint8List chunk) {
+    Uint8List windowBefore(int end, int window) {
+      final position = input.position;
+      try {
+        final from = max(bodyStart, end - window);
+        input.setPosition(from);
+        return input.readBytes(end - from).toUint8List();
+      } finally {
+        input.setPosition(position);
+      }
+    }
+
+    bool endsEmptyMemberAt(int end) {
+      final bytes = windowBefore(end, _longHeaderWindow);
+      return _endsEmptyMember(bytes, bytes.length);
+    }
+
+    int junkBefore(int end) {
+      final bytes = windowBefore(end, _emptyMemberWindow);
+      if (_endsEmptyMember(bytes, bytes.length)) {
+        return -1;
+      }
+      final junk = _emptyMemberEndBefore(bytes, bytes.length);
+      return junk < 0 ? -1 : end - bytes.length + junk;
+    }
+
+    void addPieces(Uint8List chunk, int at) {
       final after =
           left > 0 ? input.peekBytes(min(2, left)).toUint8List() : _none;
       var from = 0;
       for (var i = _afterEmptyMember(last8, chunk, after, 1);
           i >= 0;
           i = _afterEmptyMember(last8, chunk, after, i + 1)) {
+        final junk = junkBefore(at + i) - at;
+        if (junk > from) {
+          inSink.add(Uint8List.sublistView(chunk, from, junk));
+          from = junk;
+        }
         inSink.add(Uint8List.sublistView(chunk, from, i));
         from = i;
       }
@@ -173,22 +203,14 @@ class _GZipDecoder extends ZLibDecoderBase {
     }
 
     int emptyMemberIn(Uint8List after) {
-      final position = input.position;
-      try {
-        for (var i = _afterEmptyMember(fedBefore, fed, after, 1);
-            i >= 0;
-            i = _afterEmptyMember(fedBefore, fed, after, i + 1)) {
-          final from = max(bodyStart, fedAt + i - _emptyMemberWindow);
-          input.setPosition(from);
-          final bytes = input.readBytes(fedAt + i - from).toUint8List();
-          if (_endsEmptyMember(bytes, bytes.length)) {
-            return i;
-          }
+      for (var i = _afterEmptyMember(fedBefore, fed, after, 1);
+          i >= 0;
+          i = _afterEmptyMember(fedBefore, fed, after, i + 1)) {
+        if (endsEmptyMemberAt(fedAt + i)) {
+          return i;
         }
-        return -1;
-      } finally {
-        input.setPosition(position);
       }
+      return -1;
     }
 
     while (true) {
@@ -208,14 +230,14 @@ class _GZipDecoder extends ZLibDecoderBase {
           left -= next;
         }
         if (split) {
-          addPieces(chunk);
+          addPieces(chunk, at);
           last8 = _lastBytes(last8, chunk);
           continue;
         }
         final pieces = isGZip && (next >= 0 || left == 0);
         try {
           if (pieces) {
-            addPieces(chunk);
+            addPieces(chunk, at);
           } else {
             inSink.add(chunk);
           }
@@ -443,6 +465,12 @@ Uint8List _convertMembers(Uint8List bytes, int end, bool isGZip, bool checked,
     for (var next = _afterEmptyMember(_none, body, trailer, from + 1);
         next >= 0;
         next = _afterEmptyMember(_none, body, trailer, next + 1)) {
+      final junk =
+          _endsEmptyMember(body, next) ? -1 : _emptyMemberEndBefore(body, next);
+      if (junk > from) {
+        sink.add(Uint8List.sublistView(body, from, junk));
+        from = junk;
+      }
       sink.add(Uint8List.sublistView(body, from, next));
       from = next;
     }
@@ -566,31 +594,48 @@ int _afterEmptyMember(
 }
 
 const _emptyMemberWindow = 1024;
+const _longHeaderWindow = 1 << 17;
 
 /// dart:io drops input after empty member and gives no offset. So level 0
 /// member holding .gz file with empty member inside looks like real boundary,
 /// and we decode that .gz into output. Only second decode could fix this
 bool _endsEmptyMember(Uint8List bytes, int end) {
   for (var start = end - 20;
-      start >= max(0, end - _emptyMemberWindow);
+      start >= max(0, end - _longHeaderWindow);
       start--) {
     if (bytes[start] == 0x1f &&
         bytes[start + 1] == 0x8b &&
         bytes[start + 2] == 8 &&
-        _isEmptyMember(bytes, start, end)) {
+        _emptyMemberEnd(bytes, start, end) == end) {
       return true;
     }
   }
   return false;
 }
 
-bool _isEmptyMember(Uint8List bytes, int start, int end) {
+int _emptyMemberEndBefore(Uint8List bytes, int end) {
+  for (var start = end - 20;
+      start >= max(0, end - _emptyMemberWindow);
+      start--) {
+    if (bytes[start] == 0x1f &&
+        bytes[start + 1] == 0x8b &&
+        bytes[start + 2] == 8) {
+      final memberEnd = _emptyMemberEnd(bytes, start, end);
+      if (memberEnd >= 0) {
+        return memberEnd;
+      }
+    }
+  }
+  return -1;
+}
+
+int _emptyMemberEnd(Uint8List bytes, int start, int end) {
   final stop = end - 8;
   final flags = bytes[start + 3];
   var at = start + 10;
   if (flags & 4 != 0) {
     if (at + 2 > stop) {
-      return false;
+      return -1;
     }
     at += 2 + (bytes[at] | (bytes[at + 1] << 8));
   }
@@ -624,13 +669,13 @@ bool _isEmptyMember(Uint8List bytes, int start, int end) {
     if (type == 0) {
       bit = (bit + 7) & ~7;
       if (read(16) != 0 || read(16) != 0xffff) {
-        return false;
+        return -1;
       }
     } else if (type != 1 || read(7) != 0) {
-      return false;
+      return -1;
     }
     if (last == 1) {
-      return (bit + 7) >> 3 == stop;
+      return ((bit + 7) >> 3) + 8;
     }
   }
 }

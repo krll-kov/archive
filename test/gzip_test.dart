@@ -1249,26 +1249,95 @@ void main() {
                 reason: 'stream, $reason');
           }
         }
-      }, skip: true);
+      });
 
-      test(
-          'gzip throwOnError throws on trailer 1 byte short after empty member',
-          () {
+      test('gzip throws on junk after second empty member', () {
         final first = GZipEncoder().encodeBytes(List.filled(300, 65));
         final empty = GZipEncoder().encodeBytes(const <int>[]);
+        final middle = GZipEncoder().encodeBytes(List.filled(200, 67));
         final last = GZipEncoder().encodeBytes(List.filled(500, 66));
-        final whole = [...first, ...empty, ...last];
-        final bytes = Uint8List.fromList(whole..removeAt(whole.length - 4));
+        final bytes = Uint8List.fromList(
+            [...first, ...empty, ...middle, ...empty, 0, ...last]);
+        for (final (v, t) in [(true, false), (false, true)]) {
+          expect(
+              () => const GZipDecoder()
+                  .decodeBytes(bytes, verify: v, throwOnError: t),
+              throwsA(isA<ArchiveException>()),
+              reason: 'bytes, verify $v');
+          expect(
+              () => const GZipDecoder().decodeStream(
+                  InputMemoryStream(bytes), OutputMemoryStream(),
+                  verify: v, throwOnError: t),
+              throwsA(isA<ArchiveException>()),
+              reason: 'stream, verify $v');
+        }
+        expect(const GZipDecoder().decodeBytes(bytes).length, 500);
         expect(
-            () => const GZipDecoder().decodeStream(
-                InputMemoryStream(bytes), OutputMemoryStream(),
-                throwOnError: true),
-            throwsA(isA<ArchiveException>()),
-            reason: 'stream');
-        expect(() => const GZipDecoder().decodeBytes(bytes, throwOnError: true),
-            throwsA(isA<ArchiveException>()),
-            reason: 'bytes');
-      }, skip: true);
+            const GZipDecoder()
+                .decodeStream(InputMemoryStream(bytes), OutputMemoryStream()),
+            isFalse);
+      });
+
+      test('gzip reads member after empty member with long header', () {
+        var state = 3;
+        final data = Uint8List.fromList(List.generate(200000, (_) {
+          state = (state * 75 + 74) % 65537;
+          return state & 0xff;
+        }));
+        final member = GZipEncoder().encodeBytes(data);
+        for (final (flag, length) in [(4, 60000), (8, 100000), (16, 2000)]) {
+          final header = [0x1f, 0x8b, 8, flag, 0, 0, 0, 0, 0, 3];
+          final fields = flag == 4
+              ? [length & 0xff, length >> 8, ...List.filled(length, 65)]
+              : [...List.filled(length, 65), 0];
+          final bytes = Uint8List.fromList([
+            ...member,
+            ...header,
+            ...fields,
+            ...[3, 0],
+            ...Uint8List(8),
+            ...member
+          ]);
+          for (final (v, t) in [(false, false), (true, false), (false, true)]) {
+            final reason = 'flag $flag, verify $v, throwOnError $t';
+            expect(
+                const GZipDecoder()
+                    .decodeBytes(bytes, verify: v, throwOnError: t)
+                    .length,
+                400000,
+                reason: 'bytes, $reason');
+            final out = OutputMemoryStream();
+            expect(
+                const GZipDecoder().decodeStream(InputMemoryStream(bytes), out,
+                    verify: v, throwOnError: t),
+                isTrue,
+                reason: 'stream, $reason');
+            expect(out.length, 400000, reason: 'stream, $reason');
+          }
+        }
+      });
+
+      test('gzip stream reads member after empty member with long comment', () {
+        final first = GZipEncoder().encodeBytes(List.filled(300, 65));
+        final empty = [
+          ...[0x1f, 0x8b, 8, 16, 0, 0, 0, 0, 0, 3],
+          ...List.filled(2000, 65),
+          ...[0, 3, 0],
+          ...Uint8List(8)
+        ];
+        final last = GZipEncoder().encodeBytes(List.filled(500, 66));
+        final bytes = Uint8List.fromList([...first, ...empty, ...last]);
+        for (final (v, t) in [(false, false), (true, false), (false, true)]) {
+          final out = OutputMemoryStream();
+          expect(
+              const GZipDecoder().decodeStream(InputMemoryStream(bytes), out,
+                  verify: v, throwOnError: t),
+              isTrue,
+              reason: 'verify $v, throwOnError $t');
+          expect(out.getBytes(),
+              [...List.filled(300, 65), ...List.filled(500, 66)]);
+        }
+      });
 
       test(
           'web zlib ignores bytes after complete stream with verify or throwOnError',
