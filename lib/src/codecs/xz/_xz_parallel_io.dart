@@ -441,6 +441,8 @@ Future<bool> _runJobs(
   Object? failure;
   StackTrace? failureStack;
   int? failedJob;
+  String? indexReason;
+  int? indexJob;
   var finished = false;
 
   void finish() {
@@ -457,6 +459,7 @@ Future<bool> _runJobs(
     for (final isolate in isolates) {
       isolate.kill(priority: Isolate.immediate);
     }
+    failureReason ??= failedJob == null ? indexReason : null;
     if (failureReason != null) {
       onFailureReason?.call(failureReason!);
     }
@@ -501,6 +504,13 @@ Future<bool> _runJobs(
             final job = jobOf.remove(message[1] as SendPort);
             if (job != null) {
               onBlockDone?.call(job, blockOk);
+            }
+            if (blockOk && message[5] != null) {
+              ok = false;
+              if (job != null && (indexJob == null || job < indexJob!)) {
+                indexJob = job;
+                indexReason = message[5] as String;
+              }
             }
             final error = message[3];
             if (!blockOk &&
@@ -1177,7 +1187,6 @@ void _sendThrown(
     }
   }
   if (ok && unpaddedLength != null && decodedUnpadded != unpaddedLength) {
-    ok = false;
     reason = 'Stream index compressed length mismatch';
   }
   // Block shorter than its index entry left zeros in decodeBytes output and

@@ -106,6 +106,16 @@ void main() {
       expect(CodecsRecognizer.recognize(bytes), ArchiveFormat.tar);
     });
 
+    test('zip that starts with PK00 marker is recognised as zip', () {
+      final zip = ZipEncoder()
+          .encodeBytes(Archive()..add(ArchiveFile.string('a.txt', 'x')));
+      final marked = Uint8List.fromList([0x50, 0x4b, 0x30, 0x30, ...zip]);
+      expect(
+          ZipDecoder().decodeBytes(marked, verify: true).single.name, 'a.txt');
+      expect(CodecsRecognizer.isZip(marked), isTrue);
+      expect(CodecsRecognizer.recognize(marked), ArchiveFormat.zip);
+    });
+
     test('every archive in test data is recognised', testOn: 'vm', () {
       expect(
           CodecsRecognizer.recognize(

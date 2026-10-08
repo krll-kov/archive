@@ -518,6 +518,8 @@ Stream<TarEntry> _read(
       final read = head?.length ?? 0;
       if (file.applySparse()) {
         head = null;
+      } else {
+        throw ArchiveException('tar: invalid sparse map');
       }
       final orphan = metadata.takeOrphan();
       if (orphan != null) {

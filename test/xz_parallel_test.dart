@@ -1144,6 +1144,13 @@ void main() {
       }
     });
 
+    test('damaged index gives same partial output as on 1 thread', () async {
+      final compressed =
+          File('test/_data/xz/bad-2-index-1.xz').readAsBytesSync();
+      expect(await decodeBytesOnIsolates(compressed),
+          XZDecoder().decodeBytes(compressed));
+    });
+
     test('uncompressedSize agrees with what is decoded', () {
       final dir = Directory('test/_data/xz');
       for (final entry in dir.listSync()) {

@@ -177,6 +177,9 @@ abstract final class CodecsRecognizer {
       return false;
     }
     final kind = (data[2] << 8) | data[3];
+    if (kind == 0x3030) {
+      return true;
+    }
     return kind == 0x0304 || kind == 0x0506 || kind == 0x0606 || kind == 0x0708;
   }
 

@@ -757,13 +757,13 @@ void main() {
               throwsA(isA<ArchiveException>()),
               reason: '$what, verify $verify, throwOnError $throwOnError');
         }
-        final streamed = await Stream<List<int>>.value(bytes)
-            .transform(tarCodec.decoder)
-            .asyncMap((e) async =>
-                (e.name, await e.content.expand((b) => b).toList()))
-            .toList();
-        expect(streamed.single.$1, name, reason: what);
-        expect(streamed.single.$2, stored, reason: what);
+        await expectLater(
+            Stream<List<int>>.value(bytes)
+                .transform(tarCodec.decoder)
+                .asyncMap((e) => e.content.drain<void>())
+                .toList(),
+            throwsA(isA<ArchiveException>()),
+            reason: what);
       }
     });
 
@@ -786,13 +786,7 @@ void main() {
 
     test('GNU sparse entry stored as is streams as regular file', () async {
       final bytes = Uint8List.fromList([
-        ..._tarHeader('gnu.bin', 'S', 1024, magic: 'ustar  \u0000', fields: {
-          386: '00000000000\u0000',
-          398: '00000001000\u0000',
-          410: '00000000400\u0000',
-          422: '00000001000\u0000',
-          483: '00000004000\u0000',
-        }),
+        ..._tarHeader('gnu.bin', 'S', 1024, magic: 'ustar  \u0000'),
         ...List.filled(1024, 0x61),
         ...Uint8List(1024),
       ]);

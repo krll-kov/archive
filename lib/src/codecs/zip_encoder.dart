@@ -308,7 +308,6 @@ class ZipEncoder {
   ZipEntryBody? addHeader(ArchiveFile entry,
       {bool autoClose = true, ArchiveCallback? callback, int? level}) {
     final fileData = _ZipFileData();
-    _data.files.add(fileData);
 
     // An entry with no content is not encrypted. Without this reset it keeps
     // the last entry's mac, so its header declares 12 bytes it never writes
@@ -332,14 +331,12 @@ class ZipEncoder {
     }
     if (fileData.name.length > 0x3fff &&
         filenameEncoding.encode(fileData.name).length > 0xffff) {
-      _data.files.removeLast();
       throw ArchiveException('zip: name is longer than 65535 bytes');
     }
     final comment = entry.comment;
     if (comment != null &&
         comment.length > 0x3fff &&
         filenameEncoding.encode(comment).length > 0xffff) {
-      _data.files.removeLast();
       throw ArchiveException('zip: comment is longer than 65535 bytes');
     }
     // If the archive modification time was overwritten, use that, otherwise
@@ -579,6 +576,8 @@ class ZipEncoder {
       }
     }
 
+    // After possible error so that archive remains valid after following adds
+    _data.files.add(fileData);
     final body = _writeFile(fileData, _output!, salt: salt, done: done);
     if (body == null) {
       done();

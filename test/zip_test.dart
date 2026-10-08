@@ -3125,6 +3125,49 @@ void main() async {
           [65535, 21845, 0]);
     });
 
+    test('level out of range throws and next entry is written', () {
+      for (final streamed in [false, true]) {
+        final encoder = ZipEncoder(streamed: streamed);
+        final output = OutputMemoryStream();
+        encoder.startEncode(output);
+        encoder.add(ArchiveFile.string('a.txt', 'x'));
+        expect(() => encoder.add(ArchiveFile.string('b.txt', 'y'), level: 10),
+            throwsA(isA<ArgumentError>()),
+            reason: 'streamed $streamed');
+        encoder.add(ArchiveFile.string('c.txt', 'z'));
+        encoder.endEncode();
+        final archive =
+            ZipDecoder().decodeBytes(output.getBytes(), verify: true);
+        expect(archive.map((file) => file.name), ['a.txt', 'c.txt'],
+            reason: 'streamed $streamed');
+      }
+    });
+
+    test('source that fails to read throws and next entry is written', () {
+      for (final streamed in [false, true]) {
+        for (final compression in [
+          CompressionType.deflate,
+          CompressionType.none
+        ]) {
+          final encoder = ZipEncoder(streamed: streamed);
+          final output = OutputMemoryStream();
+          encoder.startEncode(output);
+          encoder.add(ArchiveFile.string('a.txt', 'x'));
+          expect(
+              () => encoder.add(ArchiveFile.file('b.txt', 10, _FailingRead())
+                ..compression = compression),
+              throwsA(isA<StateError>()),
+              reason: 'streamed $streamed, $compression');
+          encoder.add(ArchiveFile.string('c.txt', 'z'));
+          encoder.endEncode();
+          final archive =
+              ZipDecoder().decodeBytes(output.getBytes(), verify: true);
+          expect(archive.map((file) => file.name), ['a.txt', 'c.txt'],
+              reason: 'streamed $streamed, $compression');
+        }
+      }
+    });
+
     test('archive comment longer than 65535 bytes throws and end is written',
         () {
       for (final (long, short) in [
@@ -3302,6 +3345,24 @@ int _uint32(Uint8List bytes, int at) =>
     (bytes[at + 1] << 8) |
     (bytes[at + 2] << 16) |
     (bytes[at + 3] << 24);
+
+class _FailingRead extends FileContent {
+  @override
+  int get length => 10;
+
+  @override
+  InputStream getStream({bool decompress = true}) =>
+      throw StateError('read failed');
+
+  @override
+  void write(OutputStream output) => throw StateError('read failed');
+
+  @override
+  Future<void> close() async {}
+
+  @override
+  void closeSync() {}
+}
 
 class _NoLength extends FileContent {
   _NoLength(this.bytes);
